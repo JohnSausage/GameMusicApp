@@ -11,6 +11,7 @@ import {
   type Bar,
   type Beat,
   type MasterSettings,
+  type Note,
   type NoteValue,
   type Song,
   type TakeInfo,
@@ -274,16 +275,181 @@ export function clearBar(song: Song, cursor: Cursor): EditResult {
   })!
 }
 
-/** Pastes a copied bar over the cursor's bar in the current track. */
-export function pasteBar(song: Song, cursor: Cursor, bar: Bar): EditResult | null {
-  const ticks = bar.beats.reduce((sum, b) => sum + beatTicks(b), 0)
-  if (ticks !== barTicks(song)) return null
-  const strings = song.tracks[cursor.track].tuning.length
+// ---------------------------------------------------------------- selections
+
+export interface BeatPos {
+  bar: number
+  beat: number
+}
+
+/** A range of beats in one track, `start` to `end` inclusive (start comes first). */
+export interface Selection {
+  track: number
+  start: BeatPos
+  end: BeatPos
+}
+
+const before = (a: BeatPos, b: BeatPos): boolean => a.bar < b.bar || (a.bar === b.bar && a.beat < b.beat)
+
+/** The selection between two beats, in either order. */
+export function selectionBetween(track: number, a: BeatPos, b: BeatPos): Selection {
+  return before(b, a) ? { track, start: { ...b }, end: { ...a } } : { track, start: { ...a }, end: { ...b } }
+}
+
+/** Every beat of a track. */
+export function selectTrack(song: Song, track: number): Selection {
+  const bars = song.tracks[track].bars
+  return { track, start: { bar: 0, beat: 0 }, end: { bar: bars.length - 1, beat: bars[bars.length - 1].beats.length - 1 } }
+}
+
+/** The selected beats bar by bar: beat indices `from`…`to` of each bar. */
+export function selectedRanges(song: Song, sel: Selection): { bar: number; from: number; to: number }[] {
+  const bars = song.tracks[sel.track]?.bars ?? []
+  const ranges: { bar: number; from: number; to: number }[] = []
+  for (let bar = sel.start.bar; bar <= Math.min(sel.end.bar, bars.length - 1); bar++) {
+    const from = bar === sel.start.bar ? sel.start.beat : 0
+    const to = Math.min(bar === sel.end.bar ? sel.end.beat : Infinity, bars[bar].beats.length - 1)
+    if (from <= to) ranges.push({ bar, from, to })
+  }
+  return ranges
+}
+
+export function selectionBeats(song: Song, sel: Selection): Beat[] {
+  return selectedRanges(song, sel).flatMap(({ bar, from, to }) => structuredClone(song.tracks[sel.track].bars[bar].beats.slice(from, to + 1)))
+}
+
+const ticksOf = (beats: Beat[]): number => beats.reduce((sum, b) => sum + beatTicks(b), 0)
+
+/** Rests at the end of a bar are dropped and refilled, so freed or needed time is merged there. */
+function withoutTrailingRests(beats: Beat[]): Beat[] {
+  let end = beats.length
+  while (end > 0 && beats[end - 1].notes.length === 0) end--
+  return beats.slice(0, end)
+}
+
+/**
+ * Gives every selected beat a new length (each keeps its notes). The rest of
+ * each bar moves along; rests at the end of the bar absorb the difference.
+ * Returns null if a bar would overflow, so no notes are ever pushed out.
+ */
+export function setSelectionDuration(song: Song, cursor: Cursor, sel: Selection, change: (beat: Beat) => Duration): EditResult | null {
+  const draft = structuredClone(song)
+  const T = barTicks(draft)
+  for (const { bar, from, to } of selectedRanges(draft, sel)) {
+    const target = draft.tracks[sel.track].bars[bar]
+    const head = [...target.beats.slice(0, from), ...target.beats.slice(from, to + 1).map((b) => ({ ...b, ...change(b) }))]
+    const tail = withoutTrailingRests(target.beats.slice(to + 1))
+    const used = ticksOf(head) + ticksOf(tail)
+    if (used > T) return null
+    target.beats = [...head, ...tail, ...restsFor(T - used)]
+  }
+  return { song: draft, cursor: clampCursor(draft, cursor) }
+}
+
+/** Turns the selected beats into rests. Null if they already are. */
+export function clearSelection(song: Song, cursor: Cursor, sel: Selection): EditResult | null {
+  if (selectionBeats(song, sel).every((b) => b.notes.length === 0)) return null
+  return edit(song, cursor, (draft) => {
+    for (const { bar, from, to } of selectedRanges(draft, sel)) {
+      for (const beat of draft.tracks[sel.track].bars[bar].beats.slice(from, to + 1)) beat.notes = []
+    }
+  })
+}
+
+/** Removes the selected beats; each bar closes the gap and refills with rests at the end. */
+export function deleteSelection(song: Song, cursor: Cursor, sel: Selection): EditResult {
+  return edit(song, cursor, (draft) => {
+    const T = barTicks(draft)
+    for (const { bar, from, to } of selectedRanges(draft, sel)) {
+      const target = draft.tracks[sel.track].bars[bar]
+      const kept = withoutTrailingRests([...target.beats.slice(0, from), ...target.beats.slice(to + 1)])
+      target.beats = [...kept, ...restsFor(T - ticksOf(kept))]
+    }
+    return { track: sel.track, bar: sel.start.bar, beat: 0, string: cursor.string }
+  })!
+}
+
+interface Span {
+  /** Ticks from the start of the song. */
+  start: number
+  length: number
+  notes: Note[]
+}
+
+function trackSpans(track: Track): Span[] {
+  const spans: Span[] = []
+  let start = 0
+  for (const bar of track.bars) {
+    for (const beat of bar.beats) {
+      spans.push({ start, length: beatTicks(beat), notes: beat.notes })
+      start += beatTicks(beat)
+    }
+  }
+  return spans
+}
+
+/**
+ * Lays spans (in time order, no overlaps) out into full bars. Gaps become rests;
+ * a span crossing a bar line keeps its notes only in the first part (no ties yet).
+ */
+function barsFromSpans(spans: Span[], barLength: number, count: number): Bar[] {
+  const bars: Bar[] = Array.from({ length: count }, () => ({ beats: [] }))
+  const place = (start: number, length: number, notes: Note[]): void => {
+    while (length > 0) {
+      const bar = Math.floor(start / barLength)
+      const part = Math.min(length, (bar + 1) * barLength - start)
+      restsFor(part).forEach((beat, i) => {
+        if (i === 0) beat.notes = notes
+        bars[bar].beats.push(beat)
+      })
+      start += part
+      length -= part
+      notes = []
+    }
+  }
+  let position = 0
+  for (const span of spans) {
+    if (span.start > position) place(position, span.start - position, [])
+    place(span.start, span.length, span.notes)
+    position = span.start + span.length
+  }
+  place(position, count * barLength - position, [])
+  return bars
+}
+
+/**
+ * Pastes copied beats at the cursor, overwriting what's there for as long as
+ * they last, across bar lines if needed (adding bars at the end of the song).
+ * Notes on strings the track doesn't have are left out.
+ */
+export function pasteBeats(song: Song, cursor: Cursor, beats: Beat[]): EditResult | null {
+  if (beats.length === 0) return null
   return edit(song, cursor, (draft, c) => {
-    const copy = structuredClone(bar)
-    for (const beat of copy.beats) beat.notes = beat.notes.filter((n) => n.string <= strings)
-    draft.tracks[c.track].bars[c.bar] = copy
-    return { ...c, beat: 0 }
+    const T = barTicks(draft)
+    const track = draft.tracks[c.track]
+    const strings = track.tuning.length
+    const start = c.bar * T + beatStart(track.bars[c.bar], c.beat)
+    const end = start + ticksOf(beats)
+    const extra = Math.ceil(end / T) - barCount(draft)
+    for (const t of draft.tracks) for (let i = 0; i < extra; i++) t.bars.push(emptyBar(draft))
+
+    const spans: Span[] = []
+    for (const span of trackSpans(track)) {
+      const spanEnd = span.start + span.length
+      if (spanEnd <= start || span.start >= end) spans.push(span)
+      else {
+        if (span.start < start) spans.push({ ...span, length: start - span.start }) // shortened, keeps its notes
+        if (spanEnd > end) spans.push({ start: end, length: spanEnd - end, notes: [] }) // what's left after the paste
+      }
+    }
+    let at = start
+    for (const beat of beats) {
+      spans.push({ start: at, length: beatTicks(beat), notes: structuredClone(beat.notes.filter((n) => n.string <= strings)) })
+      at += beatTicks(beat)
+    }
+    spans.sort((a, b) => a.start - b.start)
+    track.bars = barsFromSpans(spans, T, barCount(draft))
+    return { ...c, beat: Math.max(0, track.bars[c.bar].beats.findIndex((_, i) => beatStart(track.bars[c.bar], i) >= start - c.bar * T)) }
   })
 }
 

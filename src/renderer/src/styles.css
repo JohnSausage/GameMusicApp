@@ -831,3 +831,29 @@ kbd {
   padding: 6px 2px;
   font-size: 13px;
 }
+
+/* Multi-select: selected beats and the rectangle while dragging. */
+.score-host-wrapper {
+  user-select: none;
+}
+
+.score-selection-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.score-selection-box {
+  position: absolute;
+  background: rgba(37, 99, 235, 0.14);
+  border: 1px solid rgba(37, 99, 235, 0.55);
+  border-radius: 4px;
+}
+
+.score-marquee {
+  position: absolute;
+  display: none;
+  pointer-events: none;
+  border: 1px dashed #2563eb;
+  background: rgba(37, 99, 235, 0.08);
+}

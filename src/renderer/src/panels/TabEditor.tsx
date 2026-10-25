@@ -8,6 +8,8 @@ import {
   addTrack,
   clearBar,
   clearBeat,
+  clearSelection,
+  deleteSelection,
   deleteBar,
   deleteBeat,
   deleteNote,
@@ -21,17 +23,21 @@ import {
   moveString,
   moveTrack,
   nextSectionName,
-  pasteBar,
+  pasteBeats,
   restoreSounds,
   sectionAt,
+  selectionBeats,
+  selectionBetween,
+  selectTrack,
+  setSelectionDuration,
   setDuration,
   setFret,
   setSection,
   stepDuration,
   switchTrack,
-  toggleDotted,
   updateMaster,
   updateTrack,
+  type BeatPos,
   type Cursor,
   type Duration,
   type EditResult
@@ -44,7 +50,7 @@ import {
   MAX_FRET,
   NOTE_VALUES,
   notePitch,
-  type Bar,
+  type Beat,
   type Instrument,
   type NoteValue,
   type Track
@@ -202,7 +208,9 @@ export function TabEditor({ project, getEngine }: Props): React.JSX.Element {
   const [staveMode, setStaveMode] = useState<StaveMode>('notation+tab')
   const [entryDuration, setEntryDuration] = useState<Duration>({ value: 4, dotted: false })
   const [message, setMessage] = useState('')
-  const [clipboard, setClipboard] = useState<Bar | null>(null)
+  const [clipboard, setClipboard] = useState<Beat[] | null>(null)
+  /** Where the current selection started; the selection runs from here to the cursor. */
+  const [anchor, setAnchor] = useState<{ track: number; pos: BeatPos } | null>(null)
   const [busy, setBusy] = useState(false)
   const [takeDialog, setTakeDialog] = useState(false)
   const [soundEditor, setSoundEditor] = useState<number | null>(null)
@@ -215,6 +223,11 @@ export function TabEditor({ project, getEngine }: Props): React.JSX.Element {
   const beat = track.bars[cursor.bar].beats[cursor.beat]
   const noteOnString = beat.notes.find((n) => n.string === cursor.string)
   const section = sectionAt(song, cursor.bar)
+  const selection =
+    anchor && anchor.track === cursor.track && (anchor.pos.bar !== cursor.bar || anchor.pos.beat !== cursor.beat)
+      ? selectionBetween(cursor.track, anchor.pos, cursor)
+      : null
+  const selectedCount = selection ? selectionBeats(song, selection).length : 0
 
   useEffect(() => {
     editorRef.current?.focus()
@@ -262,22 +275,79 @@ export function TabEditor({ project, getEngine }: Props): React.JSX.Element {
     void play(song, span?.start ?? 0)
   }
 
+  /** Moves the cursor; with `extend` (Shift) the selection grows from where it started. */
+  const moveCursor = (next: Cursor, extend = false): void => {
+    if (extend && next.track === cursor.track) setAnchor((a) => (a && a.track === cursor.track ? a : { track: cursor.track, pos: { bar: cursor.bar, beat: cursor.beat } }))
+    else setAnchor(null)
+    project.setCursor(next)
+  }
+
+  const NO_ROOM = 'Not enough room left in the bar for longer notes. Make room first (e.g. shorten or delete what follows).'
+
+  /** Changes the length of the selected beats, or of the beat at the cursor. */
+  const changeLength = (change: (b: Beat) => Duration): void => {
+    if (selection) edit(setSelectionDuration(song, cursor, selection, change), NO_ROOM)
+    else edit(setDuration(song, cursor, change(beat)), NO_ROOM)
+  }
+
   const chooseDuration = (duration: Duration): void => {
     setEntryDuration(duration)
-    edit(setDuration(song, cursor, duration), 'Not enough room left in this bar for a longer note.')
+    changeLength(() => duration)
   }
 
-  const copyBar = (): void => {
-    setClipboard(structuredClone(track.bars[cursor.bar]))
-    setMessage(`Copied bar ${cursor.bar + 1}.`)
+  const toggleDots = (): void => {
+    const dotted = !(selection ? selectionBeats(song, selection).every((b) => b.dotted) : beat.dotted)
+    changeLength((b) => ({ value: b.value, dotted }))
   }
 
+  const stepLength = (direction: 'shorter' | 'longer'): void => {
+    if (!selection) {
+      edit(stepDuration(song, cursor, direction), NO_ROOM)
+      return
+    }
+    changeLength((b) => {
+      const index = NOTE_VALUES.indexOf(b.value) + (direction === 'shorter' ? 1 : -1)
+      return { value: NOTE_VALUES[Math.min(NOTE_VALUES.length - 1, Math.max(0, index))], dotted: b.dotted }
+    })
+  }
+
+  const copy = (cut = false): void => {
+    const beats = selection ? selectionBeats(song, selection) : structuredClone(track.bars[cursor.bar].beats)
+    setClipboard(beats)
+    setMessage(selection ? `${cut ? 'Cut' : 'Copied'} ${beats.length} beats.` : `${cut ? 'Cut' : 'Copied'} bar ${cursor.bar + 1}.`)
+    if (cut) edit(selection ? clearSelection(song, cursor, selection) : clearBar(song, cursor))
+  }
+
+  /** Pastes at the start of the selection, or at the cursor. */
   const paste = (): void => {
-    if (!clipboard) setMessage('Copy a bar first (Ctrl+C).')
-    else edit(pasteBar(song, cursor, clipboard), "The copied bar doesn't fit this time signature.")
+    if (!clipboard) {
+      setMessage('Copy something first (Ctrl+C).')
+      return
+    }
+    const at = selection ? { ...cursor, bar: selection.start.bar, beat: selection.start.beat } : cursor
+    setAnchor(null)
+    edit(pasteBeats(song, at, clipboard))
   }
 
-  const removeBeat = (): void => edit(deleteBeat(song, cursor), 'Only rests follow in this bar, so there is nothing to move up.')
+  /** Delete: selected beats become rests. Shift+Delete / "Delete beat": they're removed and the bar closes the gap. */
+  const removeSelection = (remove: boolean): void => {
+    if (!selection) return
+    if (remove) {
+      setAnchor(null)
+      edit(deleteSelection(song, cursor, selection))
+    } else edit(clearSelection(song, cursor, selection))
+  }
+
+  const removeBeat = (): void => {
+    if (selection) removeSelection(true)
+    else edit(deleteBeat(song, cursor), 'Only rests follow in this bar, so there is nothing to move up.')
+  }
+
+  const selectAll = (): void => {
+    const all = selectTrack(song, cursor.track)
+    setAnchor({ track: cursor.track, pos: all.start })
+    project.setCursor({ ...cursor, bar: all.end.bar, beat: all.end.beat })
+  }
 
   const addBar = (): void => edit(addBars(song, cursor, 1))
   const addSection = (): void => edit(addBars(song, cursor, 4, nextSectionName(song)))
@@ -287,37 +357,57 @@ export function TabEditor({ project, getEngine }: Props): React.JSX.Element {
     const ctrl = event.ctrlKey || event.metaKey
     const key = event.key
     let handled = true
-    if (/^[0-9]$/.test(key) && !ctrl && !event.altKey) enterDigit(Number(key))
-    else if (key === 'ArrowRight') project.setCursor(ctrl ? moveBar(song, cursor, 1) : moveBeat(song, cursor, 1))
-    else if (key === 'ArrowLeft') project.setCursor(ctrl ? moveBar(song, cursor, -1) : moveBeat(song, cursor, -1))
-    else if (key === 'ArrowUp') project.setCursor(ctrl ? moveTrack(song, cursor, -1) : moveString(song, cursor, -1))
-    else if (key === 'ArrowDown') project.setCursor(ctrl ? moveTrack(song, cursor, 1) : moveString(song, cursor, 1))
-    else if ((key === 'Delete' || key === 'Backspace') && ctrl) edit(deleteBar(song, cursor), 'A song needs at least one bar.')
-    else if ((key === 'Delete' || key === 'Backspace') && (event.shiftKey || beat.notes.length === 0)) removeBeat()
+    const shift = event.shiftKey
+    if (/^[0-9]$/.test(key) && !ctrl && !event.altKey) {
+      setAnchor(null)
+      enterDigit(Number(key))
+    } else if (key === 'ArrowRight') moveCursor(ctrl ? moveBar(song, cursor, 1) : moveBeat(song, cursor, 1), shift)
+    else if (key === 'ArrowLeft') moveCursor(ctrl ? moveBar(song, cursor, -1) : moveBeat(song, cursor, -1), shift)
+    else if (key === 'ArrowUp') ctrl ? moveCursor(moveTrack(song, cursor, -1)) : project.setCursor(moveString(song, cursor, -1))
+    else if (key === 'ArrowDown') ctrl ? moveCursor(moveTrack(song, cursor, 1)) : project.setCursor(moveString(song, cursor, 1))
+    else if (key === 'Escape' && selection) setAnchor(null)
+    else if ((key === 'Delete' || key === 'Backspace') && ctrl) {
+      setAnchor(null)
+      edit(deleteBar(song, cursor), 'A song needs at least one bar.')
+    } else if ((key === 'Delete' || key === 'Backspace') && selection) removeSelection(shift)
+    else if ((key === 'Delete' || key === 'Backspace') && (shift || beat.notes.length === 0)) removeBeat()
     else if (key === 'Delete' || key === 'Backspace') {
       edit(deleteNote(song, cursor), 'No note on this string. Shift+Delete removes the whole beat.')
     }
-    else if (key === '+' || key === '=') edit(stepDuration(song, cursor, 'longer'), 'Not enough room left in this bar for a longer note.')
-    else if (key === '-') edit(stepDuration(song, cursor, 'shorter'))
-    else if (key === '.') edit(toggleDotted(song, cursor), 'Not enough room left in this bar for a dotted note.')
-    else if (key.toLowerCase() === 'r' && !ctrl) edit(clearBeat(song, cursor))
+    else if (key === '+' || key === '=') stepLength('longer')
+    else if (key === '-') stepLength('shorter')
+    else if (key === '.') toggleDots()
+    else if (key.toLowerCase() === 'r' && !ctrl) selection ? removeSelection(false) : edit(clearBeat(song, cursor))
     else if (key === ' ') playing ? stop() : playFromCursor()
     else if (key === 'Insert') edit(insertBarBefore(song, cursor))
-    else if (ctrl && key.toLowerCase() === 'c') copyBar()
+    else if (ctrl && key.toLowerCase() === 'a') selectAll()
+    else if (ctrl && key.toLowerCase() === 'c') copy()
+    else if (ctrl && key.toLowerCase() === 'x') copy(true)
     else if (ctrl && key.toLowerCase() === 'v') paste()
     else if (ctrl && key.toLowerCase() === 'd') edit(duplicateBar(song, cursor))
     else handled = false
     if (handled) event.preventDefault()
   }
 
-  const onScoreClick = (target: ScoreTarget): void => {
+  const onScoreClick = (target: ScoreTarget, extend: boolean): void => {
     const sameTrack = target.trackIndex === cursor.track
-    project.setCursor({
-      track: target.trackIndex,
-      bar: target.barIndex,
-      beat: target.beatIndex,
-      string: target.string ?? (sameTrack ? cursor.string : 1)
-    })
+    moveCursor(
+      {
+        track: target.trackIndex,
+        bar: target.barIndex,
+        beat: target.beatIndex,
+        string: target.string ?? (sameTrack ? cursor.string : 1)
+      },
+      extend
+    )
+    focus()
+  }
+
+  /** A rectangle dragged over the score selects the beats inside it. */
+  const onSelectArea = (area: { track: number; start: BeatPos; end: BeatPos }): void => {
+    setAnchor({ track: area.track, pos: area.start })
+    const strings = song.tracks[area.track].tuning.length
+    project.setCursor({ track: area.track, bar: area.end.bar, beat: area.end.beat, string: Math.min(cursor.string, strings) })
     focus()
   }
 
@@ -343,7 +433,10 @@ export function TabEditor({ project, getEngine }: Props): React.JSX.Element {
   const describeCursor = (): string => {
     const open = noteName(track.tuning[cursor.string - 1])
     const what = noteOnString ? `fret ${noteOnString.fret} (${noteName(notePitch(track, noteOnString))})` : beat.notes.length === 0 ? 'rest' : 'empty string'
-    return `${track.name} · bar ${cursor.bar + 1} of ${barCount(song)} · beat ${cursor.beat + 1} · string ${cursor.string} (${open}) · ${what}`
+    const where = `${track.name} · bar ${cursor.bar + 1} of ${barCount(song)} · beat ${cursor.beat + 1} · string ${cursor.string} (${open}) · ${what}`
+    if (!selection) return where
+    const bars = selection.start.bar === selection.end.bar ? `bar ${selection.start.bar + 1}` : `bars ${selection.start.bar + 1}–${selection.end.bar + 1}`
+    return `${track.name} · ${selectedCount} beats selected (${bars}) · Esc to deselect`
   }
 
   return (
@@ -391,7 +484,7 @@ export function TabEditor({ project, getEngine }: Props): React.JSX.Element {
               </button>
             ))}
           </div>
-          <button className={beat.dotted ? 'active' : ''} title="Dotted (.)" onClick={() => chooseDuration({ value: beat.value, dotted: !beat.dotted })}>
+          <button className={beat.dotted ? 'active' : ''} title="Dotted (.); works on all selected beats" onClick={toggleDots}>
             Dotted
           </button>
           <button title="Make this beat a rest (R)" onClick={() => edit(clearBeat(song, cursor))}>Rest</button>
@@ -401,8 +494,8 @@ export function TabEditor({ project, getEngine }: Props): React.JSX.Element {
           <span className="divider" />
           <button title="Insert an empty bar before this one (Insert)" onClick={() => edit(insertBarBefore(song, cursor))}>Insert bar</button>
           <button title="Duplicate this bar (Ctrl+D)" onClick={() => edit(duplicateBar(song, cursor))}>Duplicate</button>
-          <button title="Copy this bar (Ctrl+C)" onClick={copyBar}>Copy</button>
-          <button title="Paste over this bar (Ctrl+V)" onClick={paste}>Paste</button>
+          <button title="Copy the selected beats, or this bar (Ctrl+C). Ctrl+X cuts." onClick={() => copy()}>Copy</button>
+          <button title="Paste at the cursor or the start of the selection, overwriting what's there (Ctrl+V)" onClick={paste}>Paste</button>
           <button title="Clear this bar in the current track" onClick={() => edit(clearBar(song, cursor))}>Clear</button>
           <button title="Delete this bar from all tracks (Ctrl+Delete)" onClick={() => edit(deleteBar(song, cursor), 'A song needs at least one bar.')}>Delete bar</button>
           <span className="divider" />
@@ -434,6 +527,8 @@ export function TabEditor({ project, getEngine }: Props): React.JSX.Element {
           staveMode={staveMode}
           positionRef={positionRef}
           editCursor={cursor}
+          selection={selection}
+          onSelectArea={onSelectArea}
           onScoreClick={onScoreClick}
           endActions={
             <>
@@ -446,7 +541,8 @@ export function TabEditor({ project, getEngine }: Props): React.JSX.Element {
         <p className="shortcuts muted small">
           <kbd>←</kbd> <kbd>→</kbd> beat · <kbd>↑</kbd> <kbd>↓</kbd> string · <kbd>Ctrl</kbd>+<kbd>↑</kbd>/<kbd>↓</kbd> track · <kbd>Ctrl</kbd>+<kbd>←</kbd>/<kbd>→</kbd> bar ·
           <kbd>0</kbd>–<kbd>9</kbd> fret (type two digits for 10–24) · <kbd>Del</kbd> remove note or rest · <kbd>Shift</kbd>+<kbd>Del</kbd> remove beat · <kbd>R</kbd> rest · <kbd>+</kbd> <kbd>−</kbd> length ·
-          <kbd>.</kbd> dotted · <kbd>Space</kbd> play · <kbd>Ctrl</kbd>+<kbd>Z</kbd>/<kbd>Y</kbd> undo/redo · <kbd>Ctrl</kbd>+<kbd>S</kbd> save
+          <kbd>.</kbd> dotted · <kbd>Space</kbd> play · <kbd>Ctrl</kbd>+<kbd>Z</kbd>/<kbd>Y</kbd> undo/redo · <kbd>Ctrl</kbd>+<kbd>S</kbd> save ·
+          select: <kbd>Shift</kbd>+click, drag a box, <kbd>Shift</kbd>+<kbd>←</kbd>/<kbd>→</kbd>, <kbd>Ctrl</kbd>+<kbd>A</kbd> · <kbd>Ctrl</kbd>+<kbd>C</kbd>/<kbd>X</kbd>/<kbd>V</kbd> copy/cut/paste
         </p>
       </div>
 
