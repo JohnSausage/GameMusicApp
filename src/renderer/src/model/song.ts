@@ -1,4 +1,7 @@
 // Song model, a subset of REQUIREMENTS.md §5 that grows milestone by milestone.
+import { factoryPreset, type SynthPatch } from './synth'
+
+export type { SynthPatch }
 
 /** Note value: 1 = whole, 4 = quarter, 16 = sixteenth. */
 export type NoteValue = 1 | 2 | 4 | 8 | 16 | 32
@@ -23,18 +26,6 @@ export interface Bar {
   beats: Beat[]
 }
 
-export type Waveform = 'pulse' | 'triangle' | 'sawtooth' | 'sine'
-
-export interface SynthPatch {
-  waveform: Waveform
-  /** Pulse width, 0–1 (0.125, 0.25 and 0.5 are the classic 8-bit values). */
-  duty: number
-  attack: number
-  decay: number
-  sustain: number
-  release: number
-}
-
 export type Instrument =
   | { kind: 'soundfont'; program: number }
   | { kind: 'synth'; patch: SynthPatch }
@@ -49,6 +40,8 @@ export interface Track {
   pan: number
   /** Every track has the same number of bars as the song. */
   bars: Bar[]
+  /** The sound before "Make it retro" replaced it, so it can be switched back (SYN-31). */
+  originalInstrument?: Instrument
 }
 
 /** A named part of the song that starts at a bar (PRJ-05), e.g. "Intro" or "Loop A". */
@@ -73,6 +66,15 @@ export interface TakeInfo {
   createdAt: string
 }
 
+/** Effects on the whole mix. */
+export interface MasterSettings {
+  /** Master bitcrusher (SYN-30): bit depth (16 = off) and sample rate in Hz (0 = off). */
+  crushBits: number
+  crushRate: number
+}
+
+export const MASTER_DEFAULTS: MasterSettings = { crushBits: 16, crushRate: 0 }
+
 export interface Song {
   title: string
   tempo: number
@@ -80,6 +82,7 @@ export interface Song {
   tracks: Track[]
   sections: Section[]
   takes: TakeInfo[]
+  master?: MasterSettings
 }
 
 /** Audio of the project's takes: mono samples by take id. */
@@ -97,9 +100,6 @@ export const MAX_FRET = 24
 
 export const GM_ACOUSTIC_GUITAR_STEEL = 25
 export const GM_FINGER_BASS = 33
-
-export const PULSE_LEAD: SynthPatch = { waveform: 'pulse', duty: 0.25, attack: 0.005, decay: 0.12, sustain: 0.6, release: 0.08 }
-export const PULSE_BASS: SynthPatch = { waveform: 'pulse', duty: 0.5, attack: 0.005, decay: 0.08, sustain: 0.8, release: 0.05 }
 
 export function notePitch(track: Track, note: Note): number {
   return track.tuning[note.string - 1] + note.fret
@@ -169,7 +169,7 @@ export function createDemoSong(): Song {
         id: 'bass',
         name: 'Bass',
         tuning: BASS_STANDARD,
-        instrument: { kind: 'synth', patch: PULSE_BASS },
+        instrument: { kind: 'synth', patch: factoryPreset('Pulse bass') },
         volume: 0.7,
         pan: 0,
         bars: [

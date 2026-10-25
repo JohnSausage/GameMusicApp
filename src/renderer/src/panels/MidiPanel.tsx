@@ -3,12 +3,11 @@ import type { GetEngine } from '../App'
 import type { LatencyInfo } from '../audio/engine'
 import { COMPUTER_KEYS, MidiKeyboard, type MidiNoteMessage } from '../midi/midiInput'
 import { GM_ACOUSTIC_GUITAR_STEEL, type Instrument } from '../model/song'
+import { factoryPreset } from '../model/synth'
 import { noteName } from '../transcription/notes'
 
 const INSTRUMENTS: { label: string; instrument: Instrument }[] = [
-  { label: 'Pulse 25 % (8-bit lead)', instrument: { kind: 'synth', patch: { waveform: 'pulse', duty: 0.25, attack: 0.005, decay: 0.15, sustain: 0.6, release: 0.1 } } },
-  { label: 'Pulse 12.5 % (thin lead)', instrument: { kind: 'synth', patch: { waveform: 'pulse', duty: 0.125, attack: 0.005, decay: 0.15, sustain: 0.6, release: 0.1 } } },
-  { label: 'Triangle (8-bit bass)', instrument: { kind: 'synth', patch: { waveform: 'triangle', duty: 0.5, attack: 0.005, decay: 0.05, sustain: 0.9, release: 0.05 } } },
+  ...['8-bit lead', '8-bit thin lead', 'Triangle bass', 'PWM lead', 'Soft pad'].map((name) => ({ label: `Synth: ${name}`, instrument: { kind: 'synth' as const, patch: factoryPreset(name) } })),
   { label: 'SoundFont: acoustic grand piano', instrument: { kind: 'soundfont', program: 0 } },
   { label: 'SoundFont: steel-string guitar', instrument: { kind: 'soundfont', program: GM_ACOUSTIC_GUITAR_STEEL } }
 ]

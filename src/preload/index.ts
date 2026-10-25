@@ -11,5 +11,10 @@ contextBridge.exposeInMainWorld('gameMusicApp', {
     open: (path?: string) => ipcRenderer.invoke('projects:open', path),
     save: (data: Uint8Array, suggestedName: string, path?: string) => ipcRenderer.invoke('projects:save', data, suggestedName, path),
     setDirty: (dirty: boolean) => ipcRenderer.send('projects:set-dirty', dirty)
+  },
+  presets: {
+    list: () => ipcRenderer.invoke('presets:list'),
+    save: (name: string, text: string) => ipcRenderer.invoke('presets:save', name, text),
+    remove: (id: string) => ipcRenderer.invoke('presets:delete', id)
   }
 })

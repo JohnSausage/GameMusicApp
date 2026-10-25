@@ -1,7 +1,7 @@
 import { MIDIControllers, SoundBankLoader, SpessaSynthProcessor } from 'spessasynth_core'
 import type { Song } from '../model/song'
 import { buildTimeline } from '../model/timing'
-import { createTrackBus, startChipVoice } from './chipVoice'
+import { createBitcrusher, createChipSynth, createTrackBus, crushActive, loadSynthWorklet } from './mixer'
 import { channelForTrack, loadSoundFont, panToMidi } from './soundfont'
 
 const GATE = 0.92
@@ -58,16 +58,19 @@ async function renderSoundFontTracks(song: Song, sampleRate: number, frameCount:
 }
 
 /**
- * Offline WAV render. Synth tracks go through the same voice and bus code as
- * live playback, so export matches what you hear (REQUIREMENTS.md PLAY-09).
+ * Offline WAV render. Synth tracks use the same chip synth worklet as live
+ * playback, so export matches what you hear (REQUIREMENTS.md PLAY-09).
  */
 export async function renderSongOffline(song: Song, sampleRate = 48000, tailSeconds = 1.5): Promise<AudioBuffer> {
   const timeline = buildTimeline(song)
   const frameCount = Math.ceil((timeline.duration + tailSeconds) * sampleRate)
   const offline = new OfflineAudioContext(2, frameCount, sampleRate)
+  await loadSynthWorklet(offline)
   const master = offline.createGain()
   master.gain.value = 0.9
-  master.connect(offline.destination)
+  const crush = song.master ? { bits: song.master.crushBits, rate: song.master.crushRate } : undefined
+  if (crushActive(crush)) master.connect(createBitcrusher(offline, crush)).connect(offline.destination)
+  else master.connect(offline.destination)
 
   const soundFontAudio = await renderSoundFontTracks(song, sampleRate, frameCount)
   if (soundFontAudio) {
@@ -80,12 +83,14 @@ export async function renderSongOffline(song: Song, sampleRate = 48000, tailSeco
     source.start(0)
   }
 
-  const buses = song.tracks.map((track) => createTrackBus(offline, master, track.volume, track.pan))
-  for (const note of timeline.notes) {
-    const instrument = song.tracks[note.trackIndex].instrument
-    if (instrument.kind !== 'synth') continue
-    startChipVoice(offline, buses[note.trackIndex], instrument.patch, note.pitch, note.velocity, note.start, note.duration * GATE)
-  }
+  // One chip synth per synth track, with all its notes handed over up front.
+  song.tracks.forEach((track, trackIndex) => {
+    if (track.instrument.kind !== 'synth') return
+    const notes = timeline.notes
+      .filter((n) => n.trackIndex === trackIndex)
+      .map((n) => ({ time: n.start, pitch: n.pitch, velocity: n.velocity, duration: n.duration * GATE }))
+    createChipSynth(offline, track.instrument.patch, notes).connect(createTrackBus(offline, master, track.volume, track.pan))
+  })
 
   return offline.startRendering()
 }

@@ -2,11 +2,12 @@
 // song.json and one audio/<take id>.wav per recorded or imported take.
 import { strFromU8, strToU8, unzipSync, zipSync, type Zippable } from 'fflate'
 import { decodeWav16, encodeWav16 } from '../audio/wav'
-import { NOTE_VALUES, type ProjectAudio, type Song, type TakeInfo } from '../model/song'
+import { MASTER_DEFAULTS, NOTE_VALUES, type Instrument, type MasterSettings, type ProjectAudio, type Song, type TakeInfo } from '../model/song'
+import { normalizePatch, PATCH_LIMITS } from '../model/synth'
 
 export const PROJECT_EXTENSION = 'gmsong'
-/** 1: song only. 2: adds takes (song.takes + audio files). */
-export const FORMAT_VERSION = 2
+/** 1: song only. 2: adds takes (song.takes + audio files). 3: full synth patches, master effects, retro originals. */
+export const FORMAT_VERSION = 3
 
 interface ProjectJson {
   app: 'GameMusicApp'
@@ -89,6 +90,21 @@ function checkTakes(value: unknown): TakeInfo[] {
   return value as TakeInfo[]
 }
 
+function checkInstrument(value: unknown, where: string): Instrument {
+  const instrument = value as Instrument
+  if (instrument?.kind === 'soundfont' && isInt(instrument.program)) return instrument
+  // Synth patches from older files only had a few settings; the rest get defaults.
+  if (instrument?.kind === 'synth') return { kind: 'synth', patch: normalizePatch(instrument.patch) }
+  fail(`${where} has no valid instrument`)
+}
+
+function checkMaster(value: unknown): MasterSettings | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  const { crushBits, crushRate } = value as Partial<MasterSettings>
+  const clamp = (v: unknown, [min, max]: [number, number], fallback: number): number => (typeof v === 'number' && Number.isFinite(v) ? Math.min(max, Math.max(min, v)) : fallback)
+  return { crushBits: clamp(crushBits, PATCH_LIMITS.crushBits, MASTER_DEFAULTS.crushBits), crushRate: clamp(crushRate, PATCH_LIMITS.crushRate, MASTER_DEFAULTS.crushRate) }
+}
+
 /** Checks the structure we rely on, so a damaged file fails here instead of crashing the editor. */
 function checkSong(value: unknown): Song {
   const song = value as Song
@@ -101,7 +117,8 @@ function checkSong(value: unknown): Song {
   const bars = song.tracks[0].bars?.length
   song.tracks.forEach((track, t) => {
     if (typeof track.name !== 'string' || !Array.isArray(track.tuning) || !track.tuning.every(isInt)) fail(`track ${t + 1} is invalid`)
-    if (track.instrument?.kind !== 'soundfont' && track.instrument?.kind !== 'synth') fail(`track ${t + 1} has no instrument`)
+    track.instrument = checkInstrument(track.instrument, `track ${t + 1}`)
+    if (track.originalInstrument !== undefined) track.originalInstrument = checkInstrument(track.originalInstrument, `track ${t + 1} (original sound)`)
     if (!Array.isArray(track.bars) || track.bars.length !== bars) fail(`track ${t + 1} has the wrong number of bars`)
     track.bars.forEach((bar, b) => {
       if (!Array.isArray(bar.beats) || bar.beats.length === 0) fail(`track ${t + 1}, bar ${b + 1} has no beats`)
@@ -117,7 +134,7 @@ function checkSong(value: unknown): Song {
       }
     })
   })
-  return { ...song, sections: Array.isArray(song.sections) ? song.sections : [], takes: checkTakes(song.takes) }
+  return { ...song, sections: Array.isArray(song.sections) ? song.sections : [], takes: checkTakes(song.takes), master: checkMaster(song.master) }
 }
 
 /** File name for a new project, from its title. */

@@ -2,6 +2,7 @@ import { app, BrowserWindow, dialog, ipcMain, Menu, net, protocol, session } fro
 import { writeFile } from 'node:fs/promises'
 import { dirname, join, normalize, sep } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import { registerPresetHandlers } from './presets'
 import { confirmCloseWhenDirty, registerProjectHandlers } from './projects'
 
 const here = dirname(fileURLToPath(import.meta.url))
@@ -83,6 +84,15 @@ async function runSmokeTest(win: BrowserWindow): Promise<void> {
     const editor = document.querySelector('.info-line span')?.textContent ?? null
     const scoreRenderMs = document.querySelector('.score-scroll')?.dataset.renderMs ?? null
 
+    // Retro sounds + a second of playback: loads the chip synth worklet and SoundFont synth.
+    button('Make it retro')?.click()
+    await sleep(300)
+    const retroSounds = [...document.querySelectorAll('.track-card select')].map((s) => s.selectedOptions[0]?.textContent)
+    button('▶ Play', document.querySelector('.editor-main'))?.click()
+    await sleep(1500)
+    const playing = button('■ Stop', document.querySelector('.editor-main')) !== undefined
+    button('■ Stop', document.querySelector('.editor-main'))?.click()
+
     // Three plucked notes (A3, C4, E4), half a second apart, as a 16-bit WAV.
     const rate = 22050
     const samples = new Float32Array(rate * 3)
@@ -121,12 +131,14 @@ async function runSmokeTest(win: BrowserWindow): Promise<void> {
       opened: recent.length > 0 ? 'recent project' : 'demo song',
       editor,
       scoreRenderMs,
+      retroSounds,
+      playing,
       transcription,
       preloadBridge: typeof window.gameMusicApp?.projects?.listRecent === 'function'
     }
   })()`)
   const transcribed = /^[1-9]\d* notes? in/.test(result.transcription ?? '')
-  const passed = errors.length === 0 && result.startPage && result.scoreRenderMs !== null && result.preloadBridge && transcribed
+  const passed = errors.length === 0 && result.startPage && result.scoreRenderMs !== null && result.preloadBridge && result.playing && transcribed
   console.log('SMOKE_TEST_RESULT ' + JSON.stringify({ ...result, userData: app.getPath('userData'), errors }))
   app.exit(passed ? 0 : 1)
 }
@@ -135,6 +147,7 @@ app.whenReady().then(() => {
   Menu.setApplicationMenu(null)
   serveRendererFiles()
   registerProjectHandlers()
+  registerPresetHandlers()
   session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {
     callback(ALLOWED_PERMISSIONS.has(permission))
   })

@@ -14,12 +14,15 @@ import {
   deleteTrack,
   duplicateBar,
   insertBarBefore,
+  isRetro,
+  makeRetro,
   moveBar,
   moveBeat,
   moveString,
   moveTrack,
   nextSectionName,
   pasteBar,
+  restoreSounds,
   sectionAt,
   setDuration,
   setFret,
@@ -27,6 +30,7 @@ import {
   stepDuration,
   switchTrack,
   toggleDotted,
+  updateMaster,
   updateTrack,
   type Cursor,
   type Duration,
@@ -36,20 +40,22 @@ import {
   barCount,
   defaultInstrument,
   isBassTrack,
+  MASTER_DEFAULTS,
   MAX_FRET,
   NOTE_VALUES,
   notePitch,
-  PULSE_BASS,
-  PULSE_LEAD,
   type Bar,
+  type Instrument,
   type NoteValue,
   type Track
 } from '../model/song'
+import { CRUSH_RATES, FACTORY_PRESETS, formatSampleRate } from '../model/synth'
 import { buildTimeline } from '../model/timing'
 import { saveFile } from '../platform'
 import type { ApplyOptions, Project } from '../project/useProject'
 import { ScoreView, type ScoreTarget, type StaveMode } from '../score/ScoreView'
 import { noteName } from '../transcription/notes'
+import { InstrumentEditor } from './InstrumentEditor'
 import { TakeDialog } from './TakeDialog'
 import { usePlayback } from './usePlayback'
 
@@ -76,11 +82,20 @@ interface Props {
   getEngine: GetEngine
 }
 
-function TrackList({ project, onSelect }: { project: Project; onSelect: (index: number) => void }): React.JSX.Element {
+function soundValue(track: Track): string {
+  if (track.instrument.kind === 'soundfont') return 'soundfont'
+  return 'synth:current'
+}
+
+function TrackList({ project, onSelect, onEditSound }: { project: Project; onSelect: (index: number) => void; onEditSound: (index: number) => void }): React.JSX.Element {
   const { song, cursor } = project
-  const setInstrument = (index: number, track: Track, value: string): void => {
-    const bass = isBassTrack(track)
-    const instrument = value === 'synth' ? { kind: 'synth' as const, patch: bass ? PULSE_BASS : PULSE_LEAD } : defaultInstrument(bass ? 'bass' : 'guitar')
+  const retro = isRetro(song)
+  const master = { ...MASTER_DEFAULTS, ...song.master }
+
+  const setSound = (index: number, track: Track, value: string): void => {
+    if (value === 'synth:current') return
+    const instrument: Instrument =
+      value === 'soundfont' ? defaultInstrument(isBassTrack(track) ? 'bass' : 'guitar') : { kind: 'synth', patch: { ...FACTORY_PRESETS[Number(value.slice(7))] } }
     project.apply(updateTrack(song, cursor, index, { instrument }))
   }
   const remove = (index: number, track: Track): void => {
@@ -90,7 +105,16 @@ function TrackList({ project, onSelect }: { project: Project; onSelect: (index: 
 
   return (
     <aside className="track-list">
-      <h3>Tracks</h3>
+      <div className="track-list-header">
+        <h3>Tracks</h3>
+        <button
+          className={retro ? '' : 'active'}
+          title={retro ? 'Switch every track back to the sound it had before' : 'Give every track an 8-bit sound by its role (bass, lead, …). Notes stay the same.'}
+          onClick={() => project.apply(retro ? restoreSounds(song, cursor) : makeRetro(song, cursor))}
+        >
+          {retro ? '↩ Original sounds' : '★ Make it retro'}
+        </button>
+      </div>
       {song.tracks.map((track, index) => (
         <div key={track.id} className={`track-card ${index === cursor.track ? 'selected' : ''}`} onClick={() => onSelect(index)}>
           <div className="track-card-row">
@@ -108,11 +132,26 @@ function TrackList({ project, onSelect }: { project: Project; onSelect: (index: 
             </button>
           </div>
           <div className="track-card-row">
-            <select value={track.instrument.kind} aria-label="Sound" onChange={(e) => setInstrument(index, track, e.target.value)}>
+            <select value={soundValue(track)} aria-label="Sound" onChange={(e) => setSound(index, track, e.target.value)}>
               <option value="soundfont">{isBassTrack(track) ? 'Bass' : 'Guitar'} (SoundFont)</option>
-              <option value="synth">Pulse synth (8-bit)</option>
+              {track.instrument.kind === 'synth' && <option value="synth:current">Synth: {track.instrument.patch.name}</option>}
+              <optgroup label="Synth presets">
+                {FACTORY_PRESETS.map((p, i) => (
+                  <option key={p.name} value={`preset:${i}`}>{p.name}</option>
+                ))}
+              </optgroup>
             </select>
           </div>
+          {track.instrument.kind === 'synth' && (
+            <div className="track-card-row">
+              <button onClick={(e) => {
+                e.stopPropagation()
+                onEditSound(index)
+              }}>
+                Edit sound…
+              </button>
+            </div>
+          )}
           <label className="track-card-row volume">
             Volume
             <input
@@ -130,6 +169,30 @@ function TrackList({ project, onSelect }: { project: Project; onSelect: (index: 
         <button onClick={() => project.apply(addTrack(song, cursor, 'guitar'))}>+ Guitar</button>
         <button onClick={() => project.apply(addTrack(song, cursor, 'bass'))}>+ Bass</button>
       </div>
+
+      <div className="track-card master-card">
+        <strong>Master: lo-fi</strong>
+        <label className="track-card-row volume" title="Bitcrusher on the whole mix, including SoundFont tracks. Fewer bits are grittier; 16 = off.">
+          Bits
+          <input
+            type="range"
+            min={1}
+            max={16}
+            step={1}
+            value={master.crushBits}
+            onChange={(e) => project.apply(updateMaster(song, cursor, { crushBits: Number(e.target.value) }), { mergeKey: 'master:bits' })}
+          />
+          <span className="muted small">{master.crushBits >= 16 ? 'off' : master.crushBits}</span>
+        </label>
+        <label className="track-card-row" title="Lower sample rates add a crunchy, aliased sound.">
+          Rate
+          <select value={master.crushRate} onChange={(e) => project.apply(updateMaster(song, cursor, { crushRate: Number(e.target.value) }))}>
+            {CRUSH_RATES.map((r) => (
+              <option key={r} value={r}>{formatSampleRate(r)}</option>
+            ))}
+          </select>
+        </label>
+      </div>
     </aside>
   )
 }
@@ -142,6 +205,7 @@ export function TabEditor({ project, getEngine }: Props): React.JSX.Element {
   const [clipboard, setClipboard] = useState<Bar | null>(null)
   const [busy, setBusy] = useState(false)
   const [takeDialog, setTakeDialog] = useState(false)
+  const [soundEditor, setSoundEditor] = useState<number | null>(null)
   const pendingDigit = useRef<{ key: string; digit: number; at: number } | null>(null)
   const editorRef = useRef<HTMLDivElement>(null)
   const { playing, positionRef, play, stop } = usePlayback(getEngine)
@@ -284,7 +348,14 @@ export function TabEditor({ project, getEngine }: Props): React.JSX.Element {
 
   return (
     <div className="tab-editor">
-      <TrackList project={project} onSelect={(index) => project.setCursor(switchTrack(song, cursor, index))} />
+      <TrackList
+        project={project}
+        onSelect={(index) => project.setCursor(switchTrack(song, cursor, index))}
+        onEditSound={(index) => {
+          stop()
+          setSoundEditor(index)
+        }}
+      />
 
       <div ref={editorRef} className="editor-main" tabIndex={0} onKeyDown={onKeyDown}>
         <div className="toolbar">
@@ -378,6 +449,18 @@ export function TabEditor({ project, getEngine }: Props): React.JSX.Element {
           <kbd>.</kbd> dotted · <kbd>Space</kbd> play · <kbd>Ctrl</kbd>+<kbd>Z</kbd>/<kbd>Y</kbd> undo/redo · <kbd>Ctrl</kbd>+<kbd>S</kbd> save
         </p>
       </div>
+
+      {soundEditor !== null && song.tracks[soundEditor]?.instrument.kind === 'synth' && (
+        <InstrumentEditor
+          project={project}
+          trackIndex={soundEditor}
+          getEngine={getEngine}
+          onClose={() => {
+            setSoundEditor(null)
+            focus()
+          }}
+        />
+      )}
 
       {takeDialog && (
         <TakeDialog
