@@ -41,7 +41,7 @@ npm run dist:linux
 
 Creates `release/GameMusicApp-<version>-x86_64.AppImage`.
 
-The Windows installer and portable `.exe` are built by GitHub Actions on every push (`.github/workflows/build.yml`); download them from the run's artifacts. `npm run dist:win` works on Windows.
+The Windows installer and portable `.exe` are built by GitHub Actions for every pull request and every push to `main` (`.github/workflows/build.yml`); download them from the run's artifacts. To build another branch, use *Actions → Build → Run workflow*. `npm run dist:win` works on Windows.
 
 ```bash
 npm run smoke

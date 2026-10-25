@@ -1,7 +1,9 @@
 name: Build
 
+# PR branches build once via pull_request; other branches can be built by hand (workflow_dispatch).
 on:
   push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
 

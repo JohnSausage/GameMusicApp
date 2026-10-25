@@ -62,7 +62,7 @@ Your test on 2026-10-25:
 Still open:
 
 1. **MIDI keyboard.** Once you have the cable: MIDI keyboard tab → Connect. Play some notes and write down the "Estimated key → sound" value. Does it feel instant? If it's above 50 ms, try `PULSE_LATENCY_MSEC=10 npm run dev`.
-2. **Windows.** GitHub Actions builds `GameMusicApp-0.0.1-portable.exe` and `GameMusicApp-0.0.1-setup.exe` on every push (download them under *Actions → Build → Artifacts*). Your friend should see the score and hear playback after double-clicking the portable `.exe`.
+2. **Windows.** GitHub Actions builds `GameMusicApp-0.0.1-portable.exe` and `GameMusicApp-0.0.1-setup.exe` for every pull request and every push to `main` (download them under *Actions → Build → Artifacts*). Your friend should see the score and hear playback after double-clicking the portable `.exe`.
 
 ## 5. Next step
 
