@@ -169,6 +169,7 @@ export function notesToSong(notes: DetectedNote[], o: QuantizeOptions): Song {
     title: o.title,
     tempo: o.tempo,
     timeSignature: [o.beatsPerBar, 4],
+    sections: [],
     tracks: [
       {
         id: 'transcription',

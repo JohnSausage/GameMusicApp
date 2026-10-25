@@ -1,7 +1,7 @@
 import * as alphaTab from '@coderline/alphatab'
 import type { NoteValue, Song } from '../model/song'
 
-const { Automation, Bar, Beat, Clef, Duration, MasterBar, Note, Ottavia, Score, Track, Tuning, Voice } = alphaTab.model
+const { Automation, Bar, Beat, Clef, Duration, MasterBar, Note, Ottavia, Score, Section, Track, Tuning, Voice } = alphaTab.model
 
 export interface BeatRef {
   trackIndex: number
@@ -40,6 +40,12 @@ export function songToAlphaTab(song: Song, settings: alphaTab.Settings): Convert
     masterBar.timeSignatureNumerator = song.timeSignature[0]
     masterBar.timeSignatureDenominator = song.timeSignature[1]
     if (i === 0) masterBar.tempoAutomations.push(Automation.buildTempoAutomation(false, 0, song.tempo, 2))
+    const sectionName = song.sections.find((s) => s.bar === i)?.name
+    if (sectionName) {
+      masterBar.section = new Section()
+      masterBar.section.text = sectionName
+      masterBar.section.marker = ''
+    }
     score.addMasterBar(masterBar)
   }
 

@@ -302,3 +302,256 @@ label.block input {
 code {
   font-family: ui-monospace, monospace;
 }
+
+/* ---------------------------------------------------------------- start page */
+
+.start-page {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 40px 16px;
+}
+
+.start-header {
+  display: block;
+  padding: 0;
+  background: none;
+  border: none;
+}
+
+.start-header h1 {
+  font-size: 28px;
+}
+
+.start-header p {
+  margin: 4px 0 20px;
+}
+
+.new-project .form-row label {
+  min-width: 120px;
+}
+
+.recent-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.recent-list li {
+  display: flex;
+  gap: 6px;
+  align-items: stretch;
+}
+
+.recent-item {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-areas: 'title date' 'file date';
+  gap: 2px 16px;
+  text-align: left;
+  padding: 10px 14px;
+}
+
+.recent-item strong {
+  grid-area: title;
+}
+
+.recent-item span:nth-of-type(1) {
+  grid-area: file;
+  font-size: 12px;
+}
+
+.recent-item span:nth-of-type(2) {
+  grid-area: date;
+  align-self: center;
+  font-size: 12px;
+}
+
+button.icon {
+  padding: 2px 8px;
+  line-height: 1;
+  font-size: 16px;
+}
+
+/* ---------------------------------------------------------------- editor */
+
+.editor-header {
+  gap: 8px;
+}
+
+.song-title {
+  font-weight: 600;
+  min-width: 180px;
+  max-width: 280px;
+}
+
+label.inline {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+}
+
+.tab-editor {
+  display: grid;
+  grid-template-columns: 230px minmax(0, 1fr);
+  gap: 16px;
+  padding: 16px;
+}
+
+.editor-main {
+  outline: none;
+  min-width: 0;
+}
+
+.editor-main:focus-visible .score-scroll {
+  border-color: var(--accent);
+}
+
+.edit-toolbar {
+  gap: 6px;
+}
+
+.divider {
+  width: 1px;
+  align-self: stretch;
+  background: var(--border);
+  margin: 0 4px;
+}
+
+.section-name {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+}
+
+.section-name input {
+  width: 140px;
+}
+
+.track-list h3 {
+  margin-bottom: 8px;
+}
+
+.track-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px;
+  margin-bottom: 8px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 6px;
+  cursor: pointer;
+}
+
+.track-card.selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.track-card-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.track-card-row select,
+.track-name {
+  flex: 1;
+  min-width: 0;
+}
+
+.track-card .volume {
+  flex-direction: row;
+}
+
+.track-card .volume input {
+  flex: 1;
+}
+
+.score-edit-column,
+.score-edit-string {
+  position: absolute;
+  display: none;
+  pointer-events: none;
+}
+
+.score-edit-column {
+  background: rgba(234, 179, 8, 0.12);
+}
+
+.score-edit-string {
+  border: 2px solid #d97706;
+  border-radius: 4px;
+  background: rgba(234, 179, 8, 0.2);
+}
+
+.score-end-actions {
+  position: absolute;
+  display: none;
+  gap: 6px;
+  z-index: 2;
+}
+
+.score-end-actions button {
+  background: #eff6ff;
+  border-color: #93c5fd;
+  color: #1d4ed8;
+  font-size: 13px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.shortcuts {
+  line-height: 2;
+}
+
+kbd {
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  padding: 1px 5px;
+  border: 1px solid var(--border);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  background: var(--surface);
+}
+
+/* The editor fills the window; the score takes the space left under the toolbars. */
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+.app > main {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.tab-editor {
+  height: 100%;
+}
+
+.track-list {
+  overflow: auto;
+}
+
+.editor-main {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.editor-main .score-scroll {
+  flex: 1;
+  min-height: 240px;
+  max-height: none;
+}
+
+.editor-main .shortcuts {
+  margin: 8px 0 0;
+}

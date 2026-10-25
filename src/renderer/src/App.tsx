@@ -1,50 +1,113 @@
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AudioEngine } from './audio/engine'
 import type { Take } from './audio/recorder'
-import { MidiPanel } from './panels/MidiPanel'
-import { RecordPanel } from './panels/RecordPanel'
-import { ScorePanel } from './panels/ScorePanel'
-import { TranscriptionPanel } from './panels/TranscriptionPanel'
-import { isElectron } from './platform'
-
-const TABS = ['Score & playback', 'Record & import', 'MIDI keyboard', 'Transcription lab'] as const
-type Tab = (typeof TABS)[number]
+import { createSong, type NewSongOptions } from './model/edit'
+import { createDemoSong } from './model/song'
+import { EditorPage } from './pages/EditorPage'
+import { StartPage } from './pages/StartPage'
+import { parseProject, ProjectFileError, serializeProject, suggestedFileName } from './project/projectFile'
+import { createStorage } from './project/storage'
+import { useProject } from './project/useProject'
 
 export type GetEngine = () => Promise<AudioEngine>
 
+const errorText = (error: unknown): string => (error instanceof Error ? error.message : String(error))
+
 export function App(): React.JSX.Element {
-  const [tab, setTab] = useState<Tab>('Score & playback')
+  const storage = useMemo(createStorage, [])
+  const { project, openProject, closeProject } = useProject()
+  const [startError, setStartError] = useState('')
+  const [saveStatus, setSaveStatus] = useState('')
   const [take, setTake] = useState<Take | null>(null)
   const engine = useRef<Promise<AudioEngine> | null>(null)
 
   // Created on first use: browsers only start audio after a user gesture.
   const getEngine = useCallback<GetEngine>(() => (engine.current ??= AudioEngine.create()), [])
 
-  const useInLab = (t: Take): void => {
-    setTake(t)
-    setTab('Transcription lab')
+  const dirty = project?.dirty ?? false
+  const title = project?.song.title
+  useEffect(() => storage.setDirty(dirty), [storage, dirty])
+  useEffect(() => {
+    document.title = title === undefined ? 'GameMusicApp' : `${title}${dirty ? ' •' : ''} – GameMusicApp`
+  }, [title, dirty])
+
+  useEffect(() => {
+    if (!saveStatus) return
+    const timer = window.setTimeout(() => setSaveStatus(''), 4000)
+    return () => window.clearTimeout(timer)
+  }, [saveStatus])
+
+  const open = async (path?: string): Promise<void> => {
+    setStartError('')
+    try {
+      const opened = await storage.open(path)
+      if (!opened) return
+      const song = parseProject(opened.data)
+      await storage.recordRecent(opened.path, song.title)
+      openProject(song, opened.path, true)
+    } catch (error) {
+      setStartError(error instanceof ProjectFileError ? error.message : `Could not open the project: ${errorText(error)}`)
+    }
   }
 
+  const create = (options: NewSongOptions): void => openProject(createSong(options), null, false)
+
+  const save = async (saveAs: boolean): Promise<void> => {
+    if (!project) return
+    const song = project.song
+    try {
+      const path = await storage.save(serializeProject(song), suggestedFileName(song.title), saveAs ? undefined : (project.path ?? undefined))
+      if (!path) return
+      project.markSaved(path, song)
+      await storage.recordRecent(path, song.title)
+      setSaveStatus(`Saved ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`)
+    } catch (error) {
+      setSaveStatus(`Save failed: ${errorText(error)}`)
+    }
+  }
+
+  const goHome = (): void => {
+    if (project?.dirty && !window.confirm('This project has unsaved changes. Close it without saving?')) return
+    closeProject()
+  }
+
+  // Global shortcuts. Undo/redo are left to text fields while typing in them.
+  useEffect(() => {
+    if (!project) return
+    const onKey = (event: KeyboardEvent): void => {
+      if (!(event.ctrlKey || event.metaKey)) return
+      const key = event.key.toLowerCase()
+      const target = event.target
+      const typing = target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement
+      if (key === 's') {
+        event.preventDefault()
+        void save(event.shiftKey)
+      } else if (typing) {
+        return
+      } else if (key === 'z' && !event.shiftKey) {
+        event.preventDefault()
+        project.undo()
+      } else if (key === 'y' || (key === 'z' && event.shiftKey)) {
+        event.preventDefault()
+        project.redo()
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  })
+
+  if (!project) {
+    return <StartPage storage={storage} error={startError} onCreate={create} onOpen={(path) => void open(path)} onOpenDemo={() => openProject(createDemoSong(), null, true)} />
+  }
   return (
-    <div className="app">
-      <header>
-        <h1>GameMusicApp</h1>
-        <span className="badge">M0 tech spike</span>
-        <span className="muted">{isElectron ? `Electron · ${window.gameMusicApp!.platform}` : 'Browser preview'}</span>
-        <nav>
-          {TABS.map((t) => (
-            <button key={t} className={t === tab ? 'active' : ''} onClick={() => setTab(t)}>
-              {t}
-            </button>
-          ))}
-        </nav>
-      </header>
-      <main>
-        {tab === 'Score & playback' && <ScorePanel getEngine={getEngine} />}
-        {tab === 'Record & import' && <RecordPanel getEngine={getEngine} take={take} onTake={setTake} onUseInLab={useInLab} />}
-        {tab === 'MIDI keyboard' && <MidiPanel getEngine={getEngine} />}
-        {tab === 'Transcription lab' && <TranscriptionPanel getEngine={getEngine} take={take} onTake={setTake} />}
-      </main>
-    </div>
+    <EditorPage
+      project={project}
+      getEngine={getEngine}
+      saveStatus={saveStatus}
+      onSave={(saveAs) => void save(saveAs)}
+      onHome={goHome}
+      take={take}
+      onTake={setTake}
+    />
   )
 }
