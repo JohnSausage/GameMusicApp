@@ -5,6 +5,12 @@ Compose game music on guitar: record or import a melody, get it as tab with nota
 - What the app should do: [REQUIREMENTS.md](REQUIREMENTS.md)
 - Current state: milestone M0 (tech spike), see [docs/M0-spike-report.md](docs/M0-spike-report.md)
 
+## Using the app
+
+- **Start page:** create a new project, open a `.gmsong` file, or pick one of your recent projects.
+- **Projects** are saved as `.gmsong` files (Ctrl+S); new ones go to `~/Documents/GameMusicApp/` by default. The recent list is kept in the app's settings folder (`~/.config/GameMusicApp/` on Linux).
+- **Tab editor:** click a string in the tab or move with the arrow keys, then type fret numbers. Bars always stay full: shortening a note adds rests, lengthening it uses up what follows. "+ Bar" and "+ Section" after the last bar extend the song. All shortcuts are listed under the score.
+
 ## Development
 
 Requires Node.js 22.12 or newer (developed with Node 26 / npm 12).

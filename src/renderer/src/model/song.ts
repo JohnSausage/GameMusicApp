@@ -1,7 +1,9 @@
-// Minimal subset of the song model from REQUIREMENTS.md §5, enough for the M0 spike.
+// Song model, a subset of REQUIREMENTS.md §5 that grows milestone by milestone.
 
 /** Note value: 1 = whole, 4 = quarter, 16 = sixteenth. */
 export type NoteValue = 1 | 2 | 4 | 8 | 16 | 32
+
+export const NOTE_VALUES: NoteValue[] = [1, 2, 4, 8, 16, 32]
 
 export interface Note {
   /** Fretted tracks: 1 = highest-pitched string (top line of the tab). */
@@ -45,7 +47,14 @@ export interface Track {
   instrument: Instrument
   volume: number
   pan: number
+  /** Every track has the same number of bars as the song. */
   bars: Bar[]
+}
+
+/** A named part of the song that starts at a bar (PRJ-05), e.g. "Intro" or "Loop A". */
+export interface Section {
+  bar: number
+  name: string
 }
 
 export interface Song {
@@ -53,10 +62,14 @@ export interface Song {
   tempo: number
   timeSignature: [number, number]
   tracks: Track[]
+  sections: Section[]
 }
+
+export type TrackKind = 'guitar' | 'bass'
 
 export const GUITAR_STANDARD = [64, 59, 55, 50, 45, 40]
 export const BASS_STANDARD = [43, 38, 33, 28]
+export const MAX_FRET = 24
 
 export const GM_ACOUSTIC_GUITAR_STEEL = 25
 export const GM_FINGER_BASS = 33
@@ -73,15 +86,45 @@ export function beatQuarters(beat: Pick<Beat, 'value' | 'dotted'>): number {
   return (4 / beat.value) * (beat.dotted ? 1.5 : 1)
 }
 
+export function isBassTrack(track: Track): boolean {
+  return track.tuning.length <= 5
+}
+
+export function newId(): string {
+  return crypto.randomUUID()
+}
+
+/** Bars of a song, taken from the first track (all tracks have the same count). */
+export function barCount(song: Song): number {
+  return song.tracks[0]?.bars.length ?? 0
+}
+
+export function defaultInstrument(kind: TrackKind): Instrument {
+  return { kind: 'soundfont', program: kind === 'bass' ? GM_FINGER_BASS : GM_ACOUSTIC_GUITAR_STEEL }
+}
+
+export function createTrack(kind: TrackKind, bars: Bar[], name?: string): Track {
+  return {
+    id: newId(),
+    name: name ?? (kind === 'bass' ? 'Bass' : 'Guitar'),
+    tuning: kind === 'bass' ? BASS_STANDARD : GUITAR_STANDARD,
+    instrument: defaultInstrument(kind),
+    volume: kind === 'bass' ? 0.75 : 0.9,
+    pan: 0,
+    bars
+  }
+}
+
 const n = (string: number, fret: number): Note => ({ string, fret, velocity: 96 })
 const b = (value: NoteValue, ...notes: Note[]): Beat => ({ value, dotted: false, notes })
 
 /** A short original demo tune: acoustic guitar melody plus a pulse-wave bass. */
 export function createDemoSong(): Song {
   return {
-    title: 'M0 Demo',
+    title: 'Demo song',
     tempo: 120,
     timeSignature: [4, 4],
+    sections: [],
     tracks: [
       {
         id: 'guitar',
@@ -113,17 +156,4 @@ export function createDemoSong(): Song {
       }
     ]
   }
-}
-
-/** Large song for render-speed tests (NFR-10: 200 bars × 6 tracks). */
-export function createStressSong(barCount = 200, trackCount = 6): Song {
-  const demo = createDemoSong()
-  const tracks: Track[] = []
-  for (let t = 0; t < trackCount; t++) {
-    const source = demo.tracks[t % demo.tracks.length]
-    const bars: Bar[] = []
-    for (let i = 0; i < barCount; i++) bars.push(structuredClone(source.bars[i % source.bars.length]))
-    tracks.push({ ...structuredClone(source), id: `${source.id}-${t}`, name: `${source.name} ${t + 1}`, bars })
-  }
-  return { ...demo, title: `Stress test (${barCount} bars × ${trackCount} tracks)`, tracks }
 }
