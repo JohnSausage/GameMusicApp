@@ -1,6 +1,6 @@
 // Note extraction only (no TensorFlow): importing from esm/toMidi keeps the model code in the worker.
 import { noteFramesToTime, outputToNotesPoly } from '@spotify/basic-pitch/esm/toMidi'
-import { midiToFrequency } from '../audio/chipVoice'
+import { midiToFrequency } from '../audio/pitch'
 import type { BasicPitchRequest, BasicPitchResponse } from './basicPitch.worker'
 import { toSingleNotes, type DetectedNote } from './notes'
 

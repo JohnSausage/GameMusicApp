@@ -657,3 +657,177 @@ kbd {
     min-height: 420px;
   }
 }
+
+/* ---------------------------------------------------------------- synth / instrument editor */
+
+.track-list-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.track-list-header h3 {
+  margin: 0;
+}
+
+.master-card {
+  margin-top: 16px;
+  cursor: default;
+}
+
+.instrument-editor {
+  width: min(1100px, 100%);
+}
+
+.preset-bar input {
+  width: 180px;
+}
+
+.file-button {
+  position: relative;
+  display: inline-flex;
+  flex-direction: row;
+  align-items: center;
+  font-size: 14px;
+  color: var(--text);
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  cursor: pointer;
+}
+
+.file-button input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.preset-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0 0 0 8px;
+}
+
+.synth-sections {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 12px;
+}
+
+.synth-sections .card {
+  margin: 0;
+  display: grid;
+  gap: 8px;
+  align-content: start;
+}
+
+.synth-sections h3 {
+  margin: 0;
+}
+
+.slider {
+  gap: 2px;
+}
+
+.slider-label {
+  display: flex;
+  justify-content: space-between;
+  color: var(--text);
+}
+
+.slider input[type='range'] {
+  width: 100%;
+}
+
+.waveform-buttons button {
+  padding: 6px 9px;
+}
+
+.toolbar.compact {
+  margin: 0;
+}
+
+.toolbar.compact button {
+  padding: 2px 8px;
+  font-size: 12px;
+}
+
+.envelope-graph {
+  color: var(--accent);
+}
+
+.preview-bar {
+  margin-top: 14px;
+}
+
+.piano {
+  position: relative;
+  height: 110px;
+  user-select: none;
+  touch-action: none;
+}
+
+.piano-key {
+  position: absolute;
+  top: 0;
+  box-sizing: border-box;
+  border: 1px solid #44403c;
+  border-radius: 0 0 5px 5px;
+  cursor: pointer;
+}
+
+.piano-key.white {
+  height: 100%;
+  background: #fafaf9;
+  z-index: 0;
+}
+
+.piano-key.black {
+  height: 62%;
+  background: #1c1917;
+  z-index: 1;
+}
+
+.piano-key.down {
+  background: var(--accent);
+}
+
+.piano-key span {
+  position: absolute;
+  bottom: 4px;
+  left: 0;
+  right: 0;
+  text-align: center;
+  font-size: 10px;
+  color: #57534e;
+}
+
+.synth-sections .card {
+  min-width: 0;
+}
+
+.waveform-buttons {
+  display: flex;
+  width: 100%;
+}
+
+.waveform-buttons button {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 2px;
+  font-size: 13px;
+}

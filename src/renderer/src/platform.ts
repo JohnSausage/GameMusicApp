@@ -21,6 +21,11 @@ interface ElectronBridge {
     save(data: Uint8Array, suggestedName: string, path?: string): Promise<string | null>
     setDirty(dirty: boolean): void
   }
+  presets: {
+    list(): Promise<{ id: string; text: string }[]>
+    save(name: string, text: string): Promise<string>
+    remove(id: string): Promise<void>
+  }
 }
 
 declare global {

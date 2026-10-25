@@ -1,7 +1,23 @@
 // Editing operations on the song. All of them are pure: they return a new song
 // (and where the cursor should be), or null when the edit isn't possible.
 // Bars are always kept exactly full, padding with rests where needed.
-import { barCount, createTrack, MAX_FRET, NOTE_VALUES, type Bar, type Beat, type NoteValue, type Song, type TakeInfo, type Track, type TrackKind } from './song'
+import {
+  barCount,
+  createTrack,
+  isBassTrack,
+  MASTER_DEFAULTS,
+  MAX_FRET,
+  NOTE_VALUES,
+  type Bar,
+  type Beat,
+  type MasterSettings,
+  type NoteValue,
+  type Song,
+  type TakeInfo,
+  type Track,
+  type TrackKind
+} from './song'
+import { factoryPreset } from './synth'
 
 export const TICKS_PER_QUARTER = 960
 
@@ -348,9 +364,48 @@ export function deleteTrack(song: Song, cursor: Cursor, index: number): EditResu
   })
 }
 
-export function updateTrack(song: Song, cursor: Cursor, index: number, patch: Partial<Pick<Track, 'name' | 'instrument' | 'volume'>>): EditResult {
+export function updateTrack(song: Song, cursor: Cursor, index: number, patch: Partial<Pick<Track, 'name' | 'instrument' | 'volume' | 'pan'>>): EditResult {
   return edit(song, cursor, (draft) => {
     Object.assign(draft.tracks[index], patch)
+  })!
+}
+
+export function updateMaster(song: Song, cursor: Cursor, patch: Partial<MasterSettings>): EditResult {
+  return edit(song, cursor, (draft) => {
+    draft.master = { ...MASTER_DEFAULTS, ...draft.master, ...patch }
+  })!
+}
+
+// ---------------------------------------------------------------- retro (SYN-31)
+
+/** True while "Make it retro" is active (some track remembers its original sound). */
+export function isRetro(song: Song): boolean {
+  return song.tracks.some((t) => t.originalInstrument !== undefined)
+}
+
+/**
+ * Gives every track an 8-bit sound by its role: bass → triangle, first guitar →
+ * 25 % pulse lead, second → 12.5 % pulse, others → 50 % square. The original
+ * sounds are kept so restoreSounds() can switch back; notes never change.
+ */
+export function makeRetro(song: Song, cursor: Cursor): EditResult {
+  return edit(song, cursor, (draft) => {
+    let leads = 0
+    for (const track of draft.tracks) {
+      const name = isBassTrack(track) ? 'Triangle bass' : ['8-bit lead', '8-bit thin lead'][leads++] ?? '8-bit square'
+      track.originalInstrument ??= track.instrument
+      track.instrument = { kind: 'synth', patch: factoryPreset(name) }
+    }
+  })!
+}
+
+export function restoreSounds(song: Song, cursor: Cursor): EditResult {
+  return edit(song, cursor, (draft) => {
+    for (const track of draft.tracks) {
+      if (!track.originalInstrument) continue
+      track.instrument = track.originalInstrument
+      delete track.originalInstrument
+    }
   })!
 }
 
