@@ -1,0 +1,61 @@
+name: Build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 26
+          cache: npm
+
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+
+      - name: Package (Linux AppImage)
+        if: runner.os == 'Linux'
+        run: npm run dist:linux
+
+      - name: Smoke test (Linux)
+        if: runner.os == 'Linux'
+        run: release/linux-unpacked/game-music-app --smoke-test --no-sandbox --ozone-platform=headless --ozone-override-screen-size=1600,1000
+
+      - name: Package (Windows installer + portable exe)
+        if: runner.os == 'Windows'
+        run: npm run dist:win
+
+      - name: Smoke test (Windows)
+        if: runner.os == 'Windows'
+        # Not yet verified on a Windows runner, so it reports without failing the build.
+        continue-on-error: true
+        timeout-minutes: 3
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath release\win-unpacked\GameMusicApp.exe -ArgumentList '--smoke-test' -Wait -PassThru
+          exit $p.ExitCode
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: GameMusicApp-${{ runner.os }}
+          path: |
+            release/*.AppImage
+            release/*.exe
+          if-no-files-found: error
+          retention-days: 14

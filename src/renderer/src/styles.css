@@ -1,0 +1,304 @@
+:root {
+  --bg: #f5f5f4;
+  --surface: #ffffff;
+  --text: #1c1917;
+  --muted: #78716c;
+  --border: #d6d3d1;
+  --accent: #2563eb;
+  --accent-text: #ffffff;
+  --danger: #dc2626;
+  --warning: #b45309;
+  --cursor: rgba(37, 99, 235, 0.35);
+  --selection: rgba(234, 179, 8, 0.35);
+  color-scheme: light;
+  font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+  font-size: 14px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1c1917;
+    --surface: #292524;
+    --text: #f5f5f4;
+    --muted: #a8a29e;
+    --border: #44403c;
+    --accent: #3b82f6;
+    --warning: #f59e0b;
+    color-scheme: dark;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+}
+
+header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+
+h1 {
+  font-size: 18px;
+  margin: 0;
+}
+
+h2 {
+  font-size: 16px;
+  margin: 20px 0 6px;
+}
+
+h3 {
+  font-size: 14px;
+  margin: 0 0 8px;
+}
+
+nav {
+  display: flex;
+  gap: 4px;
+  margin-left: auto;
+}
+
+button {
+  font: inherit;
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+}
+
+button:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+button.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-text);
+}
+
+button.danger {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: #fff;
+}
+
+button.link {
+  border: none;
+  background: none;
+  color: var(--accent);
+  padding: 0 6px;
+}
+
+input,
+select {
+  font: inherit;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+}
+
+input[type='number'] {
+  width: 90px;
+}
+
+label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+label.checkbox {
+  flex-direction: row;
+  align-items: center;
+}
+
+label.block {
+  margin: 12px 0;
+}
+
+label.block input {
+  width: 100%;
+}
+
+.badge {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--accent-text);
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.small {
+  font-size: 12px;
+}
+
+.big {
+  font-size: 20px;
+  margin: 0 0 12px;
+}
+
+.panel {
+  padding: 16px;
+}
+
+.toolbar,
+.form-row {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.toolbar {
+  align-items: center;
+}
+
+.spacer {
+  flex: 1;
+}
+
+.segmented {
+  display: inline-flex;
+}
+
+.segmented button {
+  border-radius: 0;
+}
+
+.segmented button:first-child {
+  border-radius: 6px 0 0 6px;
+}
+
+.segmented button:last-child {
+  border-radius: 0 6px 6px 0;
+}
+
+.tracks {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.track-row {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.info-line {
+  display: flex;
+  gap: 24px;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+
+.status {
+  color: var(--muted);
+}
+
+.warning {
+  color: var(--warning);
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 14px;
+  margin: 12px 0;
+}
+
+.results {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+  gap: 12px;
+}
+
+.metrics td {
+  padding: 2px 16px 2px 0;
+}
+
+.note-list {
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+  word-break: break-word;
+}
+
+.meter {
+  height: 10px;
+  background: var(--border);
+  border-radius: 5px;
+  overflow: hidden;
+  max-width: 480px;
+}
+
+.meter-fill {
+  height: 100%;
+  background: #16a34a;
+  transition: width 60ms linear;
+}
+
+.meter-fill.clipped {
+  background: var(--danger);
+}
+
+/* The score is always black on white, also in dark mode. */
+.score-scroll {
+  background: #fff;
+  color: #000;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: auto;
+  max-height: calc(100vh - 230px);
+}
+
+.score-host-wrapper {
+  position: relative;
+}
+
+.score-cursor,
+.score-selection {
+  position: absolute;
+  display: none;
+  pointer-events: none;
+}
+
+.score-cursor {
+  background: var(--cursor);
+}
+
+.score-selection {
+  background: var(--selection);
+  border-radius: 3px;
+}
+
+code {
+  font-family: ui-monospace, monospace;
+}
