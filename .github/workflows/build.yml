@@ -45,12 +45,15 @@ jobs:
 
       - name: Smoke test (Windows)
         if: runner.os == 'Windows'
-        # Not yet verified on a Windows runner, so it reports without failing the build.
-        continue-on-error: true
         timeout-minutes: 3
         shell: pwsh
         run: |
-          $p = Start-Process -FilePath release\win-unpacked\GameMusicApp.exe -ArgumentList '--smoke-test' -Wait -PassThru
+          $p = Start-Process -FilePath release\win-unpacked\GameMusicApp.exe -ArgumentList '--smoke-test' -Wait -PassThru `
+            -RedirectStandardOutput smoke-out.txt -RedirectStandardError smoke-err.txt
+          Select-String -Path smoke-out.txt -Pattern 'SMOKE_TEST_RESULT'
+          # `exit $null` would exit 0, so a missing exit code must count as a failure.
+          if ($null -eq $p.ExitCode) { Write-Host 'GameMusicApp.exe reported no exit code'; exit 1 }
+          Write-Host "GameMusicApp.exe exit code: $($p.ExitCode)"
           exit $p.ExitCode
 
       - uses: actions/upload-artifact@v7

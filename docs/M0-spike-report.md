@@ -4,7 +4,7 @@
 |---|---|
 | **Date** | 2026-10-25 |
 | **Goal** | Prove every risky part of the chosen stack works on Linux and Windows before building the real app (REQUIREMENTS.md §8). |
-| **Status** | Done except two checks. You confirmed playback, the synth switch and WAV export, and chose Basic Pitch for transcription. Still open: MIDI keyboard latency (waiting for a cable) and the Windows `.exe` (built by CI). See [§4](#4-what-still-needs-you). |
+| **Status** | Done except two checks. You confirmed playback, the synth switch and WAV export, and chose Basic Pitch for transcription. The Windows `.exe` builds and starts on CI. Still open: MIDI keyboard latency (waiting for a cable) and a hands-on test of the `.exe` by your friend. See [§4](#4-what-still-needs-you). |
 
 ## 1. What was built
 
@@ -31,7 +31,8 @@ A throwaway-quality but working Electron app with four tabs:
 | Transcription, synthesized test melody (17 notes) | ✅ Pitch tracker 17/17 in ~0.2–0.35 s; Basic Pitch 17/17 + 1 extra note in 3.7 s (GPU backend, in a worker) | Transcription lab → "Use demo melody as test take" |
 | Quantization + automatic fingering | ✅ The transcribed tab is identical to the hand-written demo tab (same notes, rhythm, strings and frets) | Transcription lab → "Show as tab" |
 | Electron production build | ✅ Starts via the `app://` protocol, score renders (~65 ms), preload bridge works, no console errors | `npm run smoke` (headless) |
-| Packaged Linux AppImage | ✅ Builds (128 MB) and passes the same smoke test | `npm run dist:linux`, then smoke test on `release/linux-unpacked` |
+| Packaged Linux AppImage | ✅ Builds (128 MB) and passes the same smoke test, locally and on CI (score rendered in 54 ms, no errors) | `npm run dist:linux`, then smoke test on `release/linux-unpacked`; GitHub Actions on `ubuntu-latest` |
+| Packaged Windows `.exe` | ✅ Installer and portable `.exe` build on CI. The unpacked app ran the smoke test for about 5 s and exited with 0 (passed). That first run couldn't rule out a missing exit code, so the check now treats one as a failure and also fails the build. | GitHub Actions on `windows-latest`, run for commit `9276de8` |
 | Unit tests | ✅ 22 tests: timing, note parsing, comparison, single-note filter, pitch tracker on synthetic plucked notes, fret assignment, quantization, WAV, MIDI | `npm test` |
 
 ## 3. Findings and decisions
@@ -62,7 +63,7 @@ Your test on 2026-10-25:
 Still open:
 
 1. **MIDI keyboard.** Once you have the cable: MIDI keyboard tab → Connect. Play some notes and write down the "Estimated key → sound" value. Does it feel instant? If it's above 50 ms, try `PULSE_LATENCY_MSEC=10 npm run dev`.
-2. **Windows.** GitHub Actions builds `GameMusicApp-0.0.1-portable.exe` and `GameMusicApp-0.0.1-setup.exe` for every pull request and every push to `main` (download them under *Actions → Build → Artifacts*). Your friend should see the score and hear playback after double-clicking the portable `.exe`.
+2. **Windows, hands-on.** The `.exe` starts on a Windows CI machine, but nobody has listened to it yet. GitHub Actions builds `GameMusicApp-0.0.1-portable.exe` and `GameMusicApp-0.0.1-setup.exe` for every pull request and every push to `main` (download them under *Actions → Build → Artifacts*). Your friend should see the score and hear playback after double-clicking the portable `.exe`.
 
 ## 5. Next step
 
