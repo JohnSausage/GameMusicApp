@@ -2,7 +2,7 @@ import * as alphaTab from '@coderline/alphatab'
 import bravuraWoff from '@coderline/alphatab/font/Bravura.woff?url'
 import bravuraWoff2 from '@coderline/alphatab/font/Bravura.woff2?url'
 import { useEffect, useMemo, useRef, type RefObject } from 'react'
-import type { Cursor } from '../model/edit'
+import { selectedRanges, type Cursor, type Selection } from '../model/edit'
 import type { Song } from '../model/song'
 import { beatAt, buildTimeline } from '../model/timing'
 import { songToAlphaTab, type BeatRef, type ConvertedScore } from './toAlphaTab'
@@ -21,7 +21,12 @@ interface Props {
   positionRef?: RefObject<number | null>
   /** Editing cursor: highlights the beat and the string on the tab. */
   editCursor?: Cursor | null
-  onScoreClick?: (target: ScoreTarget) => void
+  /** Selected beats, highlighted per bar. */
+  selection?: Selection | null
+  /** `extend` is true for Shift+click (extend the selection). */
+  onScoreClick?: (target: ScoreTarget, extend: boolean) => void
+  /** Called after dragging a rectangle over the score, with the beats inside it. */
+  onSelectArea?: (selection: Selection) => void
   /** Shown right after the last bar, e.g. "+ Bar" buttons. */
   endActions?: React.ReactNode
 }
@@ -100,6 +105,58 @@ function drawTabRests(container: HTMLElement, api: alphaTab.AlphaTabApi, convert
   })
 }
 
+/**
+ * The beat under a point, in the staff under the point. alphaTab's own
+ * getBeatAtPos() only uses y to find the line of music and then takes the
+ * nearest beat of *any* track, so clicks on a second track landed on the first.
+ */
+function beatAtPoint(api: alphaTab.AlphaTabApi, x: number, y: number): alphaTab.model.Beat | null {
+  const system = api.boundsLookup?.staffSystems.find((s) => y >= s.realBounds.y && y <= s.realBounds.y + s.realBounds.h)
+  const masterBar = system?.findBarAtPos(x)
+  if (!masterBar) return null
+  let staff: (typeof masterBar.bars)[number] | null = null
+  let nearest = Infinity
+  for (const bar of masterBar.bars) {
+    const top = bar.realBounds.y
+    const bottom = top + bar.realBounds.h
+    const distance = y < top ? top - y : y > bottom ? y - bottom : 0
+    if (distance < nearest) {
+      nearest = distance
+      staff = bar
+    }
+  }
+  return staff?.findBeatAtPos(x)?.beat ?? null
+}
+
+/** Top and bottom of a track's staves (notation and/or tab) in a bar. */
+function trackStavesY(api: alphaTab.AlphaTabApi, barIndex: number, trackIndex: number): { top: number; bottom: number } | null {
+  const bars = api.boundsLookup?.findMasterBarByIndex(barIndex)?.bars.filter((b) => b.bar.staff.track.index === trackIndex) ?? []
+  if (bars.length === 0) return null
+  return { top: Math.min(...bars.map((b) => b.realBounds.y)), bottom: Math.max(...bars.map((b) => b.realBounds.y + b.realBounds.h)) }
+}
+
+/** One highlight box per bar of the selection. */
+function drawSelection(container: HTMLElement, api: alphaTab.AlphaTabApi, converted: ConvertedScore, song: Song, selection: Selection | null | undefined): void {
+  container.replaceChildren()
+  if (!selection) return
+  for (const { bar, from, to } of selectedRanges(song, selection)) {
+    const beats = converted.beats[selection.track]?.[bar]
+    const first = beats?.[from] && api.boundsLookup?.findBeat(beats[from])
+    const last = beats?.[to] && api.boundsLookup?.findBeat(beats[to])
+    const staves = trackStavesY(api, bar, selection.track)
+    if (!first || !last || !staves) continue
+    const box = document.createElement('div')
+    box.className = 'score-selection-box'
+    place(box, {
+      x: first.visualBounds.x - 5,
+      y: staves.top - 4,
+      w: last.visualBounds.x + last.visualBounds.w - first.visualBounds.x + 10,
+      h: staves.bottom - staves.top + 8
+    })
+    container.appendChild(box)
+  }
+}
+
 function place(element: HTMLElement, box: Box | null): void {
   if (!box) {
     element.style.display = 'none'
@@ -131,7 +188,7 @@ function stringBox(api: alphaTab.AlphaTabApi, converted: ConvertedScore, cursor:
   return { x: bounds.visualBounds.x + bounds.visualBounds.w / 2 - w / 2, y: staff.y + (cursor.string - 1) * spacing - spacing / 2, w, h: spacing }
 }
 
-export function ScoreView({ song, staveMode, positionRef, editCursor, onScoreClick, endActions }: Props): React.JSX.Element {
+export function ScoreView({ song, staveMode, positionRef, editCursor, selection, onScoreClick, onSelectArea, endActions }: Props): React.JSX.Element {
   const scrollRef = useRef<HTMLDivElement>(null)
   const hostRef = useRef<HTMLDivElement>(null)
   const playCursorRef = useRef<HTMLDivElement>(null)
@@ -139,6 +196,12 @@ export function ScoreView({ song, staveMode, positionRef, editCursor, onScoreCli
   const editStringRef = useRef<HTMLDivElement>(null)
   const endRef = useRef<HTMLDivElement>(null)
   const restsRef = useRef<HTMLDivElement>(null)
+  const selectionLayerRef = useRef<HTMLDivElement>(null)
+  const marqueeRef = useRef<HTMLDivElement>(null)
+  const dragRef = useRef<{ x: number; y: number; active: boolean } | null>(null)
+  const suppressClickRef = useRef(false)
+  const renderVersionRef = useRef(0)
+  const drawnSelectionRef = useRef('')
   const apiRef = useRef<alphaTab.AlphaTabApi | null>(null)
   const convertedRef = useRef<ConvertedScore | null>(null)
   const renderStartRef = useRef(0)
@@ -157,6 +220,7 @@ export function ScoreView({ song, staveMode, positionRef, editCursor, onScoreCli
       scrollRef.current!.dataset.renderMs = (performance.now() - renderStartRef.current).toFixed(0)
     })
     api.postRenderFinished.on(() => {
+      renderVersionRef.current++
       const converted = convertedRef.current
       if (!converted || !restsRef.current) return
       if (staveModeRef.current === 'tab') restsRef.current.replaceChildren()
@@ -199,6 +263,12 @@ export function ScoreView({ song, staveMode, positionRef, editCursor, onScoreCli
         place(editStringRef.current!, box)
         if (box && editCursor) keepVisible(box, `${editCursor.track}/${editCursor.bar}/${editCursor.beat}`)
 
+        const selectionKey = `${renderVersionRef.current}|${JSON.stringify(selection ?? null)}`
+        if (selectionKey !== drawnSelectionRef.current) {
+          drawnSelectionRef.current = selectionKey
+          drawSelection(selectionLayerRef.current!, api, converted, song, selection)
+        }
+
         const lastBar = api.boundsLookup.staffSystems.at(-1)?.bars.at(-1)?.realBounds
         const end = endRef.current
         if (end && lastBar) {
@@ -223,17 +293,76 @@ export function ScoreView({ song, staveMode, positionRef, editCursor, onScoreCli
 
     frame = requestAnimationFrame(tick)
     return () => cancelAnimationFrame(frame)
-  }, [timeline, positionRef, editCursor])
+  }, [timeline, positionRef, editCursor, selection, song])
+
+  // Dragging a rectangle selects the beats under it (in the track where the drag started).
+  const relative = (event: React.PointerEvent<HTMLDivElement>): { x: number; y: number } => {
+    const rect = event.currentTarget.getBoundingClientRect()
+    return { x: event.clientX - rect.left, y: event.clientY - rect.top }
+  }
+
+  const onPointerDown = (event: React.PointerEvent<HTMLDivElement>): void => {
+    if (event.button !== 0 || !onSelectArea || (event.target as HTMLElement).closest('.score-end-actions')) return
+    dragRef.current = { ...relative(event), active: false }
+  }
+
+  const onPointerMove = (event: React.PointerEvent<HTMLDivElement>): void => {
+    const drag = dragRef.current
+    if (!drag) return
+    const { x, y } = relative(event)
+    if (!drag.active && Math.hypot(x - drag.x, y - drag.y) < 6) return
+    if (!drag.active) {
+      drag.active = true
+      event.currentTarget.setPointerCapture(event.pointerId)
+    }
+    place(marqueeRef.current!, { x: Math.min(x, drag.x), y: Math.min(y, drag.y), w: Math.abs(x - drag.x), h: Math.abs(y - drag.y) })
+  }
+
+  const onPointerUp = (event: React.PointerEvent<HTMLDivElement>): void => {
+    const drag = dragRef.current
+    dragRef.current = null
+    if (!drag?.active) return
+    suppressClickRef.current = true
+    place(marqueeRef.current!, null)
+    const { x, y } = relative(event)
+    selectArea({ x: Math.min(x, drag.x), y: Math.min(y, drag.y), w: Math.abs(x - drag.x), h: Math.abs(y - drag.y) }, drag, { x, y })
+  }
+
+  const selectArea = (area: Box, from: { x: number; y: number }, to: { x: number; y: number }): void => {
+    const api = apiRef.current
+    const converted = convertedRef.current
+    if (!api?.boundsLookup || !converted || !onSelectArea) return
+    const startBeat = beatAtPoint(api, from.x, from.y) ?? beatAtPoint(api, to.x, to.y)
+    const track = startBeat ? converted.refs.get(startBeat)?.trackIndex : undefined
+    if (track === undefined) return
+    let first: { bar: number; beat: number } | null = null
+    let last: { bar: number; beat: number } | null = null
+    converted.beats[track].forEach((beats, bar) => {
+      const staves = trackStavesY(api, bar, track)
+      if (!staves || staves.bottom < area.y || staves.top > area.y + area.h) return
+      beats.forEach((beat, index) => {
+        const bounds = api.boundsLookup?.findBeat(beat)?.visualBounds
+        if (!bounds || bounds.x + bounds.w < area.x || bounds.x > area.x + area.w) return
+        first ??= { bar, beat: index }
+        last = { bar, beat: index }
+      })
+    })
+    if (first && last) onSelectArea({ track, start: first, end: last })
+  }
 
   const handleClick = (event: React.MouseEvent<HTMLDivElement>): void => {
     const api = apiRef.current
     const converted = convertedRef.current
+    if (suppressClickRef.current) {
+      suppressClickRef.current = false
+      return
+    }
     if (!api?.boundsLookup || !converted || !onScoreClick) return
     if ((event.target as HTMLElement).closest('.score-end-actions')) return
     const rect = event.currentTarget.getBoundingClientRect()
     const x = event.clientX - rect.left
     const y = event.clientY - rect.top
-    const beat = api.boundsLookup.getBeatAtPos(x, y)
+    const beat = beatAtPoint(api, x, y)
     const ref = beat ? converted.refs.get(beat) : undefined
     if (!ref) return
 
@@ -244,17 +373,19 @@ export function ScoreView({ song, staveMode, positionRef, editCursor, onScoreCli
     if (staff && y >= staff.y - spacing && y <= staff.y + (strings - 1) * spacing + spacing) {
       string = Math.max(1, Math.min(strings, Math.round((y - staff.y) / spacing) + 1))
     }
-    onScoreClick({ ...ref, string })
+    onScoreClick({ ...ref, string }, event.shiftKey)
   }
 
   return (
     <div ref={scrollRef} className="score-scroll">
-      <div className="score-host-wrapper" onClick={handleClick}>
+      <div className="score-host-wrapper" onClick={handleClick} onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp}>
         <div ref={hostRef} className="score-host" />
+        <div ref={selectionLayerRef} className="score-selection-layer" />
         <div ref={restsRef} className="score-tab-rests" />
         <div ref={editColumnRef} className="score-edit-column" />
         <div ref={editStringRef} className="score-edit-string" />
         <div ref={playCursorRef} className="score-cursor" />
+        <div ref={marqueeRef} className="score-marquee" />
         {endActions && (
           <div ref={endRef} className="score-end-actions">
             {endActions}

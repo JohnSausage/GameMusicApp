@@ -16,7 +16,14 @@ import {
   moveBeat,
   moveString,
   moveTrack,
-  pasteBar,
+  clearSelection,
+  deleteSelection,
+  pasteBeats,
+  selectedRanges,
+  selectionBeats,
+  selectionBetween,
+  selectTrack,
+  setSelectionDuration,
   removeTake,
   restsFor,
   setDuration,
@@ -198,9 +205,9 @@ describe('bars and sections', () => {
   it('pastes a copied bar and drops notes on strings the target track lacks', () => {
     let song = setFret(newSong(), { ...start, string: 6 }, 3, QUARTER)!.song
     song = setFret(song, start, 1, QUARTER)!.song
-    const copied = structuredClone(song.tracks[0].bars[0])
+    const copied = structuredClone(song.tracks[0].bars[0].beats)
     song = addTrack(song, start, 'bass').song
-    const pasted = pasteBar(song, { track: 1, bar: 2, beat: 0, string: 1 }, copied)!.song
+    const pasted = pasteBeats(song, { track: 1, bar: 2, beat: 0, string: 1 }, copied)!.song
     expect(shape(pasted.tracks[1].bars[2])).toEqual(['4:1/1', '2.'])
   })
 })
@@ -289,5 +296,85 @@ describe('writeBars (inserting a transcription)', () => {
     expect(song.takes[0].name).toBe('Riff')
     expect(removeTake(song, start, 'take-1')!.song.takes).toEqual([])
     expect(removeTake(song, start, 'unknown')).toBeNull()
+  })
+})
+
+describe('selections', () => {
+  const note = (value: 4 | 8, fret: number) => ({ value, dotted: false, notes: [{ string: 1, fret, velocity: 96 }] })
+  const rest = (value: 2, dotted = false) => ({ value, dotted, notes: [] })
+  /** Bar 1: four 8th notes (frets 1–4) then a half rest; bar 2: quarter note (fret 5) then a dotted half rest. */
+  const song = (): Song => {
+    const s = newSong()
+    s.tracks[0].bars[0] = { beats: [note(8, 1), note(8, 2), note(8, 3), note(8, 4), rest(2)] }
+    s.tracks[0].bars[1] = { beats: [note(4, 5), rest(2, true)] }
+    return s
+  }
+
+  it('orders the ends and splits the range per bar', () => {
+    const sel = selectionBetween(0, { bar: 1, beat: 0 }, { bar: 0, beat: 2 })
+    expect(sel).toEqual({ track: 0, start: { bar: 0, beat: 2 }, end: { bar: 1, beat: 0 } })
+    expect(selectedRanges(song(), sel)).toEqual([
+      { bar: 0, from: 2, to: 4 },
+      { bar: 1, from: 0, to: 0 }
+    ])
+    expect(selectionBeats(song(), sel).map((b) => b.notes[0]?.fret ?? 'rest')).toEqual([3, 4, 'rest', 5])
+  })
+
+  it('selects a whole track', () => {
+    const sel = selectTrack(song(), 0)
+    expect(sel.start).toEqual({ bar: 0, beat: 0 })
+    expect(sel.end.bar).toBe(3)
+  })
+
+  it('shortens all selected notes; trailing rests take up the slack', () => {
+    const sel = selectionBetween(0, { bar: 0, beat: 0 }, { bar: 0, beat: 3 })
+    const result = setSelectionDuration(song(), start, sel, () => ({ value: 16, dotted: false }))!
+    expect(shape(result.song.tracks[0].bars[0])).toEqual(['16:1/1', '16:1/2', '16:1/3', '16:1/4', '2.'])
+    expectFullBars(result.song)
+  })
+
+  it('lengthens all selected notes using the rests at the end of the bar', () => {
+    const sel = selectionBetween(0, { bar: 0, beat: 0 }, { bar: 0, beat: 3 })
+    const result = setSelectionDuration(song(), start, sel, () => QUARTER)!
+    expect(shape(result.song.tracks[0].bars[0])).toEqual(['4:1/1', '4:1/2', '4:1/3', '4:1/4'])
+    expectFullBars(result.song)
+  })
+
+  it('refuses when the notes would not fit, instead of pushing notes out', () => {
+    const sel = selectionBetween(0, { bar: 0, beat: 0 }, { bar: 0, beat: 3 })
+    expect(setSelectionDuration(song(), start, sel, () => ({ value: 2, dotted: false }))).toBeNull()
+  })
+
+  it('works across bars, bar by bar', () => {
+    const sel = selectionBetween(0, { bar: 0, beat: 3 }, { bar: 1, beat: 0 })
+    const result = setSelectionDuration(song(), start, sel, () => ({ value: 8, dotted: true }))!
+    // The selection runs into bar 2, so it includes bar 1's half rest, which gets the new length too.
+    expect(shape(result.song.tracks[0].bars[0])).toEqual(['8:1/1', '8:1/2', '8:1/3', '8.:1/4', '8.', '4'])
+    expect(shape(result.song.tracks[0].bars[1])).toEqual(['8.:1/5', '2.', '16'])
+    expectFullBars(result.song)
+  })
+
+  it('clears the selection to rests, or removes it and closes the gap', () => {
+    const sel = selectionBetween(0, { bar: 0, beat: 1 }, { bar: 0, beat: 2 })
+    expect(shape(clearSelection(song(), start, sel)!.song.tracks[0].bars[0])).toEqual(['8:1/1', '8', '8', '8:1/4', '2'])
+    expect(shape(deleteSelection(song(), start, sel).song.tracks[0].bars[0])).toEqual(['8:1/1', '8:1/4', '2.'])
+    expect(clearSelection(song(), start, selectionBetween(0, { bar: 2, beat: 0 }, { bar: 3, beat: 0 }))).toBeNull()
+  })
+
+  it('pastes copied beats across a bar line and adds bars at the end', () => {
+    const copied = selectionBeats(song(), selectionBetween(0, { bar: 0, beat: 0 }, { bar: 0, beat: 3 })) // four 8ths = half a bar
+    const result = pasteBeats(song(), { ...start, bar: 3, beat: 0 }, [...copied, ...copied, ...copied])! // 1.5 bars
+    expect(barCount(result.song)).toBe(5)
+    expect(shape(result.song.tracks[0].bars[3])).toEqual(['8:1/1', '8:1/2', '8:1/3', '8:1/4', '8:1/1', '8:1/2', '8:1/3', '8:1/4'])
+    expect(shape(result.song.tracks[0].bars[4])).toEqual(['8:1/1', '8:1/2', '8:1/3', '8:1/4', '2'])
+    expectFullBars(result.song)
+  })
+
+  it('pastes in the middle of a bar, shortening the beat it lands in', () => {
+    const copied = selectionBeats(song(), selectionBetween(0, { bar: 1, beat: 0 }, { bar: 1, beat: 0 })) // one quarter
+    // Bar 2 is: quarter note, dotted half rest. Paste at the rest (starts at beat 2).
+    const result = pasteBeats(song(), { ...start, bar: 1, beat: 1 }, copied)!
+    expect(shape(result.song.tracks[0].bars[1])).toEqual(['4:1/5', '4:1/5', '2'])
+    expect(result.cursor).toMatchObject({ bar: 1, beat: 1 })
   })
 })
