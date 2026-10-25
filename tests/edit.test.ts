@@ -2,11 +2,13 @@ import { describe, expect, it } from 'vitest'
 import {
   addBars,
   addTrack,
+  barsHaveNotes,
   barTicks,
   beatTicks,
   clearBeat,
   createSong,
   deleteBar,
+  deleteBeat,
   deleteNote,
   deleteTrack,
   duplicateBar,
@@ -15,15 +17,18 @@ import {
   moveString,
   moveTrack,
   pasteBar,
+  removeTake,
   restsFor,
   setDuration,
   setFret,
   setSection,
   stepDuration,
   toggleDotted,
+  updateTake,
+  writeBars,
   type Cursor
 } from '../src/renderer/src/model/edit'
-import { barCount, type Bar, type Song } from '../src/renderer/src/model/song'
+import { barCount, type Bar, type Song, type TakeInfo } from '../src/renderer/src/model/song'
 
 const QUARTER = { value: 4, dotted: false } as const
 const start: Cursor = { track: 0, bar: 0, beat: 0, string: 1 }
@@ -82,6 +87,36 @@ describe('deleteNote / clearBeat', () => {
     expect(shape(deleteNote(song, start)!.song.tracks[0].bars[0])).toEqual(['4', '2.'])
     expect(deleteNote(song, { ...start, string: 2 })).toBeNull()
     expect(shape(clearBeat(song, start)!.song.tracks[0].bars[0])).toEqual(['4', '2.'])
+  })
+})
+
+describe('deleteBeat', () => {
+  // bar: quarter note, 8th rest, quarter note, then rests
+  const withGap = (): Song => {
+    let song = setFret(newSong(), start, 5, QUARTER)!.song // 4:5 + 2. rest
+    song = setDuration(song, { ...start, beat: 1 }, { value: 8, dotted: false })!.song // 4:5, 8 rest, rests…
+    song = setFret(song, { ...start, beat: 2 }, 7, QUARTER)!.song
+    return song
+  }
+
+  it('removes a rest and moves the rest of the bar up', () => {
+    const song = withGap()
+    expect(shape(song.tracks[0].bars[0])).toEqual(['4:1/5', '8', '4:1/7', '4', '8'])
+    const result = deleteBeat(song, { ...start, beat: 1 })!
+    expect(shape(result.song.tracks[0].bars[0])).toEqual(['4:1/5', '4:1/7', '2'])
+    expect(result.cursor.beat).toBe(1)
+    expectFullBars(result.song)
+  })
+
+  it('removes a note beat the same way', () => {
+    const result = deleteBeat(withGap(), start)!
+    expect(shape(result.song.tracks[0].bars[0])).toEqual(['8', '4:1/7', '2', '8'])
+    expectFullBars(result.song)
+  })
+
+  it('does nothing when only rests follow', () => {
+    expect(deleteBeat(withGap(), { ...start, beat: 3 })).toBeNull()
+    expect(deleteBeat(newSong(), start)).toBeNull()
   })
 })
 
@@ -203,5 +238,56 @@ describe('cursor movement', () => {
     twoTracks = setFret(twoTracks, { track: 1, bar: 0, beat: 0, string: 1 }, 0, { value: 2, dotted: false })!.song // half + half rest
     const cursor = moveTrack(twoTracks, { track: 0, bar: 0, beat: 1, string: 6 }, 1) // guitar beat 1 starts at a quarter
     expect(cursor).toEqual({ track: 1, bar: 0, beat: 0, string: 4 })
+  })
+})
+
+describe('writeBars (inserting a transcription)', () => {
+  const take: TakeInfo = { id: 'take-1', name: 'Take 1', sampleRate: 48000, tempo: 120, firstDownbeat: 2.3, createdAt: '2026-10-25T12:00:00.000Z' }
+  const transcribed = (): Bar[] => {
+    const song = setFret(newSong(), start, 5, QUARTER)!.song
+    return [song.tracks[0].bars[0], song.tracks[0].bars[1]]
+  }
+
+  it('replaces bars in one track and adds the take', () => {
+    const song = addTrack(newSong(), start, 'bass').song
+    const result = writeBars(song, start, 0, 1, transcribed(), take)!
+    expect(shape(result.song.tracks[0].bars[1])).toEqual(['4:1/5', '2.'])
+    expect(shape(result.song.tracks[1].bars[1])).toEqual(['1']) // other track untouched
+    expect(result.song.takes).toEqual([take])
+    expect(result.cursor).toEqual({ track: 0, bar: 1, beat: 0, string: 1 })
+  })
+
+  it('adds bars to every track when the transcription runs past the end', () => {
+    const song = addTrack(newSong(), start, 'bass').song
+    const result = writeBars(song, start, 0, 3, transcribed(), take)!
+    expect(barCount(result.song)).toBe(5)
+    expect(result.song.tracks.every((t) => t.bars.length === 5)).toBe(true)
+    expectFullBars(result.song)
+  })
+
+  it('updates a take that is already in the project instead of adding it twice', () => {
+    let song = writeBars(newSong(), start, 0, 0, transcribed(), take)!.song
+    song = writeBars(song, start, 0, 0, transcribed(), { ...take, firstDownbeat: 2.25 })!.song
+    expect(song.takes).toEqual([{ ...take, firstDownbeat: 2.25 }])
+  })
+
+  it('refuses bars that do not fill the time signature', () => {
+    const wrong = [{ beats: [{ value: 4 as const, dotted: false, notes: [] }] }]
+    expect(writeBars(newSong(), start, 0, 0, wrong)).toBeNull()
+    expect(writeBars(newSong(), start, 0, 0, [])).toBeNull()
+  })
+
+  it('tells whether inserting would overwrite notes', () => {
+    const song = setFret(newSong(), { ...start, bar: 2 }, 3, QUARTER)!.song
+    expect(barsHaveNotes(song, 0, 0, 2)).toBe(false)
+    expect(barsHaveNotes(song, 0, 1, 2)).toBe(true)
+  })
+
+  it('renames and removes takes', () => {
+    let song = writeBars(newSong(), start, 0, 0, transcribed(), take)!.song
+    song = updateTake(song, start, 'take-1', { name: 'Riff' })!.song
+    expect(song.takes[0].name).toBe('Riff')
+    expect(removeTake(song, start, 'take-1')!.song.takes).toEqual([])
+    expect(removeTake(song, start, 'unknown')).toBeNull()
   })
 })

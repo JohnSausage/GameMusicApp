@@ -1,6 +1,6 @@
 import { useCallback, useState } from 'react'
 import { clampCursor, type Cursor, type EditResult } from '../model/edit'
-import type { Song } from '../model/song'
+import type { ProjectAudio, Song } from '../model/song'
 
 const MAX_UNDO = 200
 
@@ -11,6 +11,8 @@ interface Snapshot {
 
 interface ProjectState extends Snapshot {
   path: string | null
+  /** Take audio by id. Not part of undo: takes are only ever added; saving drops unused ones. */
+  audio: ProjectAudio
   /** The song as last saved or opened; differs from `song` when there are unsaved changes. */
   savedSong: Song | null
   past: Snapshot[]
@@ -27,6 +29,7 @@ export interface Project {
   song: Song
   cursor: Cursor
   path: string | null
+  audio: ProjectAudio
   dirty: boolean
   canUndo: boolean
   canRedo: boolean
@@ -36,6 +39,7 @@ export interface Project {
   undo: () => void
   redo: () => void
   markSaved: (path: string, song: Song) => void
+  addTakeAudio: (id: string, samples: Float32Array) => void
 }
 
 const START_CURSOR: Cursor = { track: 0, bar: 0, beat: 0, string: 1 }
@@ -43,13 +47,13 @@ const START_CURSOR: Cursor = { track: 0, bar: 0, beat: 0, string: 1 }
 /** Holds the open project with undo/redo (EDIT-05). */
 export function useProject(): {
   project: Project | null
-  openProject: (song: Song, path: string | null, saved: boolean) => void
+  openProject: (song: Song, path: string | null, saved: boolean, audio?: ProjectAudio) => void
   closeProject: () => void
 } {
   const [state, setState] = useState<ProjectState | null>(null)
 
-  const openProject = useCallback((song: Song, path: string | null, saved: boolean) => {
-    setState({ song, cursor: START_CURSOR, path, savedSong: saved ? song : null, past: [], future: [], lastMergeKey: null })
+  const openProject = useCallback((song: Song, path: string | null, saved: boolean, audio: ProjectAudio = new Map()) => {
+    setState({ song, cursor: START_CURSOR, path, audio, savedSong: saved ? song : null, past: [], future: [], lastMergeKey: null })
   }, [])
 
   const closeProject = useCallback(() => setState(null), [])
@@ -71,6 +75,7 @@ export function useProject(): {
     song: state.song,
     cursor: state.cursor,
     path: state.path,
+    audio: state.audio,
     dirty: state.song !== state.savedSong,
     canUndo: state.past.length > 0,
     canRedo: state.future.length > 0,
@@ -88,7 +93,8 @@ export function useProject(): {
         if (!s || !next) return s
         return { ...s, ...next, past: [...s.past, { song: s.song, cursor: s.cursor }], future: s.future.slice(1), lastMergeKey: null }
       }),
-    markSaved: (path, song) => setState((s) => (s ? { ...s, path, savedSong: song } : s))
+    markSaved: (path, song) => setState((s) => (s ? { ...s, path, savedSong: song } : s)),
+    addTakeAudio: (id, samples) => setState((s) => (s ? { ...s, audio: new Map(s.audio).set(id, samples) } : s))
   }
   return { project, openProject, closeProject }
 }

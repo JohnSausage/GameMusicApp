@@ -1,4 +1,4 @@
-import { GM_ACOUSTIC_GUITAR_STEEL, type Bar, type Beat, type NoteValue, type Song } from '../model/song'
+import type { Bar, Beat, NoteValue } from '../model/song'
 import type { DetectedNote } from './notes'
 
 export interface FretPosition {
@@ -75,14 +75,26 @@ export function assignFrets(pitches: number[], tuning: number[], options: Partia
 }
 
 export interface QuantizeOptions {
+  /** Tempo the take was played at, in quarter notes per minute. */
   tempo: number
   /** Seconds into the take where bar 1, beat 1 starts. */
   firstDownbeat: number
   /** Grid steps per quarter note: 2 = eighths, 4 = sixteenths. */
   stepsPerQuarter: number
-  beatsPerBar: number
+  timeSignature: [number, number]
   tuning: number[]
-  title: string
+  /** Hand position the fingering should stay near (TRN-07). */
+  preferredFret: number
+}
+
+export interface Transcription {
+  bars: Bar[]
+  /** Notes placed into the bars. */
+  noteCount: number
+  /** Notes before beat 1 (e.g. noise during the count-in), not placed. */
+  beforeStart: number
+  /** Notes the guitar can't play in this tuning, or that landed on an occupied grid step. */
+  dropped: number
 }
 
 /** Splits a length in grid steps into note values, largest first (dotted values allowed). */
@@ -109,77 +121,58 @@ function splitIntoValues(steps: number, stepsPerQuarter: number): { value: NoteV
 }
 
 /**
- * Turns detected notes into a one-track song: quantize to the grid, choose frets,
- * fill gaps with rests. Spike simplification: notes that cross a bar line or need
- * a tie are shortened (ties come with the real editor in M2).
+ * Turns detected single notes into full bars of tab (TRN-05/06): quantize to
+ * the grid, choose strings and frets, fill gaps with rests. Notes that would
+ * cross a bar line are shortened to end at it (ties aren't in the model yet).
  */
-export function notesToSong(notes: DetectedNote[], o: QuantizeOptions): Song {
+export function transcribeToBars(notes: DetectedNote[], o: QuantizeOptions): Transcription {
+  const [beats, unit] = o.timeSignature
   const secondsPerStep = 60 / o.tempo / o.stepsPerQuarter
-  const stepsPerBar = o.beatsPerBar * o.stepsPerQuarter
+  const stepsPerBar = beats * (4 / unit) * o.stepsPerQuarter
 
+  let beforeStart = 0
+  let dropped = 0
   const placed: { step: number; length: number; pitch: number }[] = []
   for (const note of [...notes].sort((a, b) => a.start - b.start)) {
     const step = Math.round((note.start - o.firstDownbeat) / secondsPerStep)
-    if (step < 0 || placed.some((p) => p.step === step)) continue
-    placed.push({ step, length: Math.max(1, Math.round(note.duration / secondsPerStep)), pitch: note.pitch })
+    if (step < 0) beforeStart++
+    else if (placed.some((p) => p.step === step)) dropped++
+    else placed.push({ step, length: Math.max(1, Math.round(note.duration / secondsPerStep)), pitch: note.pitch })
   }
   placed.forEach((p, i) => {
     const next = placed[i + 1]
     if (next) p.length = Math.min(p.length, next.step - p.step)
   })
 
-  const frets = assignFrets(placed.map((p) => p.pitch), o.tuning)
+  const frets = assignFrets(placed.map((p) => p.pitch), o.tuning, { preferredFret: o.preferredFret })
+  dropped += frets.filter((f) => f === null).length
   const lastStep = placed.reduce((end, p) => Math.max(end, p.step + p.length), 0)
   const barCount = Math.max(1, Math.ceil(lastStep / stepsPerBar))
   const bars: Bar[] = Array.from({ length: barCount }, () => ({ beats: [] }))
 
-  const pushSpan = (fromStep: number, steps: number, fret: { string: number; fret: number } | null): void => {
-    const bar = bars[Math.floor(fromStep / stepsPerBar)]
-    splitIntoValues(steps, o.stepsPerQuarter).forEach((part, index) => {
-      const beat: Beat = { value: part.value, dotted: part.dotted, notes: [] }
-      if (index === 0 && fret) beat.notes.push({ ...fret, velocity: 96 })
-      bar.beats.push(beat)
-    })
-  }
-
-  let cursor = 0
-  placed.forEach((p, i) => {
-    const fret = frets[i]
-    for (const [from, to, isNote] of [[cursor, p.step, false], [p.step, p.step + p.length, true]] as const) {
-      let position = from
-      while (position < to) {
-        const barEnd = (Math.floor(position / stepsPerBar) + 1) * stepsPerBar
-        const end = Math.min(to, barEnd)
-        pushSpan(position, end - position, isNote && position === p.step ? fret : null)
-        position = end
-      }
-    }
-    cursor = p.step + p.length
-  })
-  if (cursor < barCount * stepsPerBar) {
-    let position = cursor
-    while (position < barCount * stepsPerBar) {
-      const end = (Math.floor(position / stepsPerBar) + 1) * stepsPerBar
-      pushSpan(position, end - position, null)
+  /** Adds beats for [from, to), split at bar lines; only the very first beat gets the note. */
+  const fill = (from: number, to: number, fret: FretPosition | null): void => {
+    let position = from
+    while (position < to) {
+      const end = Math.min(to, (Math.floor(position / stepsPerBar) + 1) * stepsPerBar)
+      const bar = bars[Math.floor(position / stepsPerBar)]
+      splitIntoValues(end - position, o.stepsPerQuarter).forEach((part, index) => {
+        const beat: Beat = { value: part.value, dotted: part.dotted, notes: [] }
+        if (fret && position === from && index === 0) beat.notes.push({ ...fret, velocity: 96 })
+        bar.beats.push(beat)
+      })
       position = end
+      if (fret) fret = null // the part after a bar line is a rest (no ties yet)
     }
   }
 
-  return {
-    title: o.title,
-    tempo: o.tempo,
-    timeSignature: [o.beatsPerBar, 4],
-    sections: [],
-    tracks: [
-      {
-        id: 'transcription',
-        name: 'Transcription',
-        tuning: o.tuning,
-        instrument: { kind: 'soundfont', program: GM_ACOUSTIC_GUITAR_STEEL },
-        volume: 0.9,
-        pan: 0,
-        bars
-      }
-    ]
-  }
+  let position = 0
+  placed.forEach((p, i) => {
+    fill(position, p.step, null)
+    fill(p.step, p.step + p.length, frets[i])
+    position = p.step + p.length
+  })
+  fill(position, barCount * stepsPerBar, null)
+
+  return { bars, noteCount: frets.filter((f) => f !== null).length, beforeStart, dropped }
 }

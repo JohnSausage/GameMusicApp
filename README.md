@@ -9,6 +9,7 @@ Compose game music on guitar: record or import a melody, get it as tab with nota
 
 - **Start page:** create a new project, open a `.gmsong` file, or pick one of your recent projects.
 - **Projects** are saved as `.gmsong` files (Ctrl+S); new ones go to `~/Documents/GameMusicApp/` by default. The recent list is kept in the app's settings folder (`~/.config/GameMusicApp/` on Linux).
+- **Record / import:** in the tab editor, "● Record / import" records your guitar (with a metronome count-in) or imports a WAV. Line up beat 1 on the waveform, let Basic Pitch transcribe it, check the result as tab and insert it into a track. Takes are saved in the project, so you can re-transcribe them later.
 - **Tab editor:** click a string in the tab or move with the arrow keys, then type fret numbers. Bars always stay full: shortening a note adds rests, lengthening it uses up what follows. "+ Bar" and "+ Section" after the last bar extend the song. All shortcuts are listed under the score.
 
 ## Development

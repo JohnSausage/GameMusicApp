@@ -1,7 +1,7 @@
 // Editing operations on the song. All of them are pure: they return a new song
 // (and where the cursor should be), or null when the edit isn't possible.
 // Bars are always kept exactly full, padding with rests where needed.
-import { barCount, createTrack, MAX_FRET, NOTE_VALUES, type Bar, type Beat, type NoteValue, type Song, type Track, type TrackKind } from './song'
+import { barCount, createTrack, MAX_FRET, NOTE_VALUES, type Bar, type Beat, type NoteValue, type Song, type TakeInfo, type Track, type TrackKind } from './song'
 
 export const TICKS_PER_QUARTER = 960
 
@@ -66,7 +66,7 @@ export interface NewSongOptions {
 
 /** A new project: one track with a few empty bars. */
 export function createSong(options: NewSongOptions): Song {
-  const song: Song = { title: options.title, tempo: options.tempo, timeSignature: options.timeSignature, tracks: [], sections: [] }
+  const song: Song = { title: options.title, tempo: options.tempo, timeSignature: options.timeSignature, tracks: [], sections: [], takes: [] }
   const bars = Array.from({ length: options.bars ?? 4 }, () => emptyBar(song))
   song.tracks.push(createTrack(options.firstTrack, bars))
   return song
@@ -120,6 +120,25 @@ export function clearBeat(song: Song, cursor: Cursor): EditResult | null {
   if (beatAt(song, cursor).notes.length === 0) return null
   return edit(song, cursor, (draft, c) => {
     beatAt(draft, c).notes = []
+  })
+}
+
+/**
+ * Removes the beat at the cursor (a rest or a note). The rest of the bar moves
+ * earlier to close the gap and the bar is filled up with rests at the end.
+ * Returns null when there's nothing after it to move (only rests follow).
+ */
+export function deleteBeat(song: Song, cursor: Cursor): EditResult | null {
+  const beats = song.tracks[cursor.track].bars[cursor.bar].beats
+  if (beats.slice(cursor.beat).every((b) => b.notes.length === 0)) return null
+  return edit(song, cursor, (draft, c) => {
+    const bar = draft.tracks[c.track].bars[c.bar]
+    const [removed] = bar.beats.splice(c.beat, 1)
+    let freed = beatTicks(removed)
+    // Merge the freed time with the rests already at the end of the bar.
+    while (bar.beats.length > 0 && bar.beats[bar.beats.length - 1].notes.length === 0) freed += beatTicks(bar.beats.pop()!)
+    bar.beats.push(...restsFor(freed))
+    return { ...c, beat: Math.min(c.beat, bar.beats.length - 1) }
   })
 }
 
@@ -249,6 +268,50 @@ export function pasteBar(song: Song, cursor: Cursor, bar: Bar): EditResult | nul
     for (const beat of copy.beats) beat.notes = beat.notes.filter((n) => n.string <= strings)
     draft.tracks[c.track].bars[c.bar] = copy
     return { ...c, beat: 0 }
+  })
+}
+
+/**
+ * Writes bars (e.g. a transcription) into a track from `startBar` on, replacing
+ * what was there and adding bars to the song when needed (TRN-09). The take the
+ * bars came from is added to the project, or updated (e.g. its alignment) if it
+ * is already there. Returns null if a bar isn't full.
+ */
+export function writeBars(song: Song, cursor: Cursor, trackIndex: number, startBar: number, bars: Bar[], take?: TakeInfo): EditResult | null {
+  if (bars.length === 0 || bars.some((bar) => bar.beats.reduce((sum, b) => sum + beatTicks(b), 0) !== barTicks(song))) return null
+  return edit(song, cursor, (draft) => {
+    const needed = startBar + bars.length - barCount(draft)
+    for (const track of draft.tracks) for (let i = 0; i < needed; i++) track.bars.push(emptyBar(draft))
+    bars.forEach((bar, i) => {
+      draft.tracks[trackIndex].bars[startBar + i] = structuredClone(bar)
+    })
+    if (take) {
+      const existing = draft.takes.findIndex((t) => t.id === take.id)
+      if (existing >= 0) draft.takes[existing] = take
+      else draft.takes.push(take)
+    }
+    return { track: trackIndex, bar: startBar, beat: 0, string: 1 }
+  })
+}
+
+/** True if any of the bars from `startBar` on (count bars) has notes in the track. */
+export function barsHaveNotes(song: Song, trackIndex: number, startBar: number, count: number): boolean {
+  return song.tracks[trackIndex].bars.slice(startBar, startBar + count).some((bar) => bar.beats.some((b) => b.notes.length > 0))
+}
+
+// ---------------------------------------------------------------- takes
+
+export function updateTake(song: Song, cursor: Cursor, id: string, patch: Partial<Pick<TakeInfo, 'name' | 'tempo' | 'firstDownbeat'>>): EditResult | null {
+  if (!song.takes.some((t) => t.id === id)) return null
+  return edit(song, cursor, (draft) => {
+    Object.assign(draft.takes.find((t) => t.id === id)!, patch)
+  })
+}
+
+export function removeTake(song: Song, cursor: Cursor, id: string): EditResult | null {
+  if (!song.takes.some((t) => t.id === id)) return null
+  return edit(song, cursor, (draft) => {
+    draft.takes = draft.takes.filter((t) => t.id !== id)
   })
 }
 

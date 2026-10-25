@@ -7,5 +7,7 @@ export default defineConfig({
   root: 'src/renderer',
   plugins: [react()],
   worker: { format: 'es' },
+  // See electron.vite.config.ts.
+  optimizeDeps: { include: ['@tensorflow/tfjs', '@spotify/basic-pitch', '@spotify/basic-pitch/esm/toMidi'] },
   server: { port: 5173, strictPort: true }
 })

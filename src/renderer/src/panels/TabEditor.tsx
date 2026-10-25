@@ -9,6 +9,7 @@ import {
   clearBar,
   clearBeat,
   deleteBar,
+  deleteBeat,
   deleteNote,
   deleteTrack,
   duplicateBar,
@@ -49,6 +50,7 @@ import { saveFile } from '../platform'
 import type { ApplyOptions, Project } from '../project/useProject'
 import { ScoreView, type ScoreTarget, type StaveMode } from '../score/ScoreView'
 import { noteName } from '../transcription/notes'
+import { TakeDialog } from './TakeDialog'
 import { usePlayback } from './usePlayback'
 
 const VALUE_LABELS: Record<NoteValue, { short: string; long: string }> = {
@@ -139,6 +141,7 @@ export function TabEditor({ project, getEngine }: Props): React.JSX.Element {
   const [message, setMessage] = useState('')
   const [clipboard, setClipboard] = useState<Bar | null>(null)
   const [busy, setBusy] = useState(false)
+  const [takeDialog, setTakeDialog] = useState(false)
   const pendingDigit = useRef<{ key: string; digit: number; at: number } | null>(null)
   const editorRef = useRef<HTMLDivElement>(null)
   const { playing, positionRef, play, stop } = usePlayback(getEngine)
@@ -210,6 +213,8 @@ export function TabEditor({ project, getEngine }: Props): React.JSX.Element {
     else edit(pasteBar(song, cursor, clipboard), "The copied bar doesn't fit this time signature.")
   }
 
+  const removeBeat = (): void => edit(deleteBeat(song, cursor), 'Only rests follow in this bar, so there is nothing to move up.')
+
   const addBar = (): void => edit(addBars(song, cursor, 1))
   const addSection = (): void => edit(addBars(song, cursor, 4, nextSectionName(song)))
 
@@ -224,7 +229,10 @@ export function TabEditor({ project, getEngine }: Props): React.JSX.Element {
     else if (key === 'ArrowUp') project.setCursor(ctrl ? moveTrack(song, cursor, -1) : moveString(song, cursor, -1))
     else if (key === 'ArrowDown') project.setCursor(ctrl ? moveTrack(song, cursor, 1) : moveString(song, cursor, 1))
     else if ((key === 'Delete' || key === 'Backspace') && ctrl) edit(deleteBar(song, cursor), 'A song needs at least one bar.')
-    else if (key === 'Delete' || key === 'Backspace') edit(deleteNote(song, cursor))
+    else if ((key === 'Delete' || key === 'Backspace') && (event.shiftKey || beat.notes.length === 0)) removeBeat()
+    else if (key === 'Delete' || key === 'Backspace') {
+      edit(deleteNote(song, cursor), 'No note on this string. Shift+Delete removes the whole beat.')
+    }
     else if (key === '+' || key === '=') edit(stepDuration(song, cursor, 'longer'), 'Not enough room left in this bar for a longer note.')
     else if (key === '-') edit(stepDuration(song, cursor, 'shorter'))
     else if (key === '.') edit(toggleDotted(song, cursor), 'Not enough room left in this bar for a dotted note.')
@@ -285,6 +293,15 @@ export function TabEditor({ project, getEngine }: Props): React.JSX.Element {
             <button className={staveMode === 'notation+tab' ? 'active' : ''} onClick={() => setStaveMode('notation+tab')}>Notation + tab</button>
             <button className={staveMode === 'tab' ? 'active' : ''} onClick={() => setStaveMode('tab')}>Tab only</button>
           </div>
+          <button
+            title="Record or import a take and transcribe it into this track"
+            onClick={() => {
+              stop()
+              setTakeDialog(true)
+            }}
+          >
+            ● Record / import
+          </button>
           <span className="spacer" />
           <button disabled={busy} onClick={() => void exportWav()}>Export WAV</button>
           <button onClick={() => void exportMidi()}>Export MIDI</button>
@@ -297,7 +314,7 @@ export function TabEditor({ project, getEngine }: Props): React.JSX.Element {
                 key={value}
                 className={beat.value === value ? 'active' : ''}
                 title={`${VALUE_LABELS[value].long} (+ / − change the length)`}
-                onClick={() => chooseDuration({ value, dotted: beat.dotted })}
+                onClick={() => chooseDuration({ value, dotted: false })}
               >
                 {VALUE_LABELS[value].short}
               </button>
@@ -307,6 +324,9 @@ export function TabEditor({ project, getEngine }: Props): React.JSX.Element {
             Dotted
           </button>
           <button title="Make this beat a rest (R)" onClick={() => edit(clearBeat(song, cursor))}>Rest</button>
+          <button title="Remove this beat or rest; the rest of the bar moves up (Shift+Delete, or Delete on a rest)" onClick={removeBeat}>
+            Delete beat
+          </button>
           <span className="divider" />
           <button title="Insert an empty bar before this one (Insert)" onClick={() => edit(insertBarBefore(song, cursor))}>Insert bar</button>
           <button title="Duplicate this bar (Ctrl+D)" onClick={() => edit(duplicateBar(song, cursor))}>Duplicate</button>
@@ -354,10 +374,22 @@ export function TabEditor({ project, getEngine }: Props): React.JSX.Element {
 
         <p className="shortcuts muted small">
           <kbd>←</kbd> <kbd>→</kbd> beat · <kbd>↑</kbd> <kbd>↓</kbd> string · <kbd>Ctrl</kbd>+<kbd>↑</kbd>/<kbd>↓</kbd> track · <kbd>Ctrl</kbd>+<kbd>←</kbd>/<kbd>→</kbd> bar ·
-          <kbd>0</kbd>–<kbd>9</kbd> fret (type two digits for 10–24) · <kbd>Del</kbd> remove note · <kbd>R</kbd> rest · <kbd>+</kbd> <kbd>−</kbd> length ·
+          <kbd>0</kbd>–<kbd>9</kbd> fret (type two digits for 10–24) · <kbd>Del</kbd> remove note or rest · <kbd>Shift</kbd>+<kbd>Del</kbd> remove beat · <kbd>R</kbd> rest · <kbd>+</kbd> <kbd>−</kbd> length ·
           <kbd>.</kbd> dotted · <kbd>Space</kbd> play · <kbd>Ctrl</kbd>+<kbd>Z</kbd>/<kbd>Y</kbd> undo/redo · <kbd>Ctrl</kbd>+<kbd>S</kbd> save
         </p>
       </div>
+
+      {takeDialog && (
+        <TakeDialog
+          project={project}
+          getEngine={getEngine}
+          onClose={(result) => {
+            setTakeDialog(false)
+            if (result) setMessage(result)
+            focus()
+          }}
+        />
+      )}
     </div>
   )
 }

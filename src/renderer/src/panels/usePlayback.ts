@@ -7,7 +7,7 @@ import type { GetEngine } from '../App'
 export function usePlayback(getEngine: GetEngine): {
   playing: boolean
   positionRef: React.RefObject<number | null>
-  play: (song: Song, from?: number) => Promise<void>
+  play: (song: Song, from?: number, startAt?: number) => Promise<void>
   stop: () => void
 } {
   const [playing, setPlaying] = useState(false)
@@ -30,11 +30,11 @@ export function usePlayback(getEngine: GetEngine): {
 
   useEffect(() => () => engineRef.current?.stop(), [])
 
-  const play = async (song: Song, from = 0): Promise<void> => {
+  const play = async (song: Song, from = 0, startAt?: number): Promise<void> => {
     const engine = await getEngine()
     engineRef.current = engine
     engine.onEnded = () => setPlaying(false)
-    await engine.play(song, from)
+    await engine.play(song, from, startAt)
     setPlaying(true)
   }
 

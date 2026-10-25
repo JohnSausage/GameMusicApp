@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AudioEngine } from './audio/engine'
-import type { Take } from './audio/recorder'
 import { createSong, type NewSongOptions } from './model/edit'
 import { createDemoSong } from './model/song'
 import { EditorPage } from './pages/EditorPage'
@@ -18,7 +17,6 @@ export function App(): React.JSX.Element {
   const { project, openProject, closeProject } = useProject()
   const [startError, setStartError] = useState('')
   const [saveStatus, setSaveStatus] = useState('')
-  const [take, setTake] = useState<Take | null>(null)
   const engine = useRef<Promise<AudioEngine> | null>(null)
 
   // Created on first use: browsers only start audio after a user gesture.
@@ -42,9 +40,9 @@ export function App(): React.JSX.Element {
     try {
       const opened = await storage.open(path)
       if (!opened) return
-      const song = parseProject(opened.data)
+      const { song, audio } = parseProject(opened.data)
       await storage.recordRecent(opened.path, song.title)
-      openProject(song, opened.path, true)
+      openProject(song, opened.path, true, audio)
     } catch (error) {
       setStartError(error instanceof ProjectFileError ? error.message : `Could not open the project: ${errorText(error)}`)
     }
@@ -56,7 +54,7 @@ export function App(): React.JSX.Element {
     if (!project) return
     const song = project.song
     try {
-      const path = await storage.save(serializeProject(song), suggestedFileName(song.title), saveAs ? undefined : (project.path ?? undefined))
+      const path = await storage.save(serializeProject(song, project.audio), suggestedFileName(song.title), saveAs ? undefined : (project.path ?? undefined))
       if (!path) return
       project.markSaved(path, song)
       await storage.recordRecent(path, song.title)
@@ -106,8 +104,6 @@ export function App(): React.JSX.Element {
       saveStatus={saveStatus}
       onSave={(saveAs) => void save(saveAs)}
       onHome={goHome}
-      take={take}
-      onTake={setTake}
     />
   )
 }
