@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Document version** | 0.3 (ready for implementation) |
+| **Document version** | 0.4 (ready for implementation) |
 | **Date** | 2026-10-25 |
 | **Status** | All open questions answered (see [§11](#11-decisions-from-the-qa-rounds)). |
 | **Product name** | *GameMusicApp* (working title) |
@@ -479,7 +479,7 @@ The whole app is one language, and `electron-builder` produces both a Linux AppI
 | Recording, metronome | Web Audio API (`getUserMedia` + AudioWorklet) | – |
 | MIDI keyboard input | Web MIDI API (permission granted via Electron's permission handler) | – |
 | WAV import | Web Audio `decodeAudioData` (or a small WAV parser for 24-bit/float edge cases) | – |
-| Transcription | Basic Pitch (`@spotify/basic-pitch`) and/or a YIN/pYIN pitch tracker with onset detection, in a Web Worker. Pick in M0 by accuracy on your recordings. | Apache-2.0 / own code |
+| Transcription | Basic Pitch (`@spotify/basic-pitch`) in a Web Worker, plus our single-note filter. Chosen in M0: it worked better than a YIN/MPM pitch tracker on your acoustic recordings. | Apache-2.0 |
 | Tuner | YIN / McLeod pitch method (e.g. `pitchy`) | MIT |
 | **Audio engine** (playback + export) | Own code: schedules notes from the song model to instruments, then per-track effects, then the mixer. The same graph runs in real time (`AudioContext`) and offline for export (`OfflineAudioContext`), which guarantees PLAY-09. | – |
 | SoundFont instruments | SpessaSynth (SF2/SF3 synthesizer for Web Audio, supports offline rendering). Verify in M0. | Apache-2.0 |
@@ -516,7 +516,7 @@ The whole app is one language, and `electron-builder` produces both a Linux AppI
 
 ### 6.3 Transcription pipeline
 1. **Get audio:** either record (mono, 44.1/48 kHz, voice processing off, start aligned to the bar after the count-in) or import a WAV and align it (REC-21: tempo + first downbeat).
-2. **Detect:** run the pitch detector chosen in M0. Basic Pitch (input resampled to 22.05 kHz) or YIN/pYIN pitch tracking with onset detection. Output: note events (onset in s, offset in s, MIDI pitch, amplitude).
+2. **Detect:** run Basic Pitch (input resampled to 22.05 kHz). Output: note events (onset in s, offset in s, MIDI pitch, amplitude).
 3. **Filter:** drop notes outside the instrument range, shorter than the minimum length or below the threshold. In single-note mode, keep only one note at a time and fix octave errors (a note exactly one octave above its neighbors with a weak fundamental is usually an overtone).
 4. **Align and quantize:** convert seconds to beats using the tempo, downbeat offset and latency offset, then snap to the grid.
 5. **Build rhythm:** fill gaps with rests and split notes that cross bar lines into tied notes.
@@ -629,3 +629,4 @@ These are already in the requirements above. They are collected here because the
 | 0.1 | 2026-10-25 | Initial draft |
 | 0.2 | 2026-10-25 | Answers to Q1–Q5 and Q8: acoustic guitar + mic, WAV import with alignment, single-note transcription as primary target, retro sound section, own audio engine, stack confirmed |
 | 0.3 | 2026-10-25 | Answers to Q6, Q7, Q9–Q16: synthesizer with instrument editor and presets, MIDI keyboard input, techniques and adaptive-music features moved to later, milestones split into Band (M3) and Synth (M4) |
+| 0.4 | 2026-10-25 | M0 result: Basic Pitch chosen for transcription (see docs/M0-spike-report.md) |

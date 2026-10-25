@@ -1,0 +1,23 @@
+appId: com.johnsausage.gamemusicapp
+productName: GameMusicApp
+directories:
+  output: release
+files:
+  - out/**
+  - package.json
+artifactName: ${productName}-${version}-${arch}.${ext}
+linux:
+  target:
+    - AppImage
+  category: Audio
+win:
+  target:
+    - nsis
+    - portable
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  artifactName: ${productName}-${version}-setup.${ext}
+portable:
+  artifactName: ${productName}-${version}-portable.${ext}
