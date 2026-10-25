@@ -1,10 +1,12 @@
 // The .gmsong project file (REQUIREMENTS.md PRJ-02, PRJ-07): a zip archive with
-// song.json inside. Recorded takes will be added to the archive later.
-import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate'
-import { NOTE_VALUES, type Song } from '../model/song'
+// song.json and one audio/<take id>.wav per recorded or imported take.
+import { strFromU8, strToU8, unzipSync, zipSync, type Zippable } from 'fflate'
+import { decodeWav16, encodeWav16 } from '../audio/wav'
+import { NOTE_VALUES, type ProjectAudio, type Song, type TakeInfo } from '../model/song'
 
 export const PROJECT_EXTENSION = 'gmsong'
-export const FORMAT_VERSION = 1
+/** 1: song only. 2: adds takes (song.takes + audio files). */
+export const FORMAT_VERSION = 2
 
 interface ProjectJson {
   app: 'GameMusicApp'
@@ -13,14 +15,25 @@ interface ProjectJson {
   song: Song
 }
 
-export class ProjectFileError extends Error {}
-
-export function serializeProject(song: Song): Uint8Array {
-  const json: ProjectJson = { app: 'GameMusicApp', formatVersion: FORMAT_VERSION, savedAt: new Date().toISOString(), song }
-  return zipSync({ 'song.json': strToU8(JSON.stringify(json, null, 2)) })
+export interface ProjectData {
+  song: Song
+  audio: Map<string, Float32Array>
 }
 
-export function parseProject(data: Uint8Array): Song {
+export class ProjectFileError extends Error {}
+
+const takeFile = (id: string): string => `audio/${id}.wav`
+
+/** Takes without audio are left out, so the file never refers to missing audio. */
+export function serializeProject(song: Song, audio: ProjectAudio = new Map()): Uint8Array {
+  const takes = song.takes.filter((t) => audio.has(t.id))
+  const json: ProjectJson = { app: 'GameMusicApp', formatVersion: FORMAT_VERSION, savedAt: new Date().toISOString(), song: { ...song, takes } }
+  const files: Zippable = { 'song.json': strToU8(JSON.stringify(json, null, 2)) }
+  for (const take of takes) files[takeFile(take.id)] = [encodeWav16([audio.get(take.id)!], take.sampleRate), { level: 1 }]
+  return zipSync(files)
+}
+
+export function parseProject(data: Uint8Array): ProjectData {
   let files: Record<string, Uint8Array>
   try {
     files = unzipSync(data)
@@ -42,7 +55,20 @@ export function parseProject(data: Uint8Array): Song {
   if (json.formatVersion > FORMAT_VERSION) {
     throw new ProjectFileError('This project was saved by a newer version of GameMusicApp. Please update the app to open it.')
   }
-  return checkSong(json.song)
+
+  const song = checkSong(json.song)
+  const audio = new Map<string, Float32Array>()
+  for (const take of song.takes) {
+    const file = files[takeFile(take.id)]
+    if (!file) continue
+    try {
+      audio.set(take.id, decodeWav16(file).channels[0])
+    } catch {
+      throw new ProjectFileError(`The project file is damaged: the audio of take "${take.name}" can't be read.`)
+    }
+  }
+  // A take whose audio file is missing can't be played or transcribed, so it is dropped.
+  return { song: { ...song, takes: song.takes.filter((t) => audio.has(t.id)) }, audio }
 }
 
 function fail(detail: string): never {
@@ -50,6 +76,18 @@ function fail(detail: string): never {
 }
 
 const isInt = (v: unknown): v is number => Number.isInteger(v)
+
+function checkTakes(value: unknown): TakeInfo[] {
+  if (value === undefined) return []
+  if (!Array.isArray(value)) fail('invalid take list')
+  for (const take of value as TakeInfo[]) {
+    if (typeof take.id !== 'string' || !/^[\w-]+$/.test(take.id) || typeof take.name !== 'string') fail('a take has no valid id or name')
+    if (!isInt(take.sampleRate) || take.sampleRate <= 0 || typeof take.tempo !== 'number' || typeof take.firstDownbeat !== 'number') {
+      fail(`take "${take.name}" has invalid timing`)
+    }
+  }
+  return value as TakeInfo[]
+}
 
 /** Checks the structure we rely on, so a damaged file fails here instead of crashing the editor. */
 function checkSong(value: unknown): Song {
@@ -79,7 +117,7 @@ function checkSong(value: unknown): Song {
       }
     })
   })
-  return { ...song, sections: Array.isArray(song.sections) ? song.sections : [] }
+  return { ...song, sections: Array.isArray(song.sections) ? song.sections : [], takes: checkTakes(song.takes) }
 }
 
 /** File name for a new project, from its title. */

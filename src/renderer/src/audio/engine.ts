@@ -81,7 +81,8 @@ export class AudioEngine {
     return Math.max(p.from, p.from + this.ctx.currentTime - p.startTime - (this.ctx.outputLatency || 0))
   }
 
-  async play(song: Song, from = 0): Promise<void> {
+  /** Plays from song time `from`; `startAt` (context time) lets other audio start in sync. */
+  async play(song: Song, from = 0, startAt?: number): Promise<void> {
     this.stop()
     await this.ctx.resume()
     const synth = this.synth!
@@ -100,7 +101,7 @@ export class AudioEngine {
       song,
       timeline,
       from,
-      startTime: this.ctx.currentTime + 0.08,
+      startTime: startAt ?? this.ctx.currentTime + 0.08,
       nextNote: timeline.notes.findIndex((n) => n.start >= from),
       timer: 0,
       voices: [],
@@ -184,14 +185,17 @@ export class AudioEngine {
     }
   }
 
-  /** Metronome clicks; the first beat of each bar is accented. Returns a stop function. */
-  scheduleClicks(startTime: number, bpm: number, beats: number, beatsPerBar: number): () => void {
+  /**
+   * Metronome clicks; the first click of each bar is accented. `firstBeatInBar`
+   * says where in the bar the first click falls. Returns a stop function.
+   */
+  scheduleClicks(startTime: number, secondsPerClick: number, count: number, clicksPerBar: number, firstBeatInBar = 0): () => void {
     const oscillators: OscillatorNode[] = []
-    for (let i = 0; i < beats; i++) {
-      const t = startTime + (i * 60) / bpm
+    for (let i = 0; i < count; i++) {
+      const t = startTime + i * secondsPerClick
       const osc = this.ctx.createOscillator()
       const gain = this.ctx.createGain()
-      osc.frequency.value = i % beatsPerBar === 0 ? 1500 : 1000
+      osc.frequency.value = (i + firstBeatInBar) % clicksPerBar === 0 ? 1500 : 1000
       gain.gain.setValueAtTime(0.3, t)
       gain.gain.exponentialRampToValueAtTime(0.001, t + 0.05)
       osc.connect(gain).connect(this.master)
@@ -208,14 +212,14 @@ export class AudioEngine {
     })
   }
 
-  /** Plays an audio buffer (e.g. a recorded take). Returns a stop function. */
-  playBuffer(buffer: AudioBuffer, onEnded?: () => void): () => void {
+  /** Plays an audio buffer (e.g. a recorded take), now or at context time `when`. Returns a stop function. */
+  playBuffer(buffer: AudioBuffer, onEnded?: () => void, when = 0): () => void {
     void this.ctx.resume()
     const source = this.ctx.createBufferSource()
     source.buffer = buffer
     source.connect(this.master)
     source.onended = () => onEnded?.()
-    source.start()
+    source.start(when)
     return () => source.stop()
   }
 }

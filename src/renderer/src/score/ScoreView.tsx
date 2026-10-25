@@ -69,6 +69,37 @@ function tabStaff(api: alphaTab.AlphaTabApi, barIndex: number, trackIndex: numbe
   return bars.at(-1)?.realBounds ?? null
 }
 
+/** SMuFL rest symbols (alphaTab's Bravura font), by alphaTab duration value. */
+const REST_GLYPHS: Record<number, string> = { 1: '\uE4E3', 2: '\uE4E4', 4: '\uE4E5', 8: '\uE4E6', 16: '\uE4E7', 32: '\uE4E8' }
+const AUGMENTATION_DOT = '\uE1E7'
+
+/**
+ * alphaTab only draws rests on the tab staff when no notation is shown. With
+ * notation, we draw them on the tab ourselves so rests can be seen and clicked there.
+ */
+function drawTabRests(container: HTMLElement, api: alphaTab.AlphaTabApi, converted: ConvertedScore, song: Song): void {
+  container.replaceChildren()
+  const spacing = tabLineSpacing(api)
+  converted.beats.forEach((trackBeats, trackIndex) => {
+    const strings = song.tracks[trackIndex]?.tuning.length ?? 6
+    trackBeats.forEach((barBeats, barIndex) => {
+      const staff = tabStaff(api, barIndex, trackIndex)
+      if (!staff) return
+      for (const beat of barBeats) {
+        if (beat.notes.length > 0) continue
+        const bounds = api.boundsLookup?.findBeat(beat)
+        if (!bounds) continue
+        const rest = document.createElement('span')
+        rest.className = 'tab-rest'
+        rest.textContent = (REST_GLYPHS[beat.duration] ?? REST_GLYPHS[4]) + (beat.dots > 0 ? AUGMENTATION_DOT : '')
+        rest.style.left = `${bounds.visualBounds.x + bounds.visualBounds.w / 2}px`
+        rest.style.top = `${staff.y + ((strings - 1) * spacing) / 2}px`
+        container.appendChild(rest)
+      }
+    })
+  })
+}
+
 function place(element: HTMLElement, box: Box | null): void {
   if (!box) {
     element.style.display = 'none'
@@ -107,10 +138,15 @@ export function ScoreView({ song, staveMode, positionRef, editCursor, onScoreCli
   const editColumnRef = useRef<HTMLDivElement>(null)
   const editStringRef = useRef<HTMLDivElement>(null)
   const endRef = useRef<HTMLDivElement>(null)
+  const restsRef = useRef<HTMLDivElement>(null)
   const apiRef = useRef<alphaTab.AlphaTabApi | null>(null)
   const convertedRef = useRef<ConvertedScore | null>(null)
   const renderStartRef = useRef(0)
   const scrolledToRef = useRef('')
+  const songRef = useRef(song)
+  songRef.current = song
+  const staveModeRef = useRef(staveMode)
+  staveModeRef.current = staveMode
 
   const timeline = useMemo(() => buildTimeline(song), [song])
 
@@ -119,6 +155,12 @@ export function ScoreView({ song, staveMode, positionRef, editCursor, onScoreCli
     apiRef.current = api
     api.renderFinished.on(() => {
       scrollRef.current!.dataset.renderMs = (performance.now() - renderStartRef.current).toFixed(0)
+    })
+    api.postRenderFinished.on(() => {
+      const converted = convertedRef.current
+      if (!converted || !restsRef.current) return
+      if (staveModeRef.current === 'tab') restsRef.current.replaceChildren()
+      else drawTabRests(restsRef.current, api, converted, songRef.current)
     })
     api.error.on((error) => console.error('alphaTab error', error))
     return () => {
@@ -209,6 +251,7 @@ export function ScoreView({ song, staveMode, positionRef, editCursor, onScoreCli
     <div ref={scrollRef} className="score-scroll">
       <div className="score-host-wrapper" onClick={handleClick}>
         <div ref={hostRef} className="score-host" />
+        <div ref={restsRef} className="score-tab-rests" />
         <div ref={editColumnRef} className="score-edit-column" />
         <div ref={editStringRef} className="score-edit-string" />
         <div ref={playCursorRef} className="score-cursor" />

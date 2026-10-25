@@ -9,25 +9,9 @@ export interface DetectedNote {
 }
 
 const NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
-const SEMITONES: Record<string, number> = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 }
 
 export function noteName(pitch: number): string {
   return `${NAMES[pitch % 12]}${Math.floor(pitch / 12) - 1}`
-}
-
-/** Parses "E4 F#4 Bb3 64" into MIDI numbers. Throws on unknown tokens. */
-export function parseNoteList(text: string): number[] {
-  return text
-    .split(/[\s,]+/)
-    .filter(Boolean)
-    .map((token) => {
-      if (/^\d+$/.test(token)) return Number(token)
-      const match = /^([A-Ga-g])([#b]?)(-?\d)$/.exec(token)
-      if (!match) throw new Error(`Unknown note "${token}"`)
-      const [, letter, accidental, octave] = match
-      const shift = accidental === '#' ? 1 : accidental === 'b' ? -1 : 0
-      return (Number(octave) + 1) * 12 + SEMITONES[letter.toUpperCase()] + shift
-    })
 }
 
 const CHORD_WINDOW = 0.05

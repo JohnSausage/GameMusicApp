@@ -57,12 +57,36 @@ export interface Section {
   name: string
 }
 
+/**
+ * A recorded or imported take kept in the project (REC-08). Only the metadata
+ * lives in the song; the audio is held separately (see ProjectAudio) so undo
+ * snapshots don't copy it.
+ */
+export interface TakeInfo {
+  id: string
+  name: string
+  sampleRate: number
+  /** Tempo the take was played at, in quarter notes per minute. */
+  tempo: number
+  /** Seconds into the take where bar 1, beat 1 is. */
+  firstDownbeat: number
+  createdAt: string
+}
+
 export interface Song {
   title: string
   tempo: number
   timeSignature: [number, number]
   tracks: Track[]
   sections: Section[]
+  takes: TakeInfo[]
+}
+
+/** Audio of the project's takes: mono samples by take id. */
+export type ProjectAudio = ReadonlyMap<string, Float32Array>
+
+export function takeSeconds(take: TakeInfo, audio: ProjectAudio): number {
+  return (audio.get(take.id)?.length ?? 0) / take.sampleRate
 }
 
 export type TrackKind = 'guitar' | 'bass'
@@ -125,6 +149,7 @@ export function createDemoSong(): Song {
     tempo: 120,
     timeSignature: [4, 4],
     sections: [],
+    takes: [],
     tracks: [
       {
         id: 'guitar',

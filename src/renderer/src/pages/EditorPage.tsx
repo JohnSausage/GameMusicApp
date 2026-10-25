@@ -1,14 +1,11 @@
 import { useState } from 'react'
 import type { GetEngine } from '../App'
-import type { Take } from '../audio/recorder'
 import { updateSong } from '../model/edit'
 import { MidiPanel } from '../panels/MidiPanel'
-import { RecordPanel } from '../panels/RecordPanel'
 import { TabEditor } from '../panels/TabEditor'
-import { TranscriptionPanel } from '../panels/TranscriptionPanel'
 import type { Project } from '../project/useProject'
 
-const TABS = ['Tab editor', 'Record & import', 'MIDI keyboard', 'Transcription lab'] as const
+const TABS = ['Tab editor', 'MIDI keyboard'] as const
 type Tab = (typeof TABS)[number]
 
 interface Props {
@@ -17,18 +14,11 @@ interface Props {
   saveStatus: string
   onSave: (saveAs: boolean) => void
   onHome: () => void
-  take: Take | null
-  onTake: (take: Take) => void
 }
 
-export function EditorPage({ project, getEngine, saveStatus, onSave, onHome, take, onTake }: Props): React.JSX.Element {
+export function EditorPage({ project, getEngine, saveStatus, onSave, onHome }: Props): React.JSX.Element {
   const [tab, setTab] = useState<Tab>('Tab editor')
   const { song, cursor } = project
-
-  const useInLab = (t: Take): void => {
-    onTake(t)
-    setTab('Transcription lab')
-  }
 
   return (
     <div className="app">
@@ -69,9 +59,7 @@ export function EditorPage({ project, getEngine, saveStatus, onSave, onHome, tak
       </header>
       <main>
         {tab === 'Tab editor' && <TabEditor project={project} getEngine={getEngine} />}
-        {tab === 'Record & import' && <RecordPanel getEngine={getEngine} take={take} onTake={onTake} onUseInLab={useInLab} />}
         {tab === 'MIDI keyboard' && <MidiPanel getEngine={getEngine} />}
-        {tab === 'Transcription lab' && <TranscriptionPanel getEngine={getEngine} take={take} onTake={onTake} />}
       </main>
     </div>
   )

@@ -555,3 +555,105 @@ kbd {
 .editor-main .shortcuts {
   margin: 8px 0 0;
 }
+
+/* ---------------------------------------------------------------- record / import dialog */
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 40px 16px;
+  overflow: auto;
+  background: rgba(0, 0, 0, 0.45);
+}
+
+.modal {
+  position: relative;
+  width: min(980px, 100%);
+  padding: 20px 24px;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.35);
+}
+
+.modal h2 {
+  margin-top: 0;
+  padding-right: 40px;
+}
+
+.modal-close {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+}
+
+.waveform {
+  margin: 10px 0;
+}
+
+.waveform canvas {
+  display: block;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: crosshair;
+}
+
+.take-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.take-list li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.take-list .toolbar {
+  margin: 0;
+}
+
+.dialog-score .score-scroll {
+  max-height: 340px;
+}
+
+.dialog-actions {
+  margin-top: 16px;
+}
+
+/* Rests drawn on the tab staff (see drawTabRests in ScoreView). */
+.score-tab-rests {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.tab-rest {
+  position: absolute;
+  transform: translateX(-50%);
+  font-family: alphaTab;
+  font-size: 26px;
+  line-height: 0;
+  color: #000;
+}
+
+/* Narrow windows: the track list goes above the score instead of beside it. */
+@media (max-width: 800px) {
+  .tab-editor {
+    grid-template-columns: minmax(0, 1fr);
+    height: auto;
+  }
+
+  .editor-main .score-scroll {
+    min-height: 420px;
+  }
+}

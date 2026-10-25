@@ -60,34 +60,73 @@ async function runSmokeTest(win: BrowserWindow): Promise<void> {
     console.log('SMOKE_TEST_RESULT ' + JSON.stringify({ errors: [...errors, reason] }))
     app.exit(1)
   }
-  setTimeout(() => fail('timeout: page did not finish loading within 30 s'), 30000)
+  setTimeout(() => fail('timeout: the smoke test did not finish within 120 s'), 120000)
   win.webContents.on('console-message', (event) => {
     if (event.level === 'error') errors.push(event.message)
   })
   win.webContents.on('did-fail-load', (_event, code, description, url) => fail(`did-fail-load ${code} ${description} ${url}`))
   win.webContents.on('render-process-gone', (_event, details) => fail(`renderer gone: ${details.reason}`))
   await new Promise<void>((resolve) => win.webContents.once('did-finish-load', () => resolve()))
-  // Start page → most recent project (or the demo song if there is none) → editor with a rendered score.
+  // Start page → most recent project (or the demo song if there is none) → editor with a rendered score
+  // → import a generated WAV in the record/import dialog and transcribe it with Basic Pitch.
   // alphaTab only renders into a visible, non-zero-size container: run headless with
   // --ozone-platform=headless --ozone-override-screen-size=1600,1000 (see package.json "smoke").
   const result = await win.webContents.executeJavaScript(`(async () => {
     const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+    const waitFor = async (check, ms) => { for (let t = 0; t < ms && !check(); t += 100) await sleep(100) }
+    const button = (text, root = document) => [...root.querySelectorAll('button')].find((b) => b.textContent.includes(text))
     await sleep(1500)
     const startPage = document.querySelector('.start-page') !== null
     const recent = [...document.querySelectorAll('.recent-item:not(:disabled)')]
-    const demo = [...document.querySelectorAll('button')].find((b) => b.textContent.includes('demo song'))
-    ;(recent[0] ?? demo)?.click()
+    ;(recent[0] ?? button('demo song'))?.click()
     await sleep(3000)
+    const editor = document.querySelector('.info-line span')?.textContent ?? null
+    const scoreRenderMs = document.querySelector('.score-scroll')?.dataset.renderMs ?? null
+
+    // Three plucked notes (A3, C4, E4), half a second apart, as a 16-bit WAV.
+    const rate = 22050
+    const samples = new Float32Array(rate * 3)
+    ;[57, 60, 64].forEach((pitch, n) => {
+      const frequency = 440 * 2 ** ((pitch - 69) / 12)
+      const start = Math.round((0.5 + n * 0.5) * rate)
+      for (let i = start; i < start + rate / 2; i++) {
+        const t = (i - start) / rate
+        let v = 0
+        for (let h = 1; h <= 4; h++) v += Math.sin(2 * Math.PI * frequency * h * t) / h
+        samples[i] += 0.3 * Math.exp(-3 * t) * v
+      }
+    })
+    const wav = new DataView(new ArrayBuffer(44 + samples.length * 2))
+    const text = (offset, value) => [...value].forEach((c, i) => wav.setUint8(offset + i, c.charCodeAt(0)))
+    text(0, 'RIFF'); wav.setUint32(4, 36 + samples.length * 2, true); text(8, 'WAVEfmt ')
+    wav.setUint32(16, 16, true); wav.setUint16(20, 1, true); wav.setUint16(22, 1, true); wav.setUint32(24, rate, true)
+    wav.setUint32(28, rate * 2, true); wav.setUint16(32, 2, true); wav.setUint16(34, 16, true); text(36, 'data'); wav.setUint32(40, samples.length * 2, true)
+    samples.forEach((v, i) => wav.setInt16(44 + i * 2, Math.max(-1, Math.min(1, v)) * 0x7fff, true))
+
+    button('Record / import')?.click()
+    await sleep(300)
+    const input = document.querySelector('.modal input[type=file]')
+    const files = new DataTransfer()
+    files.items.add(new File([wav.buffer], 'smoke.wav', { type: 'audio/wav' }))
+    if (input) { input.files = files.files; input.dispatchEvent(new Event('change', { bubbles: true })) }
+    await waitFor(() => document.querySelector('.waveform canvas'), 5000)
+    const modal = document.querySelector('.modal')
+    if (modal) button('Transcribe', modal)?.click()
+    await waitFor(() => document.querySelector('.modal h2')?.textContent.includes('Check') || document.querySelector('.modal .dialog-error'), 90000)
+    const transcription = document.querySelector('.modal .dialog-error')?.textContent ?? document.querySelector('.modal p.muted.small')?.textContent ?? null
+
     return {
       title: document.title,
       startPage,
       opened: recent.length > 0 ? 'recent project' : 'demo song',
-      editor: document.querySelector('.info-line')?.textContent ?? null,
-      scoreRenderMs: document.querySelector('.score-scroll')?.dataset.renderMs ?? null,
+      editor,
+      scoreRenderMs,
+      transcription,
       preloadBridge: typeof window.gameMusicApp?.projects?.listRecent === 'function'
     }
   })()`)
-  const passed = errors.length === 0 && result.startPage && result.scoreRenderMs !== null && result.preloadBridge
+  const transcribed = /^[1-9]\d* notes? in/.test(result.transcription ?? '')
+  const passed = errors.length === 0 && result.startPage && result.scoreRenderMs !== null && result.preloadBridge && transcribed
   console.log('SMOKE_TEST_RESULT ' + JSON.stringify({ ...result, userData: app.getPath('userData'), errors }))
   app.exit(passed ? 0 : 1)
 }

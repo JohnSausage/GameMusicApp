@@ -1,58 +1,22 @@
 import { describe, expect, it } from 'vitest'
-import { GUITAR_STANDARD } from '../src/renderer/src/model/song'
+import { detectFirstOnset } from '../src/renderer/src/audio/analysis'
+import { barTicks, beatTicks } from '../src/renderer/src/model/edit'
+import { BASS_STANDARD, GUITAR_STANDARD, type Bar, type Song } from '../src/renderer/src/model/song'
 import { buildTimeline } from '../src/renderer/src/model/timing'
-import { comparePitchSequences } from '../src/renderer/src/transcription/compare'
-import { noteName, parseNoteList, toSingleNotes, type DetectedNote } from '../src/renderer/src/transcription/notes'
-import { trackNotes } from '../src/renderer/src/transcription/pitchTracker'
-import { assignFrets, notesToSong } from '../src/renderer/src/transcription/toTab'
+import { noteName, toSingleNotes, type DetectedNote } from '../src/renderer/src/transcription/notes'
+import { assignFrets, transcribeToBars, type QuantizeOptions } from '../src/renderer/src/transcription/toTab'
 
-const SAMPLE_RATE = 44100
+const note = (pitch: number, start: number, duration: number, amplitude = 0.8): DetectedNote => ({ pitch, start, duration, amplitude })
 
-/** Plucked-string-like test signal: decaying harmonics, one note after another. */
-function synthesize(notes: { pitch: number; start: number; duration: number }[], totalSeconds: number): Float32Array {
-  const samples = new Float32Array(Math.ceil(totalSeconds * SAMPLE_RATE))
-  for (const note of notes) {
-    const frequency = 440 * 2 ** ((note.pitch - 69) / 12)
-    const from = Math.round(note.start * SAMPLE_RATE)
-    const to = Math.min(samples.length, Math.round((note.start + note.duration) * SAMPLE_RATE))
-    for (let i = from; i < to; i++) {
-      const t = (i - from) / SAMPLE_RATE
-      const envelope = Math.exp(-3 * t) * Math.min(1, t / 0.003)
-      let value = 0
-      for (let h = 1; h <= 4; h++) value += Math.sin(2 * Math.PI * frequency * h * t) / h
-      samples[i] += 0.3 * envelope * value
-    }
-  }
-  return samples
-}
-
-describe('note names', () => {
-  it('converts between names and MIDI numbers', () => {
+describe('noteName', () => {
+  it('names MIDI notes', () => {
     expect(noteName(64)).toBe('E4')
     expect(noteName(66)).toBe('F#4')
-    expect(parseNoteList('E4 F#4 Bb3, 40 c5')).toEqual([64, 66, 58, 40, 72])
-  })
-
-  it('rejects unknown tokens', () => {
-    expect(() => parseNoteList('E4 H2')).toThrow('Unknown note "H2"')
-  })
-})
-
-describe('comparePitchSequences', () => {
-  it('counts correct, wrong, octave, missed and extra notes', () => {
-    const result = comparePitchSequences([60, 62, 64, 65, 67], [60, 74, 64, 67, 69])
-    expect(result).toMatchObject({ correct: 3, substitutions: 1, octaveErrors: 1, missed: 1, extra: 1 })
-    expect(result.accuracy).toBeCloseTo(0.6)
-  })
-
-  it('gives 100 % for identical sequences', () => {
-    expect(comparePitchSequences([60, 60, 62], [60, 60, 62]).accuracy).toBe(1)
+    expect(noteName(40)).toBe('E2')
   })
 })
 
 describe('toSingleNotes', () => {
-  const note = (pitch: number, start: number, duration: number, amplitude = 0.8): DetectedNote => ({ pitch, start, duration, amplitude })
-
   it('keeps the fundamental when an overtone starts at the same time', () => {
     expect(toSingleNotes([note(64, 0, 0.5, 0.9), note(52, 0.01, 0.5, 0.5)]).map((n) => n.pitch)).toEqual([52])
   })
@@ -63,33 +27,31 @@ describe('toSingleNotes', () => {
 
   it('cuts a ringing note off when the next one starts', () => {
     const result = toSingleNotes([note(60, 0, 1), note(62, 0.5, 0.5)])
-    expect(result.map((n) => [n.pitch, n.duration])).toEqual([[60, 0.5], [62, 0.5]])
+    expect(result.map((n) => [n.pitch, n.duration])).toEqual([
+      [60, 0.5],
+      [62, 0.5]
+    ])
   })
 })
 
-describe('trackNotes (pitch tracker)', () => {
-  it('detects a melody of plucked notes', () => {
-    const melody = [57, 59, 62, 64, 67, 66, 64, 62].map((pitch, i) => ({ pitch, start: 0.1 + i * 0.25, duration: 0.25 }))
-    const detected = trackNotes(synthesize(melody, 2.4), SAMPLE_RATE)
-    expect(detected.map((n) => n.pitch)).toEqual(melody.map((n) => n.pitch))
-    detected.forEach((n, i) => expect(Math.abs(n.start - melody[i].start)).toBeLessThan(0.03))
+describe('detectFirstOnset', () => {
+  it('finds where the sound starts after silence and quiet noise', () => {
+    const rate = 8000
+    const samples = new Float32Array(rate)
+    for (let i = 0; i < samples.length; i++) samples[i] = (Math.random() - 0.5) * 0.002
+    for (let i = 0.42 * rate; i < samples.length; i++) samples[i] = 0.5 * Math.sin(i / 3)
+    expect(detectFirstOnset(samples, rate)).toBeCloseTo(0.42, 2)
   })
 
-  it('separates repeated notes of the same pitch', () => {
-    const melody = [0, 0.3, 0.6].map((start) => ({ pitch: 60, start: 0.1 + start, duration: 0.3 }))
-    expect(trackNotes(synthesize(melody, 1.2), SAMPLE_RATE).map((n) => n.pitch)).toEqual([60, 60, 60])
-  })
-
-  it('ignores silence', () => {
-    expect(trackNotes(new Float32Array(SAMPLE_RATE), SAMPLE_RATE)).toEqual([])
+  it('returns 0 for silence', () => {
+    expect(detectFirstOnset(new Float32Array(1000), 8000)).toBe(0)
   })
 })
 
 describe('assignFrets', () => {
   it('stays in one position instead of jumping around', () => {
     // A3 B3 D4 E4 G4: playable around the open position
-    const result = assignFrets([57, 59, 62, 64, 67], GUITAR_STANDARD)
-    expect(result).toEqual([
+    expect(assignFrets([57, 59, 62, 64, 67], GUITAR_STANDARD)).toEqual([
       { string: 3, fret: 2 },
       { string: 2, fret: 0 },
       { string: 2, fret: 3 },
@@ -108,28 +70,70 @@ describe('assignFrets', () => {
   })
 })
 
-describe('notesToSong', () => {
-  const base = { tempo: 120, firstDownbeat: 0.5, stepsPerQuarter: 4, beatsPerBar: 4, tuning: GUITAR_STANDARD, title: 'Test' }
+describe('transcribeToBars', () => {
+  const base: QuantizeOptions = { tempo: 120, firstDownbeat: 0.5, stepsPerQuarter: 4, timeSignature: [4, 4], tuning: GUITAR_STANDARD, preferredFret: 3 }
 
-  it('quantizes slightly early/late notes onto the grid and fills bars', () => {
-    const notes: DetectedNote[] = [
-      { pitch: 64, start: 0.52, duration: 0.45, amplitude: 1 }, // beat 1, quarter
-      { pitch: 67, start: 0.98, duration: 0.24, amplitude: 1 }, // beat 2, eighth
-      { pitch: 69, start: 1.76, duration: 0.5, amplitude: 1 } // halfway through beat 3, quarter
-    ]
-    const song = notesToSong(notes, base)
-    expect(song.tracks).toHaveLength(1)
-    const timeline = buildTimeline(song)
-    expect(timeline.duration).toBeCloseTo(2) // exactly one 4/4 bar at 120 BPM
-    expect(timeline.notes.map((n) => [n.pitch, n.start])).toEqual([
+  /** Notes of the bars as [pitch, start in seconds] at the given tempo. */
+  const notesOf = (bars: Bar[], tuning: number[], tempo = 120, timeSignature: [number, number] = [4, 4]): number[][] => {
+    const song: Song = { title: '', tempo, timeSignature, sections: [], takes: [], tracks: [{ id: 't', name: 't', tuning, instrument: { kind: 'soundfont', program: 25 }, volume: 1, pan: 0, bars }] }
+    return buildTimeline(song).notes.map((n) => [n.pitch, n.start])
+  }
+
+  const expectFull = (bars: Bar[], timeSignature: [number, number]): void => {
+    const song = { timeSignature } as Song
+    for (const bar of bars) expect(bar.beats.reduce((sum, b) => sum + beatTicks(b), 0)).toBe(barTicks(song))
+  }
+
+  it('quantizes slightly early/late notes onto the grid and fills the bar', () => {
+    const result = transcribeToBars([note(64, 0.52, 0.45), note(67, 0.98, 0.24), note(69, 1.76, 0.5)], base)
+    expect(result.bars).toHaveLength(1)
+    expect(result.noteCount).toBe(3)
+    expect(notesOf(result.bars, GUITAR_STANDARD)).toEqual([
       [64, 0],
       [67, 0.5],
       [69, 1.25]
     ])
+    expectFull(result.bars, [4, 4])
   })
 
-  it('ignores notes before the first downbeat', () => {
-    const song = notesToSong([{ pitch: 64, start: 0.1, duration: 0.2, amplitude: 1 }], base)
-    expect(buildTimeline(song).notes).toHaveLength(0)
+  it('leaves out notes before beat 1 (e.g. during the count-in) and counts them', () => {
+    const result = transcribeToBars([note(64, 0.1, 0.2), note(65, 0.5, 0.2)], base)
+    expect(result.beforeStart).toBe(1)
+    expect(notesOf(result.bars, GUITAR_STANDARD)).toEqual([[65, 0]])
+  })
+
+  it('counts notes the instrument cannot play', () => {
+    const result = transcribeToBars([note(30, 0.5, 0.2), note(64, 1, 0.2)], { ...base, tuning: BASS_STANDARD })
+    expect(result.dropped).toBe(1)
+    expect(result.noteCount).toBe(1)
+  })
+
+  it('fills bars of 3/4 and 6/8', () => {
+    for (const timeSignature of [
+      [3, 4],
+      [6, 8]
+    ] as [number, number][]) {
+      const result = transcribeToBars([note(64, 0.5, 0.2), note(67, 2.2, 0.3)], { ...base, timeSignature })
+      expect(result.bars.length).toBe(2) // a bar is 1.5 s at 120 BPM in both
+      expectFull(result.bars, timeSignature)
+    }
+  })
+
+  it('uses the take tempo, so notes land on the right beats', () => {
+    // At 90 BPM a quarter is 0.667 s: notes on beats 1, 2 and 4.
+    const q = 60 / 90
+    const result = transcribeToBars([note(60, 0, q), note(62, q, q), note(64, 3 * q, q)], { ...base, tempo: 90, firstDownbeat: 0 })
+    expect(notesOf(result.bars, GUITAR_STANDARD).map(([pitch, start]) => [pitch, start])).toEqual([
+      [60, 0],
+      [62, 0.5],
+      [64, 1.5]
+    ])
+  })
+
+  it('shortens a note at a bar line instead of spilling into the next bar', () => {
+    const result = transcribeToBars([note(64, 1.5, 1.5)], base) // beat 3 of bar 1, 3 beats long
+    expect(result.bars).toHaveLength(2)
+    expect(notesOf(result.bars, GUITAR_STANDARD)).toEqual([[64, 1]])
+    expectFull(result.bars, [4, 4])
   })
 })

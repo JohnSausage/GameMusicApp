@@ -1,13 +1,3 @@
-export interface Take {
-  name: string
-  samples: Float32Array
-  sampleRate: number
-  /** Tempo the take was played at (needed to quantize the transcription). */
-  tempo: number
-  /** Time of the first downbeat in seconds (after the count-in, or set by hand for imports). */
-  firstDownbeat: number
-}
-
 export interface InputSettings {
   echoCancellation?: boolean
   noiseSuppression?: boolean
@@ -99,8 +89,8 @@ export async function importAudioFile(ctx: BaseAudioContext, file: File): Promis
   return { samples, sampleRate: buffer.sampleRate }
 }
 
-export function takeToAudioBuffer(ctx: BaseAudioContext, take: Take): AudioBuffer {
-  const buffer = ctx.createBuffer(1, take.samples.length, take.sampleRate)
-  buffer.copyToChannel(take.samples as Float32Array<ArrayBuffer>, 0)
+export function samplesToBuffer(ctx: BaseAudioContext, samples: Float32Array, sampleRate: number): AudioBuffer {
+  const buffer = ctx.createBuffer(1, samples.length, sampleRate)
+  buffer.copyToChannel(samples as Float32Array<ArrayBuffer>, 0)
   return buffer
 }

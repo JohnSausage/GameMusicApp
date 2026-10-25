@@ -1,23 +1,19 @@
 // Runs Spotify's Basic Pitch model off the UI thread (REQUIREMENTS.md TRN-11).
+// It returns the raw model output; turning that into notes is cheap and happens
+// on the main thread, so changing the sensitivity doesn't re-run the model.
 import * as tf from '@tensorflow/tfjs'
-import { BasicPitch, noteFramesToTime, outputToNotesPoly } from '@spotify/basic-pitch'
+import { BasicPitch } from '@spotify/basic-pitch'
 import weightsUrl from '@spotify/basic-pitch/model/group1-shard1of1.bin?url'
 import modelUrl from '@spotify/basic-pitch/model/model.json?url'
-import type { DetectedNote } from './notes'
 
 export interface BasicPitchRequest {
   /** Mono audio at 22 050 Hz. */
   samples: Float32Array
-  onsetThreshold: number
-  frameThreshold: number
-  minNoteFrames: number
-  minFrequency: number
-  maxFrequency: number
 }
 
 export type BasicPitchResponse =
   | { type: 'progress'; percent: number }
-  | { type: 'done'; notes: DetectedNote[]; backend: string }
+  | { type: 'done'; frames: number[][]; onsets: number[][]; backend: string }
   | { type: 'error'; message: string }
 
 // tfjs-core 3.x checks `if (!window ...)` in setTimeoutCustom, which throws a
@@ -34,36 +30,19 @@ self.addEventListener('unhandledrejection', (event) => {
 let basicPitch: BasicPitch | null = null
 
 self.onmessage = async (event: MessageEvent<BasicPitchRequest>) => {
-  const request = event.data
   try {
     basicPitch ??= new BasicPitch(tf.loadGraphModel(modelUrl, { weightUrlConverter: async () => weightsUrl }))
     const frames: number[][] = []
     const onsets: number[][] = []
     await basicPitch.evaluateModel(
-      request.samples,
+      event.data.samples,
       (f, o) => {
         frames.push(...f)
         onsets.push(...o)
       },
       (percent) => post({ type: 'progress', percent })
     )
-    const events = outputToNotesPoly(
-      frames,
-      onsets,
-      request.onsetThreshold,
-      request.frameThreshold,
-      request.minNoteFrames,
-      true,
-      request.maxFrequency,
-      request.minFrequency
-    )
-    const notes = noteFramesToTime(events).map((n) => ({
-      start: n.startTimeSeconds,
-      duration: n.durationSeconds,
-      pitch: n.pitchMidi,
-      amplitude: n.amplitude
-    }))
-    post({ type: 'done', notes, backend: tf.getBackend() })
+    post({ type: 'done', frames, onsets, backend: tf.getBackend() })
   } catch (error) {
     post({ type: 'error', message: error instanceof Error ? error.message : String(error) })
   }

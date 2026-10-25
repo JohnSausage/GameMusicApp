@@ -1,20 +1,55 @@
-import { strToU8, zipSync } from 'fflate'
+import { strToU8, unzipSync, zipSync } from 'fflate'
 import { describe, expect, it } from 'vitest'
+import { decodeWav16, encodeWav16 } from '../src/renderer/src/audio/wav'
 import { addBars, createSong } from '../src/renderer/src/model/edit'
-import { createDemoSong } from '../src/renderer/src/model/song'
+import { createDemoSong, type Song, type TakeInfo } from '../src/renderer/src/model/song'
 import { FORMAT_VERSION, parseProject, ProjectFileError, serializeProject, suggestedFileName } from '../src/renderer/src/project/projectFile'
 
 const zipJson = (json: unknown): Uint8Array => zipSync({ 'song.json': strToU8(JSON.stringify(json)) })
 
+const take = (id: string): TakeInfo => ({ id, name: `Take ${id}`, sampleRate: 8000, tempo: 100, firstDownbeat: 0.25, createdAt: '2026-10-25T12:00:00.000Z' })
+
+function testAudio(length: number): Float32Array {
+  const samples = new Float32Array(length)
+  for (let i = 0; i < length; i++) samples[i] = Math.sin(i / 5) * 0.5
+  return samples
+}
+
 describe('project file', () => {
   it('round-trips a song', () => {
     const song = addBars(createDemoSong(), { track: 0, bar: 0, beat: 0, string: 1 }, 4, 'Chorus').song
-    expect(parseProject(serializeProject(song))).toEqual(song)
+    const { song: loaded, audio } = parseProject(serializeProject(song))
+    expect(loaded).toEqual(song)
+    expect(audio.size).toBe(0)
   })
 
-  it('opens files without sections (older format) with an empty section list', () => {
-    const { sections: _, ...song } = createSong({ title: 'Old', tempo: 90, timeSignature: [3, 4], firstTrack: 'bass' })
-    expect(parseProject(zipJson({ app: 'GameMusicApp', formatVersion: 1, song })).sections).toEqual([])
+  it('stores takes with their audio', () => {
+    const song: Song = { ...createDemoSong(), takes: [take('a'), take('b')] }
+    const audio = new Map([
+      ['a', testAudio(800)],
+      ['b', testAudio(1600)]
+    ])
+    const data = serializeProject(song, audio)
+    expect(Object.keys(unzipSync(data)).sort()).toEqual(['audio/a.wav', 'audio/b.wav', 'song.json'])
+
+    const loaded = parseProject(data)
+    expect(loaded.song.takes).toEqual(song.takes)
+    expect(loaded.audio.get('b')!.length).toBe(1600)
+    const original = audio.get('a')!
+    loaded.audio.get('a')!.forEach((v, i) => expect(Math.abs(v - original[i])).toBeLessThan(1 / 16384)) // 16-bit precision
+  })
+
+  it('leaves out takes that have no audio', () => {
+    const song: Song = { ...createDemoSong(), takes: [take('a'), take('gone')] }
+    const loaded = parseProject(serializeProject(song, new Map([['a', testAudio(100)]])))
+    expect(loaded.song.takes.map((t) => t.id)).toEqual(['a'])
+  })
+
+  it('opens version 1 files (no sections, no takes)', () => {
+    const { sections: _s, takes: _t, ...song } = createSong({ title: 'Old', tempo: 90, timeSignature: [3, 4], firstTrack: 'bass' })
+    const loaded = parseProject(zipJson({ app: 'GameMusicApp', formatVersion: 1, song }))
+    expect(loaded.song.sections).toEqual([])
+    expect(loaded.song.takes).toEqual([])
   })
 
   it('rejects files that are not projects', () => {
@@ -35,10 +70,28 @@ describe('project file', () => {
     const badNote = createDemoSong()
     badNote.tracks[0].bars[0].beats[0].notes[0].string = 9
     expect(() => parseProject(zipJson({ app: 'GameMusicApp', formatVersion: 1, song: badNote }))).toThrow('track 1, bar 1 has an invalid note')
+
+    const badTake = { ...createDemoSong(), takes: [{ ...take('x'), id: '../evil' }] }
+    expect(() => parseProject(zipJson({ app: 'GameMusicApp', formatVersion: 2, song: badTake }))).toThrow('a take has no valid id or name')
   })
 
   it('suggests a safe file name from the title', () => {
     expect(suggestedFileName('Boss: Phase 2?')).toBe('Boss Phase 2.gmsong')
     expect(suggestedFileName('  ')).toBe('Untitled.gmsong')
+  })
+})
+
+describe('decodeWav16', () => {
+  it('reads back what encodeWav16 wrote', () => {
+    const left = new Float32Array([0, 0.5, -0.5, 1])
+    const right = new Float32Array([0.25, -1, 0, 0.75])
+    const { channels, sampleRate } = decodeWav16(encodeWav16([left, right], 44100))
+    expect(sampleRate).toBe(44100)
+    expect(Array.from(channels[0])).toEqual([0, 16383 / 32767, -0.5, 1].map(Math.fround))
+    expect(Array.from(channels[1])).toEqual([8191 / 32767, -1, 0, 24575 / 32767].map(Math.fround))
+  })
+
+  it('rejects other files', () => {
+    expect(() => decodeWav16(new Uint8Array(20))).toThrow('Not a WAV file')
   })
 })
