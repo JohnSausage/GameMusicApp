@@ -1,7 +1,7 @@
 // Song model, a subset of REQUIREMENTS.md §5 that grows milestone by milestone.
-import { factoryPreset, type SynthPatch } from './synth'
+import { factoryPreset, type DrumSound, type SynthPatch } from './synth'
 
-export type { SynthPatch }
+export type { DrumSound, SynthPatch }
 
 /** Note value: 1 = whole, 4 = quarter, 16 = sixteenth. */
 export type NoteValue = 1 | 2 | 4 | 8 | 16 | 32
@@ -29,10 +29,14 @@ export interface Bar {
 export type Instrument =
   | { kind: 'soundfont'; program: number }
   | { kind: 'synth'; patch: SynthPatch }
+  /** A synth sound per drum piece (SYN-20). */
+  | { kind: 'synthkit'; pieces: DrumSound[] }
 
 export interface Track {
   id: string
   name: string
+  /** Drum tracks use one "string" per kit piece (see DRUM_PIECES); absent = fretted. */
+  kind?: 'drums'
   /** MIDI note per string, string 1 (highest) first. */
   tuning: number[]
   instrument: Instrument
@@ -92,7 +96,28 @@ export function takeSeconds(take: TakeInfo, audio: ProjectAudio): number {
   return (audio.get(take.id)?.length ?? 0) / take.sampleRate
 }
 
-export type TrackKind = 'guitar' | 'bass'
+export type TrackKind = 'guitar' | 'bass' | 'drums'
+
+export interface DrumPiece {
+  /** General MIDI drum note. */
+  note: number
+  name: string
+}
+
+/** Kit pieces of drum tracks, top to bottom as in drum notation. Row n is "string" n, every hit is fret 0. */
+export const DRUM_PIECES: DrumPiece[] = [
+  { note: 49, name: 'Crash' },
+  { note: 51, name: 'Ride' },
+  { note: 46, name: 'Open hi-hat' },
+  { note: 42, name: 'Closed hi-hat' },
+  { note: 50, name: 'High tom' },
+  { note: 47, name: 'Mid tom' },
+  { note: 38, name: 'Snare' },
+  { note: 45, name: 'Low tom' },
+  { note: 36, name: 'Kick' }
+]
+
+export const DRUM_TUNING = DRUM_PIECES.map((p) => p.note)
 
 export const GUITAR_STANDARD = [64, 59, 55, 50, 45, 40]
 export const BASS_STANDARD = [43, 38, 33, 28]
@@ -111,7 +136,7 @@ export function beatQuarters(beat: Pick<Beat, 'value' | 'dotted'>): number {
 }
 
 export function isBassTrack(track: Track): boolean {
-  return track.tuning.length <= 5
+  return track.kind !== 'drums' && track.tuning.length <= 5
 }
 
 export function newId(): string {
@@ -124,14 +149,20 @@ export function barCount(song: Song): number {
 }
 
 export function defaultInstrument(kind: TrackKind): Instrument {
-  return { kind: 'soundfont', program: kind === 'bass' ? GM_FINGER_BASS : GM_ACOUSTIC_GUITAR_STEEL }
+  // Program 0 on the General MIDI drum channel is the standard kit.
+  return { kind: 'soundfont', program: kind === 'bass' ? GM_FINGER_BASS : kind === 'drums' ? 0 : GM_ACOUSTIC_GUITAR_STEEL }
+}
+
+export function trackKind(track: Track): TrackKind {
+  return track.kind === 'drums' ? 'drums' : isBassTrack(track) ? 'bass' : 'guitar'
 }
 
 export function createTrack(kind: TrackKind, bars: Bar[], name?: string): Track {
   return {
     id: newId(),
-    name: name ?? (kind === 'bass' ? 'Bass' : 'Guitar'),
-    tuning: kind === 'bass' ? BASS_STANDARD : GUITAR_STANDARD,
+    name: name ?? { guitar: 'Guitar', bass: 'Bass', drums: 'Drums' }[kind],
+    ...(kind === 'drums' ? { kind: 'drums' as const } : {}),
+    tuning: kind === 'bass' ? BASS_STANDARD : kind === 'drums' ? DRUM_TUNING : GUITAR_STANDARD,
     instrument: defaultInstrument(kind),
     volume: kind === 'bass' ? 0.75 : 0.9,
     pan: 0,

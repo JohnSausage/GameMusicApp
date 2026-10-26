@@ -1,7 +1,8 @@
 import * as alphaTab from '@coderline/alphatab'
+import { strengthOf } from '../model/drums'
 import type { NoteValue, Song } from '../model/song'
 
-const { Automation, Bar, Beat, Clef, Duration, MasterBar, Note, Ottavia, Score, Section, Track, Tuning, Voice } = alphaTab.model
+const { AccentuationType, Automation, Bar, Beat, Clef, Duration, MasterBar, Note, Ottavia, Score, Section, Track, Tuning, Voice } = alphaTab.model
 
 export interface BeatRef {
   trackIndex: number
@@ -29,8 +30,10 @@ const DURATIONS: Record<NoteValue, alphaTab.model.Duration> = {
 /**
  * Builds an alphaTab score from our song model. Our model stays the source of
  * truth; this is regenerated after every edit (REQUIREMENTS.md §6.1).
+ * With `tabOnly`, fretted tracks show just their tab and drum tracks a rhythm
+ * (slash) line, so every track stays visible and clickable.
  */
-export function songToAlphaTab(song: Song, settings: alphaTab.Settings): ConvertedScore {
+export function songToAlphaTab(song: Song, settings: alphaTab.Settings, tabOnly = false): ConvertedScore {
   const score = new Score()
   score.title = song.title
   const barCount = Math.max(1, ...song.tracks.map((t) => t.bars.length))
@@ -59,17 +62,21 @@ export function songToAlphaTab(song: Song, settings: alphaTab.Settings): Convert
     score.addTrack(atTrack)
     atTrack.ensureStaveCount(1)
     const staff = atTrack.staves[0]
-    staff.showTablature = true
-    staff.showStandardNotation = true
-    staff.stringTuning = new Tuning('', [...track.tuning], false)
+    // Drum tracks get a percussion staff; alphaTab draws each note by its General MIDI drum number.
+    const drums = track.kind === 'drums'
+    staff.isPercussion = drums
+    staff.showTablature = !drums
+    staff.showStandardNotation = !tabOnly
+    staff.showSlash = drums && tabOnly
+    if (!drums) staff.stringTuning = new Tuning('', [...track.tuning], false)
 
     const trackBeats: alphaTab.model.Beat[][] = []
     // Guitar is notated in treble clef, bass in bass clef, both an octave above how they sound.
-    const clef = track.tuning.length <= 5 ? Clef.F4 : Clef.G2
+    const clef = drums ? Clef.Neutral : track.tuning.length <= 5 ? Clef.F4 : Clef.G2
     for (let barIndex = 0; barIndex < barCount; barIndex++) {
       const bar = new Bar()
       bar.clef = clef
-      bar.clefOttava = Ottavia._8vb
+      bar.clefOttava = drums ? Ottavia.Regular : Ottavia._8vb
       staff.addBar(bar)
       const voice = new Voice()
       bar.addVoice(voice)
@@ -83,9 +90,17 @@ export function songToAlphaTab(song: Song, settings: alphaTab.Settings): Convert
         beat.dots = source.dotted ? 1 : 0
         for (const n of source.notes) {
           const note = new Note()
-          // alphaTab numbers strings from the lowest (1); we number from the highest.
-          note.string = track.tuning.length - n.string + 1
-          note.fret = n.fret
+          if (drums) {
+            note.percussionArticulation = track.tuning[n.string - 1] + n.fret
+            // Accents get ">", ghost notes parentheses.
+            const strength = strengthOf(n.velocity)
+            if (strength === 'accent') note.accentuated = AccentuationType.Normal
+            note.isGhost = strength === 'ghost'
+          } else {
+            // alphaTab numbers strings from the lowest (1); we number from the highest.
+            note.string = track.tuning.length - n.string + 1
+            note.fret = n.fret
+          }
           beat.addNote(note)
         }
         voice.addBeat(beat)

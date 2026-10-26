@@ -857,3 +857,118 @@ kbd {
   border: 1px dashed #2563eb;
   background: rgba(37, 99, 235, 0.08);
 }
+
+/* ---------------------------------------------------------------- drum grid */
+
+.drum-grid {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  flex-shrink: 0;
+}
+
+.drum-grid .toolbar {
+  margin: 0;
+  gap: 6px;
+}
+
+.drum-grid .toolbar button,
+.drum-grid .toolbar select {
+  padding: 4px 8px;
+}
+
+.drum-grid.collapsed {
+  padding: 4px 10px;
+}
+
+.drum-rows {
+  display: grid;
+  gap: 2px;
+  margin: 8px 0 2px;
+  overflow-x: auto;
+}
+
+.drum-label {
+  padding: 0 8px;
+  font-size: 12px;
+  text-align: left;
+  white-space: nowrap;
+  border: none;
+  background: none;
+}
+
+.drum-cell {
+  height: 16px;
+  min-width: 0;
+  padding: 0;
+  border-radius: 3px;
+  background: var(--bg);
+}
+
+.drum-cell.beat-start {
+  border-left-color: var(--muted);
+}
+
+.drum-cell.normal {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.drum-cell.accent {
+  background: var(--warning);
+  border-color: var(--warning);
+}
+
+.drum-cell.ghost {
+  background: color-mix(in srgb, var(--accent) 35%, var(--surface));
+  border-color: var(--accent);
+}
+
+.drum-cell.playing {
+  outline: 2px solid var(--text);
+  outline-offset: -2px;
+}
+
+.repeat-bar {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--muted);
+}
+
+.repeat-bar input {
+  width: 56px;
+}
+
+/* 8-bit drum kit in the sound editor */
+.kit-editor {
+  margin-bottom: 8px;
+}
+
+.kit-pads {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.kit-pad {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 6px;
+  padding: 14px 10px;
+  touch-action: none;
+}
+
+.kit-pad.down {
+  transform: translateY(1px);
+  filter: brightness(0.9);
+}
+
+.kit-pitch {
+  min-width: 220px;
+}
+
+.drum-cell.beat-start:not(.bar-start) {
+  margin-left: 4px;
+}

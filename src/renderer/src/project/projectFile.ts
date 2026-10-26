@@ -95,6 +95,15 @@ function checkInstrument(value: unknown, where: string): Instrument {
   if (instrument?.kind === 'soundfont' && isInt(instrument.program)) return instrument
   // Synth patches from older files only had a few settings; the rest get defaults.
   if (instrument?.kind === 'synth') return { kind: 'synth', patch: normalizePatch(instrument.patch) }
+  if (instrument?.kind === 'synthkit' && Array.isArray(instrument.pieces)) {
+    return {
+      kind: 'synthkit',
+      pieces: instrument.pieces.map((piece) => {
+        if (!isInt(piece?.note) || !isInt(piece.pitch)) fail(`${where} has an invalid drum sound`)
+        return { note: piece.note, pitch: piece.pitch, patch: normalizePatch(piece.patch) }
+      })
+    }
+  }
   fail(`${where} has no valid instrument`)
 }
 
@@ -117,6 +126,7 @@ function checkSong(value: unknown): Song {
   const bars = song.tracks[0].bars?.length
   song.tracks.forEach((track, t) => {
     if (typeof track.name !== 'string' || !Array.isArray(track.tuning) || !track.tuning.every(isInt)) fail(`track ${t + 1} is invalid`)
+    if (track.kind !== undefined && track.kind !== 'drums') fail(`track ${t + 1} has an unknown kind`)
     track.instrument = checkInstrument(track.instrument, `track ${t + 1}`)
     if (track.originalInstrument !== undefined) track.originalInstrument = checkInstrument(track.originalInstrument, `track ${t + 1} (original sound)`)
     if (!Array.isArray(track.bars) || track.bars.length !== bars) fail(`track ${t + 1} has the wrong number of bars`)

@@ -2,8 +2,20 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { GetEngine } from '../App'
 import { COMPUTER_KEYS, MidiKeyboard } from '../midi/midiInput'
 import { updateTrack } from '../model/edit'
-import { isBassTrack } from '../model/song'
-import { CRUSH_RATES, DEFAULT_PATCH, FACTORY_PRESETS, formatSampleRate, PATCH_LIMITS, type FilterType, type LfoTarget, type SynthPatch, type Waveform } from '../model/synth'
+import { DRUM_PIECES, isBassTrack, type Instrument } from '../model/song'
+import {
+  CRUSH_RATES,
+  DEFAULT_PATCH,
+  eightBitKit,
+  FACTORY_PRESETS,
+  formatSampleRate,
+  PATCH_LIMITS,
+  type DrumSound,
+  type FilterType,
+  type LfoTarget,
+  type SynthPatch,
+  type Waveform
+} from '../model/synth'
 import { saveFile } from '../platform'
 import { createPresetStore, parsePreset, PRESET_EXTENSION, serializePreset, type UserPreset } from '../project/presets'
 import type { Project } from '../project/useProject'
@@ -103,6 +115,12 @@ function EnvelopeGraph({ patch }: { patch: SynthPatch }): React.JSX.Element {
 
 const BLACK_KEYS = new Set([1, 3, 6, 8, 10])
 
+/** Computer keys that play the pieces of a drum kit, in kit order. */
+const KIT_KEYS = 'asdfghjkl'
+const PIECE_PITCH: [number, number] = [24, 108]
+
+const pieceName = (sound: DrumSound): string => DRUM_PIECES.find((d) => d.note === sound.note)?.name ?? `Drum ${sound.note}`
+
 /** Two octaves of clickable piano keys. */
 function Keyboard({ base, pressed, onDown, onUp }: { base: number; pressed: Set<number>; onDown: (p: number) => void; onUp: (p: number) => void }): React.JSX.Element {
   const keys = Array.from({ length: 25 }, (_, i) => base + i)
@@ -135,13 +153,19 @@ function Keyboard({ base, pressed, onDown, onUp }: { base: number; pressed: Set<
   )
 }
 
-/** Edit a track's synth sound with live preview (REQUIREMENTS.md SYN-02…SYN-13, NFR-44). */
+/**
+ * Edit a track's synth sound with live preview (REQUIREMENTS.md SYN-02…SYN-13, NFR-44).
+ * For a synth drum kit (SYN-20) it edits one kit piece at a time, picked with the pads.
+ */
 export function InstrumentEditor({ project, trackIndex, getEngine, onClose }: Props): React.JSX.Element {
   const { song, cursor } = project
   const track = song.tracks[trackIndex]
-  const patch = track.instrument.kind === 'synth' ? track.instrument.patch : DEFAULT_PATCH
-  const patchRef = useRef(patch)
-  patchRef.current = patch
+  const kit = track.instrument.kind === 'synthkit' ? track.instrument.pieces : null
+  const [pieceIndex, setPieceIndex] = useState(() => Math.max(0, kit?.findIndex((p) => p.note === 38) ?? 0))
+  const piece = kit?.[pieceIndex] ?? null
+  const patch = track.instrument.kind === 'synth' ? track.instrument.patch : (piece?.patch ?? DEFAULT_PATCH)
+  const instrumentRef = useRef<Instrument>(track.instrument)
+  instrumentRef.current = track.instrument
 
   const store = useMemo(createPresetStore, [])
   const [userPresets, setUserPresets] = useState<UserPreset[]>([])
@@ -164,16 +188,30 @@ export function InstrumentEditor({ project, trackIndex, getEngine, onClose }: Pr
     return () => window.clearTimeout(timer)
   }, [message])
 
+  const setPiece = (change: Partial<DrumSound>, mergeKey?: string): void => {
+    if (!kit) return
+    const pieces = kit.map((p, i) => (i === pieceIndex ? { ...p, ...change } : p))
+    project.apply(updateTrack(song, cursor, trackIndex, { instrument: { kind: 'synthkit', pieces } }), { mergeKey })
+  }
   const setPatch = (next: SynthPatch, mergeKey?: string): void => {
-    project.apply(updateTrack(song, cursor, trackIndex, { instrument: { kind: 'synth', patch: next } }), { mergeKey })
+    if (kit) setPiece({ patch: next }, mergeKey)
+    else project.apply(updateTrack(song, cursor, trackIndex, { instrument: { kind: 'synth', patch: next } }), { mergeKey })
     void getEngine().then((engine) => engine.setLivePatch(next))
   }
-  const set = <K extends keyof SynthPatch>(field: K, value: SynthPatch[K]): void => setPatch({ ...patch, [field]: value }, `patch:${track.id}:${field}`)
+  const set = <K extends keyof SynthPatch>(field: K, value: SynthPatch[K]): void =>
+    setPatch({ ...patch, [field]: value }, `patch:${track.id}:${kit ? `${pieceIndex}:` : ''}${field}`)
 
-  // Live notes always use the newest patch.
+  const resetPiece = (): void => {
+    const original = piece && eightBitKit().find((p) => p.note === piece.note)
+    if (!original) return
+    setPiece({ pitch: original.pitch, patch: original.patch })
+    setSaveName(original.patch.name)
+  }
+
+  // Live notes always use the newest sound. For a kit, `pitch` is the piece's drum note.
   const noteOn = (pitch: number, velocity = 100): void => {
     setPressed((s) => new Set(s).add(pitch))
-    void getEngine().then((engine) => engine.liveNoteOn({ kind: 'synth', patch: patchRef.current }, pitch, velocity))
+    void getEngine().then((engine) => engine.liveNoteOn(instrumentRef.current, pitch, velocity))
   }
   const noteOff = (pitch: number): void => {
     setPressed((s) => {
@@ -181,24 +219,31 @@ export function InstrumentEditor({ project, trackIndex, getEngine, onClose }: Pr
       next.delete(pitch)
       return next
     })
-    void getEngine().then((engine) => engine.liveNoteOff({ kind: 'synth', patch: patchRef.current }, pitch))
+    void getEngine().then((engine) => engine.liveNoteOff(instrumentRef.current, pitch))
   }
 
-  // Computer keys A…K play from the keyboard's lowest C; Z / X shift the octave. Esc closes.
+  /** The note a computer key plays: a kit piece (A…L), or a piano key from the lowest C (A…K). */
+  const keyNote = (key: string): number | undefined => {
+    if (kit) return kit[KIT_KEYS.indexOf(key)]?.note
+    return COMPUTER_KEYS[key] === undefined ? undefined : COMPUTER_KEYS[key] - 60 + base
+  }
+
+  // Computer keys play notes; Z / X shift the piano's octave. Esc closes.
   useEffect(() => {
     const down = (event: KeyboardEvent): void => {
       if (event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement || event.repeat) return
       const key = event.key.toLowerCase()
+      const note = keyNote(key)
       if (key === 'escape') onClose()
-      else if (key === 'z') setBase((b) => Math.max(24, b - 12))
-      else if (key === 'x') setBase((b) => Math.min(84, b + 12))
-      else if (COMPUTER_KEYS[key] !== undefined) noteOn(COMPUTER_KEYS[key] - 60 + base)
+      else if (note !== undefined) noteOn(note)
+      else if (key === 'z' && !kit) setBase((b) => Math.max(24, b - 12))
+      else if (key === 'x' && !kit) setBase((b) => Math.min(84, b + 12))
       else return
       event.preventDefault()
     }
     const up = (event: KeyboardEvent): void => {
-      const pitch = COMPUTER_KEYS[event.key.toLowerCase()]
-      if (pitch !== undefined) noteOff(pitch - 60 + base)
+      const note = keyNote(event.key.toLowerCase())
+      if (note !== undefined) noteOff(note)
     }
     window.addEventListener('keydown', down)
     window.addEventListener('keyup', up)
@@ -274,7 +319,47 @@ export function InstrumentEditor({ project, trackIndex, getEngine, onClose }: Pr
     <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div className="modal instrument-editor" role="dialog" aria-modal="true" aria-label={`Sound of ${track.name}`}>
         <button className="icon modal-close" aria-label="Close" title="Close (Esc)" onClick={onClose}>×</button>
-        <h2>Sound of {track.name}</h2>
+        <h2>Sound of {track.name}{kit && <span className="muted"> · 8-bit drum kit</span>}</h2>
+
+        {kit && piece && (
+          <div className="kit-editor">
+            <div className="kit-pads" onPointerLeave={() => pressed.forEach(noteOff)}>
+              {kit.map((p, i) => (
+                <button
+                  key={p.note}
+                  className={`kit-pad ${i === pieceIndex ? 'active' : ''} ${pressed.has(p.note) ? 'down' : ''}`}
+                  title={`Edit and play the ${pieceName(p).toLowerCase()} (key ${KIT_KEYS[i].toUpperCase()})`}
+                  onPointerDown={() => {
+                    if (i !== pieceIndex) setSaveName(p.patch.name)
+                    setPieceIndex(i)
+                    noteOn(p.note)
+                  }}
+                  onPointerUp={() => noteOff(p.note)}
+                >
+                  {pieceName(p)}
+                  <kbd>{KIT_KEYS[i].toUpperCase()}</kbd>
+                </button>
+              ))}
+            </div>
+            <div className="toolbar">
+              <strong>Editing: {pieceName(piece)}</strong>
+              <label className="slider kit-pitch" title="The note the synth plays for this drum. Higher sounds brighter, also for noise.">
+                <span className="slider-label">
+                  Pitch <span className="muted">{noteName(piece.pitch)}</span>
+                </span>
+                <input
+                  type="range"
+                  min={PIECE_PITCH[0]}
+                  max={PIECE_PITCH[1]}
+                  step={1}
+                  value={piece.pitch}
+                  onChange={(e) => setPiece({ pitch: Number(e.target.value) }, `pitch:${track.id}:${pieceIndex}`)}
+                />
+              </label>
+              <button onClick={resetPiece} title="Back to the built-in 8-bit sound of this drum">Reset this drum</button>
+            </div>
+          </div>
+        )}
 
         <div className="toolbar preset-bar">
           <select value="" onChange={(e) => loadPreset(e.target.value)} aria-label="Load a preset">
@@ -424,12 +509,14 @@ export function InstrumentEditor({ project, trackIndex, getEngine, onClose }: Pr
         </div>
 
         <div className="toolbar preview-bar">
-          <span className="muted small">Try it: click the keys, use A–K on your computer keyboard (Z/X = octave), or</span>
+          <span className="muted small">
+            {kit ? 'Try it: click the pads above, use A–L on your computer keyboard, or' : 'Try it: click the keys, use A–K on your computer keyboard (Z/X = octave), or'}
+          </span>
           <button onClick={() => void connectMidi()}>{midiDevices ? `MIDI: ${midiDevices.join(', ') || 'no device'}` : 'Connect MIDI keyboard'}</button>
           <span className="spacer" />
           {playback.playing ? <button onClick={playback.stop}>■ Stop</button> : <button onClick={playSong} title="Play the song from the cursor's bar">▶ Play song</button>}
         </div>
-        <Keyboard base={base} pressed={pressed} onDown={(p) => noteOn(p)} onUp={noteOff} />
+        {!kit && <Keyboard base={base} pressed={pressed} onDown={(p) => noteOn(p)} onUp={noteOff} />}
         {message && <p className="status">{message}</p>}
       </div>
     </div>

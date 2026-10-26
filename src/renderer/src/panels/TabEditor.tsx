@@ -45,7 +45,7 @@ import {
 import {
   barCount,
   defaultInstrument,
-  isBassTrack,
+  DRUM_PIECES,
   MASTER_DEFAULTS,
   MAX_FRET,
   NOTE_VALUES,
@@ -53,14 +53,16 @@ import {
   type Beat,
   type Instrument,
   type NoteValue,
-  type Track
+  type Track,
+  trackKind
 } from '../model/song'
-import { CRUSH_RATES, FACTORY_PRESETS, formatSampleRate } from '../model/synth'
+import { CRUSH_RATES, eightBitKit, FACTORY_PRESETS, formatSampleRate } from '../model/synth'
 import { buildTimeline } from '../model/timing'
 import { saveFile } from '../platform'
 import type { ApplyOptions, Project } from '../project/useProject'
 import { ScoreView, type ScoreTarget, type StaveMode } from '../score/ScoreView'
 import { noteName } from '../transcription/notes'
+import { DrumGrid } from './DrumGrid'
 import { InstrumentEditor } from './InstrumentEditor'
 import { TakeDialog } from './TakeDialog'
 import { usePlayback } from './usePlayback'
@@ -79,6 +81,17 @@ const TWO_DIGIT_MS = 1000
 
 const cursorKey = (c: Cursor): string => `${c.track}/${c.bar}/${c.beat}/${c.string}`
 
+const GRID_COLLAPSED_KEY = 'drumGridCollapsed'
+
+/** Whether the drum grid was minimized last time (a per-computer preference). */
+function readGridCollapsed(): boolean {
+  try {
+    return localStorage.getItem(GRID_COLLAPSED_KEY) === 'true'
+  } catch {
+    return false
+  }
+}
+
 function isTyping(target: EventTarget | null): boolean {
   return target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement
 }
@@ -90,8 +103,11 @@ interface Props {
 
 function soundValue(track: Track): string {
   if (track.instrument.kind === 'soundfont') return 'soundfont'
+  if (track.instrument.kind === 'synthkit') return 'synthkit'
   return 'synth:current'
 }
+
+const SOUNDFONT_LABELS = { guitar: 'Guitar (SoundFont)', bass: 'Bass (SoundFont)', drums: 'Drum kit (SoundFont)' }
 
 function TrackList({ project, onSelect, onEditSound }: { project: Project; onSelect: (index: number) => void; onEditSound: (index: number) => void }): React.JSX.Element {
   const { song, cursor } = project
@@ -99,9 +115,13 @@ function TrackList({ project, onSelect, onEditSound }: { project: Project; onSel
   const master = { ...MASTER_DEFAULTS, ...song.master }
 
   const setSound = (index: number, track: Track, value: string): void => {
-    if (value === 'synth:current') return
+    if (value === 'synth:current' || value === soundValue(track)) return
     const instrument: Instrument =
-      value === 'soundfont' ? defaultInstrument(isBassTrack(track) ? 'bass' : 'guitar') : { kind: 'synth', patch: { ...FACTORY_PRESETS[Number(value.slice(7))] } }
+      value === 'soundfont'
+        ? defaultInstrument(trackKind(track))
+        : value === 'synthkit'
+          ? { kind: 'synthkit', pieces: eightBitKit() }
+          : { kind: 'synth', patch: { ...FACTORY_PRESETS[Number(value.slice(7))] } }
     project.apply(updateTrack(song, cursor, index, { instrument }))
   }
   const remove = (index: number, track: Track): void => {
@@ -139,16 +159,22 @@ function TrackList({ project, onSelect, onEditSound }: { project: Project; onSel
           </div>
           <div className="track-card-row">
             <select value={soundValue(track)} aria-label="Sound" onChange={(e) => setSound(index, track, e.target.value)}>
-              <option value="soundfont">{isBassTrack(track) ? 'Bass' : 'Guitar'} (SoundFont)</option>
-              {track.instrument.kind === 'synth' && <option value="synth:current">Synth: {track.instrument.patch.name}</option>}
-              <optgroup label="Synth presets">
-                {FACTORY_PRESETS.map((p, i) => (
-                  <option key={p.name} value={`preset:${i}`}>{p.name}</option>
-                ))}
-              </optgroup>
+              <option value="soundfont">{SOUNDFONT_LABELS[trackKind(track)]}</option>
+              {track.kind === 'drums' ? (
+                <option value="synthkit">8-bit drum kit (synth)</option>
+              ) : (
+                <>
+                  {track.instrument.kind === 'synth' && <option value="synth:current">Synth: {track.instrument.patch.name}</option>}
+                  <optgroup label="Synth presets">
+                    {FACTORY_PRESETS.map((p, i) => (
+                      <option key={p.name} value={`preset:${i}`}>{p.name}</option>
+                    ))}
+                  </optgroup>
+                </>
+              )}
             </select>
           </div>
-          {track.instrument.kind === 'synth' && (
+          {track.instrument.kind !== 'soundfont' && (
             <div className="track-card-row">
               <button onClick={(e) => {
                 e.stopPropagation()
@@ -174,6 +200,7 @@ function TrackList({ project, onSelect, onEditSound }: { project: Project; onSel
       <div className="toolbar">
         <button onClick={() => project.apply(addTrack(song, cursor, 'guitar'))}>+ Guitar</button>
         <button onClick={() => project.apply(addTrack(song, cursor, 'bass'))}>+ Bass</button>
+        <button onClick={() => project.apply(addTrack(song, cursor, 'drums'))}>+ Drums</button>
       </div>
 
       <div className="track-card master-card">
@@ -208,18 +235,26 @@ export function TabEditor({ project, getEngine }: Props): React.JSX.Element {
   const [staveMode, setStaveMode] = useState<StaveMode>('notation+tab')
   const [entryDuration, setEntryDuration] = useState<Duration>({ value: 4, dotted: false })
   const [message, setMessage] = useState('')
-  const [clipboard, setClipboard] = useState<Beat[] | null>(null)
+  /** Copied beats, and whether they came from a drum track (they only paste into the same kind). */
+  const [clipboard, setClipboard] = useState<{ beats: Beat[]; drums: boolean } | null>(null)
   /** Where the current selection started; the selection runs from here to the cursor. */
   const [anchor, setAnchor] = useState<{ track: number; pos: BeatPos } | null>(null)
   const [busy, setBusy] = useState(false)
   const [takeDialog, setTakeDialog] = useState(false)
   const [soundEditor, setSoundEditor] = useState<number | null>(null)
+  const [gridCollapsed, setGridCollapsed] = useState(readGridCollapsed)
+  /** The drum track the grid showed last, so it stays when the cursor moves to another track. */
+  const [gridTrackId, setGridTrackId] = useState<string | null>(null)
   const pendingDigit = useRef<{ key: string; digit: number; at: number } | null>(null)
   const editorRef = useRef<HTMLDivElement>(null)
   const { playing, positionRef, play, stop } = usePlayback(getEngine)
   const timeline = useMemo(() => buildTimeline(song), [song])
 
   const track = song.tracks[cursor.track]
+  const drums = track.kind === 'drums'
+  const drumTracks = song.tracks.flatMap((t, i) => (t.kind === 'drums' ? [i] : []))
+  // The drum grid shows the drum track at the cursor, else the one shown last, else the first one.
+  const gridTrack = drums ? cursor.track : (drumTracks.find((i) => song.tracks[i].id === gridTrackId) ?? drumTracks[0] ?? null)
   const beat = track.bars[cursor.bar].beats[cursor.beat]
   const noteOnString = beat.notes.find((n) => n.string === cursor.string)
   const section = sectionAt(song, cursor.bar)
@@ -234,6 +269,21 @@ export function TabEditor({ project, getEngine }: Props): React.JSX.Element {
   }, [])
 
   useEffect(() => {
+    if (drums) setGridTrackId(track.id)
+  }, [drums, track.id])
+
+  const toggleGrid = (): void => {
+    setGridCollapsed((collapsed) => {
+      try {
+        localStorage.setItem(GRID_COLLAPSED_KEY, String(!collapsed))
+      } catch {
+        // Not remembered then; the grid still works.
+      }
+      return !collapsed
+    })
+  }
+
+  useEffect(() => {
     if (!message) return
     const timer = window.setTimeout(() => setMessage(''), 3500)
     return () => window.clearTimeout(timer)
@@ -246,10 +296,17 @@ export function TabEditor({ project, getEngine }: Props): React.JSX.Element {
     focus()
   }
 
-  const audition = async (pitch: number): Promise<void> => {
+  /** Plays a note of a track (by default the cursor's) for a moment. */
+  const audition = async (pitch: number, velocity = 90, on: Track = track): Promise<void> => {
     const engine = await getEngine()
-    engine.liveNoteOn(track.instrument, pitch, 90)
-    window.setTimeout(() => engine.liveNoteOff(track.instrument, pitch), 300)
+    const isDrums = on.kind === 'drums'
+    engine.liveNoteOn(on.instrument, pitch, velocity, isDrums)
+    window.setTimeout(() => engine.liveNoteOff(on.instrument, pitch, isDrums), 300)
+  }
+
+  /** Drum tracks: a hit on the cursor's kit piece (digits and X). */
+  const enterHit = (): void => {
+    if (project.apply(setFret(song, cursor, 0, entryDuration))) void audition(track.tuning[cursor.string - 1])
   }
 
   const enterDigit = (digit: number): void => {
@@ -313,7 +370,7 @@ export function TabEditor({ project, getEngine }: Props): React.JSX.Element {
 
   const copy = (cut = false): void => {
     const beats = selection ? selectionBeats(song, selection) : structuredClone(track.bars[cursor.bar].beats)
-    setClipboard(beats)
+    setClipboard({ beats, drums })
     setMessage(selection ? `${cut ? 'Cut' : 'Copied'} ${beats.length} beats.` : `${cut ? 'Cut' : 'Copied'} bar ${cursor.bar + 1}.`)
     if (cut) edit(selection ? clearSelection(song, cursor, selection) : clearBar(song, cursor))
   }
@@ -324,9 +381,13 @@ export function TabEditor({ project, getEngine }: Props): React.JSX.Element {
       setMessage('Copy something first (Ctrl+C).')
       return
     }
+    if (clipboard.drums !== drums) {
+      setMessage(clipboard.drums ? 'Drum beats can only be pasted into a drum track.' : 'Guitar and bass notes can’t be pasted into a drum track.')
+      return
+    }
     const at = selection ? { ...cursor, bar: selection.start.bar, beat: selection.start.beat } : cursor
     setAnchor(null)
-    edit(pasteBeats(song, at, clipboard))
+    edit(pasteBeats(song, at, clipboard.beats))
   }
 
   /** Delete: selected beats become rests. Shift+Delete / "Delete beat": they're removed and the bar closes the gap. */
@@ -358,7 +419,10 @@ export function TabEditor({ project, getEngine }: Props): React.JSX.Element {
     const key = event.key
     let handled = true
     const shift = event.shiftKey
-    if (/^[0-9]$/.test(key) && !ctrl && !event.altKey) {
+    if (drums && /^[0-9xX]$/.test(key) && !ctrl && !event.altKey) {
+      setAnchor(null)
+      enterHit()
+    } else if (/^[0-9]$/.test(key) && !ctrl && !event.altKey) {
       setAnchor(null)
       enterDigit(Number(key))
     } else if (key === 'ArrowRight') moveCursor(ctrl ? moveBar(song, cursor, 1) : moveBeat(song, cursor, 1), shift)
@@ -432,8 +496,11 @@ export function TabEditor({ project, getEngine }: Props): React.JSX.Element {
 
   const describeCursor = (): string => {
     const open = noteName(track.tuning[cursor.string - 1])
-    const what = noteOnString ? `fret ${noteOnString.fret} (${noteName(notePitch(track, noteOnString))})` : beat.notes.length === 0 ? 'rest' : 'empty string'
-    const where = `${track.name} · bar ${cursor.bar + 1} of ${barCount(song)} · beat ${cursor.beat + 1} · string ${cursor.string} (${open}) · ${what}`
+    const what = drums
+      ? noteOnString ? 'hit' : beat.notes.length === 0 ? 'rest' : 'no hit'
+      : noteOnString ? `fret ${noteOnString.fret} (${noteName(notePitch(track, noteOnString))})` : beat.notes.length === 0 ? 'rest' : 'empty string'
+    const spot = drums ? DRUM_PIECES[cursor.string - 1]?.name : `string ${cursor.string} (${open})`
+    const where = `${track.name} · bar ${cursor.bar + 1} of ${barCount(song)} · beat ${cursor.beat + 1} · ${spot} · ${what}`
     if (!selection) return where
     const bars = selection.start.bar === selection.end.bar ? `bar ${selection.start.bar + 1}` : `bars ${selection.start.bar + 1}–${selection.end.bar + 1}`
     return `${track.name} · ${selectedCount} beats selected (${bars}) · Esc to deselect`
@@ -458,7 +525,8 @@ export function TabEditor({ project, getEngine }: Props): React.JSX.Element {
             <button className={staveMode === 'tab' ? 'active' : ''} onClick={() => setStaveMode('tab')}>Tab only</button>
           </div>
           <button
-            title="Record or import a take and transcribe it into this track"
+            title={song.tracks.some((t) => t.kind !== 'drums') ? 'Record or import a take and transcribe it into a guitar or bass track' : 'Add a guitar or bass track first'}
+            disabled={!song.tracks.some((t) => t.kind !== 'drums')}
             onClick={() => {
               stop()
               setTakeDialog(true)
@@ -538,15 +606,43 @@ export function TabEditor({ project, getEngine }: Props): React.JSX.Element {
           }
         />
 
+        {gridTrack !== null && (
+          <DrumGrid
+            project={project}
+            trackIndex={gridTrack}
+            collapsed={gridCollapsed}
+            onToggleCollapsed={toggleGrid}
+            onSelectTrack={(index) => (drums ? moveCursor(switchTrack(song, cursor, index)) : setGridTrackId(song.tracks[index].id))}
+            positionRef={positionRef}
+            onEdit={edit}
+            onAudition={(note, velocity) => void audition(note, velocity, song.tracks[gridTrack])}
+          />
+        )}
+
         <p className="shortcuts muted small">
-          <kbd>←</kbd> <kbd>→</kbd> beat · <kbd>↑</kbd> <kbd>↓</kbd> string · <kbd>Ctrl</kbd>+<kbd>↑</kbd>/<kbd>↓</kbd> track · <kbd>Ctrl</kbd>+<kbd>←</kbd>/<kbd>→</kbd> bar ·
-          <kbd>0</kbd>–<kbd>9</kbd> fret (type two digits for 10–24) · <kbd>Del</kbd> remove note or rest · <kbd>Shift</kbd>+<kbd>Del</kbd> remove beat · <kbd>R</kbd> rest · <kbd>+</kbd> <kbd>−</kbd> length ·
+          <kbd>←</kbd> <kbd>→</kbd> beat · <kbd>↑</kbd> <kbd>↓</kbd> {drums ? 'kit piece' : 'string'} · <kbd>Ctrl</kbd>+<kbd>↑</kbd>/<kbd>↓</kbd> track · <kbd>Ctrl</kbd>+<kbd>←</kbd>/<kbd>→</kbd> bar ·{' '}
+          {drums ? (
+            <>
+              <kbd>X</kbd> or <kbd>0</kbd>–<kbd>9</kbd> hit
+            </>
+          ) : (
+            <>
+              <kbd>0</kbd>–<kbd>9</kbd> fret (type two digits for 10–24)
+            </>
+          )}{' '}
+          · <kbd>Del</kbd> remove note or rest · <kbd>Shift</kbd>+<kbd>Del</kbd> remove beat · <kbd>R</kbd> rest · <kbd>+</kbd> <kbd>−</kbd> length ·
           <kbd>.</kbd> dotted · <kbd>Space</kbd> play · <kbd>Ctrl</kbd>+<kbd>Z</kbd>/<kbd>Y</kbd> undo/redo · <kbd>Ctrl</kbd>+<kbd>S</kbd> save ·
           select: <kbd>Shift</kbd>+click, drag a box, <kbd>Shift</kbd>+<kbd>←</kbd>/<kbd>→</kbd>, <kbd>Ctrl</kbd>+<kbd>A</kbd> · <kbd>Ctrl</kbd>+<kbd>C</kbd>/<kbd>X</kbd>/<kbd>V</kbd> copy/cut/paste
+          {gridTrack !== null && (
+            <>
+              {' '}
+              · drum grid: click add/remove, <kbd>Shift</kbd>+click accent, <kbd>Alt</kbd>+click ghost
+            </>
+          )}
         </p>
       </div>
 
-      {soundEditor !== null && song.tracks[soundEditor]?.instrument.kind === 'synth' && (
+      {soundEditor !== null && song.tracks[soundEditor] && song.tracks[soundEditor].instrument.kind !== 'soundfont' && (
         <InstrumentEditor
           project={project}
           trackIndex={soundEditor}

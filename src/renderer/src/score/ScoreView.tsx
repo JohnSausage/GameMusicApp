@@ -86,6 +86,7 @@ function drawTabRests(container: HTMLElement, api: alphaTab.AlphaTabApi, convert
   container.replaceChildren()
   const spacing = tabLineSpacing(api)
   converted.beats.forEach((trackBeats, trackIndex) => {
+    if (song.tracks[trackIndex]?.kind === 'drums') return // the percussion staff draws its own rests
     const strings = song.tracks[trackIndex]?.tuning.length ?? 6
     trackBeats.forEach((barBeats, barIndex) => {
       const staff = tabStaff(api, barIndex, trackIndex)
@@ -235,13 +236,9 @@ export function ScoreView({ song, staveMode, positionRef, editCursor, selection,
 
   useEffect(() => {
     const api = apiRef.current!
-    const profile = staveMode === 'tab' ? alphaTab.StaveProfile.Tab : alphaTab.StaveProfile.ScoreTab
-    if (api.settings.display.staveProfile !== profile) {
-      api.settings.display.staveProfile = profile
-      api.updateSettings()
-    }
+    // The stave profile stays ScoreTab; which staves show is set per staff (tab only = tab, and a rhythm line for drums).
     renderStartRef.current = performance.now()
-    const converted = songToAlphaTab(song, api.settings)
+    const converted = songToAlphaTab(song, api.settings, staveMode === 'tab')
     convertedRef.current = converted
     api.renderScore(converted.score, song.tracks.map((_, i) => i))
   }, [song, staveMode])
@@ -259,9 +256,13 @@ export function ScoreView({ song, staveMode, positionRef, editCursor, selection,
 
         const editBeat = editCursor ? converted.beats[editCursor.track]?.[editCursor.bar]?.[editCursor.beat] : undefined
         place(editColumnRef.current!, editCursor ? beatColumn(api, editBeat) : null)
-        const box = editCursor ? stringBox(api, converted, editCursor) : null
+        // Drum tracks have no tab, so there is no string to box; the drum grid shows the kit piece.
+        const drums = editCursor ? song.tracks[editCursor.track]?.kind === 'drums' : false
+        const box = editCursor && !drums ? stringBox(api, converted, editCursor) : null
         place(editStringRef.current!, box)
-        if (box && editCursor) keepVisible(box, `${editCursor.track}/${editCursor.bar}/${editCursor.beat}`)
+        const staves = drums && editCursor ? trackStavesY(api, editCursor.bar, editCursor.track) : null
+        const visible = box ?? (staves ? { x: 0, y: staves.top, w: 0, h: staves.bottom - staves.top } : null)
+        if (visible && editCursor) keepVisible(visible, `${editCursor.track}/${editCursor.bar}/${editCursor.beat}`)
 
         const selectionKey = `${renderVersionRef.current}|${JSON.stringify(selection ?? null)}`
         if (selectionKey !== drawnSelectionRef.current) {
@@ -370,7 +371,7 @@ export function ScoreView({ song, staveMode, positionRef, editCursor, selection,
     const staff = tabStaff(api, ref.barIndex, ref.trackIndex)
     const strings = song.tracks[ref.trackIndex].tuning.length
     const spacing = tabLineSpacing(api)
-    if (staff && y >= staff.y - spacing && y <= staff.y + (strings - 1) * spacing + spacing) {
+    if (staff && song.tracks[ref.trackIndex].kind !== 'drums' && y >= staff.y - spacing && y <= staff.y + (strings - 1) * spacing + spacing) {
       string = Math.max(1, Math.min(strings, Math.round((y - staff.y) / spacing) + 1))
     }
     onScoreClick({ ...ref, string }, event.shiftKey)

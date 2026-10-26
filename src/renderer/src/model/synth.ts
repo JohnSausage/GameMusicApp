@@ -152,6 +152,35 @@ export function formatSampleRate(rate: number): string {
   return `${k >= 10 ? Math.round(k) : Math.round(k * 10) / 10} kHz`
 }
 
+/** One piece of a synth drum kit: which drum (General MIDI note) and how it sounds. */
+export interface DrumSound {
+  note: number
+  /** The pitch the synth plays for this piece (pitch sweeps and noise color depend on it). */
+  pitch: number
+  patch: SynthPatch
+}
+
+const drum = (note: number, pitch: number, name: string, settings: Partial<SynthPatch>): DrumSound => ({
+  note,
+  pitch,
+  patch: { ...DEFAULT_PATCH, attack: 0.001, sustain: 0, release: 0.02, velocity: 0.7, ...settings, name }
+})
+
+/** The 8-bit drum kit (SYN-20): triangle sweeps for kick and toms, LFSR noise for snare and cymbals. */
+export function eightBitKit(): DrumSound[] {
+  return [
+    drum(49, 90, '8-bit crash', { waveform: 'noise', decay: 0.9, volume: 0.55 }),
+    drum(51, 100, '8-bit ride', { waveform: 'noise', decay: 0.35, volume: 0.35 }),
+    drum(46, 96, '8-bit open hat', { waveform: 'noise', decay: 0.25, volume: 0.45 }),
+    drum(42, 96, '8-bit closed hat', { waveform: 'noise', decay: 0.035, volume: 0.45 }),
+    drum(50, 52, '8-bit high tom', { waveform: 'triangle', decay: 0.25, pitchEnvAmount: 7, pitchEnvTime: 0.12, volume: 1 }),
+    drum(47, 47, '8-bit mid tom', { waveform: 'triangle', decay: 0.28, pitchEnvAmount: 7, pitchEnvTime: 0.12, volume: 1 }),
+    drum(38, 72, '8-bit snare', { waveform: 'noise', decay: 0.15, volume: 0.7 }),
+    drum(45, 43, '8-bit low tom', { waveform: 'triangle', decay: 0.3, pitchEnvAmount: 7, pitchEnvTime: 0.12, volume: 1 }),
+    drum(36, 33, '8-bit kick', { waveform: 'triangle', decay: 0.18, pitchEnvAmount: 24, pitchEnvTime: 0.06, volume: 1 })
+  ]
+}
+
 export function factoryPreset(name: string): SynthPatch {
   return { ...(FACTORY_PRESETS.find((p) => p.name === name) ?? DEFAULT_PATCH) }
 }

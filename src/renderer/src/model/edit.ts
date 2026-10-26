@@ -18,7 +18,7 @@ import {
   type Track,
   type TrackKind
 } from './song'
-import { factoryPreset } from './synth'
+import { eightBitKit, factoryPreset } from './synth'
 
 export const TICKS_PER_QUARTER = 960
 
@@ -89,7 +89,8 @@ export function createSong(options: NewSongOptions): Song {
   return song
 }
 
-function edit(song: Song, cursor: Cursor, change: (draft: Song, cursor: Cursor) => Cursor | false | void): EditResult | null {
+/** Applies `change` to a copy of the song; returning false means "not possible" (null result). */
+export function edit(song: Song, cursor: Cursor, change: (draft: Song, cursor: Cursor) => Cursor | false | void): EditResult | null {
   const draft = structuredClone(song)
   const next = change(draft, { ...cursor })
   if (next === false) return null
@@ -551,15 +552,20 @@ export function isRetro(song: Song): boolean {
 
 /**
  * Gives every track an 8-bit sound by its role: bass → triangle, first guitar →
- * 25 % pulse lead, second → 12.5 % pulse, others → 50 % square. The original
+ * 25 % pulse lead, second → 12.5 % pulse, others → 50 % square, drums → the
+ * 8-bit kit (noise and triangle sweeps). The original
  * sounds are kept so restoreSounds() can switch back; notes never change.
  */
 export function makeRetro(song: Song, cursor: Cursor): EditResult {
   return edit(song, cursor, (draft) => {
     let leads = 0
     for (const track of draft.tracks) {
-      const name = isBassTrack(track) ? 'Triangle bass' : ['8-bit lead', '8-bit thin lead'][leads++] ?? '8-bit square'
       track.originalInstrument ??= track.instrument
+      if (track.kind === 'drums') {
+        track.instrument = { kind: 'synthkit', pieces: eightBitKit() }
+        continue
+      }
+      const name = isBassTrack(track) ? 'Triangle bass' : ['8-bit lead', '8-bit thin lead'][leads++] ?? '8-bit square'
       track.instrument = { kind: 'synth', patch: factoryPreset(name) }
     }
   })!
