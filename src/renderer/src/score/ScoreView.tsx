@@ -17,6 +17,8 @@ export interface ScoreTarget extends BeatRef {
 interface Props {
   song: Song
   staveMode: StaveMode
+  /** Score zoom, 1 = 100 % (VIEW-10). */
+  zoom?: number
   /** Playback position in seconds, or null when stopped. Read every animation frame. */
   positionRef?: RefObject<number | null>
   /** Editing cursor: highlights the beat and the string on the tab. */
@@ -100,6 +102,7 @@ function drawTabRests(container: HTMLElement, api: alphaTab.AlphaTabApi, convert
         rest.textContent = (REST_GLYPHS[beat.duration] ?? REST_GLYPHS[4]) + (beat.dots > 0 ? AUGMENTATION_DOT : '')
         rest.style.left = `${bounds.visualBounds.x + bounds.visualBounds.w / 2}px`
         rest.style.top = `${staff.y + ((strings - 1) * spacing) / 2}px`
+        rest.style.fontSize = `${26 * api.settings.display.scale}px`
         container.appendChild(rest)
       }
     })
@@ -189,7 +192,7 @@ function stringBox(api: alphaTab.AlphaTabApi, converted: ConvertedScore, cursor:
   return { x: bounds.visualBounds.x + bounds.visualBounds.w / 2 - w / 2, y: staff.y + (cursor.string - 1) * spacing - spacing / 2, w, h: spacing }
 }
 
-export function ScoreView({ song, staveMode, positionRef, editCursor, selection, onScoreClick, onSelectArea, endActions }: Props): React.JSX.Element {
+export function ScoreView({ song, staveMode, zoom = 1, positionRef, editCursor, selection, onScoreClick, onSelectArea, endActions }: Props): React.JSX.Element {
   const scrollRef = useRef<HTMLDivElement>(null)
   const hostRef = useRef<HTMLDivElement>(null)
   const playCursorRef = useRef<HTMLDivElement>(null)
@@ -236,12 +239,16 @@ export function ScoreView({ song, staveMode, positionRef, editCursor, selection,
 
   useEffect(() => {
     const api = apiRef.current!
+    if (api.settings.display.scale !== zoom) {
+      api.settings.display.scale = zoom
+      api.updateSettings()
+    }
     // The stave profile stays ScoreTab; which staves show is set per staff (tab only = tab, and a rhythm line for drums).
     renderStartRef.current = performance.now()
     const converted = songToAlphaTab(song, api.settings, staveMode === 'tab')
     convertedRef.current = converted
     api.renderScore(converted.score, song.tracks.map((_, i) => i))
-  }, [song, staveMode])
+  }, [song, staveMode, zoom])
 
   // Overlays are positioned every frame from alphaTab's layout, so they follow re-renders.
   useEffect(() => {

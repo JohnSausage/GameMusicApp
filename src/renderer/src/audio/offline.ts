@@ -1,6 +1,6 @@
 import { MIDIControllers, SoundBankLoader, SpessaSynthProcessor } from 'spessasynth_core'
-import type { Song } from '../model/song'
-import { buildTimeline } from '../model/timing'
+import { audibleTracks, type Song } from '../model/song'
+import { buildTimeline, exportFrameCount, notesBetween, type ExportEnding, type NoteEvent, type TimeRange } from '../model/timing'
 import { createBitcrusher, createChipSynth, createTrackBus, crushActive, loadSynthWorklet } from './mixer'
 import { channelForTrack, loadSoundFont, panToMidi } from './soundfont'
 
@@ -14,10 +14,10 @@ interface MidiStep {
   apply: (synth: SpessaSynthProcessor) => void
 }
 
-/** Renders the SoundFont tracks with SpessaSynth's processor directly in JS (no Web Audio). */
-async function renderSoundFontTracks(song: Song, sampleRate: number, frameCount: number): Promise<Float32Array<ArrayBuffer>[] | null> {
+/** Renders the SoundFont tracks' notes with SpessaSynth's processor directly in JS (no Web Audio). */
+async function renderSoundFontTracks(song: Song, notes: NoteEvent[], sampleRate: number, frameCount: number): Promise<Float32Array<ArrayBuffer>[] | null> {
   const tracks = song.tracks.map((track, index) => ({ track, index })).filter(({ track }) => track.instrument.kind === 'soundfont')
-  if (tracks.length === 0) return null
+  if (tracks.length === 0 || !notes.some((n) => song.tracks[n.trackIndex].instrument.kind === 'soundfont')) return null
 
   const synth = new SpessaSynthProcessor(sampleRate)
   await synth.processorInitialized
@@ -31,7 +31,7 @@ async function renderSoundFontTracks(song: Song, sampleRate: number, frameCount:
   }
 
   const steps: MidiStep[] = []
-  for (const note of buildTimeline(song).notes) {
+  for (const note of notes) {
     if (song.tracks[note.trackIndex].instrument.kind !== 'soundfont') continue
     const channel = channelForTrack(song, note.trackIndex)
     steps.push({ frame: Math.round(note.start * sampleRate), order: 1, apply: (s) => s.noteOn(channel, note.pitch, note.velocity) })
@@ -57,13 +57,31 @@ async function renderSoundFontTracks(song: Song, sampleRate: number, frameCount:
   return [left, right]
 }
 
+export interface RenderOptions {
+  /** Part of the song to render, in seconds (default: all of it). */
+  range?: TimeRange
+  /**
+   * 'tail' lets notes ring out after the end; 'cut' ends exactly at the end of
+   * the range with a short fade, so the file loops without a gap (EXP-05).
+   */
+  ending?: ExportEnding
+}
+
+/** Fade at a cut end, short enough not to be heard but long enough to avoid a click. */
+const CUT_FADE_SECONDS = 0.005
+
 /**
  * Offline WAV render. Synth tracks use the same chip synth worklet as live
- * playback, so export matches what you hear (REQUIREMENTS.md PLAY-09).
+ * playback, and muted tracks are left out, so export matches what you hear
+ * (REQUIREMENTS.md PLAY-09, EXP-02, EXP-05).
  */
-export async function renderSongOffline(song: Song, sampleRate = 48000, tailSeconds = 1.5): Promise<AudioBuffer> {
-  const timeline = buildTimeline(song)
-  const frameCount = Math.ceil((timeline.duration + tailSeconds) * sampleRate)
+export async function renderSongOffline(song: Song, sampleRate = 48000, options: RenderOptions = {}): Promise<AudioBuffer> {
+  const all = buildTimeline(song)
+  const range = options.range ?? { start: 0, end: all.duration }
+  const ending = options.ending ?? 'tail'
+  const audible = audibleTracks(song)
+  const timeline = { notes: notesBetween(all.notes, range.start, range.end).filter((n) => audible[n.trackIndex]) }
+  const frameCount = Math.max(1, exportFrameCount(range, sampleRate, ending))
   const offline = new OfflineAudioContext(2, frameCount, sampleRate)
   await loadSynthWorklet(offline)
   const master = offline.createGain()
@@ -72,7 +90,7 @@ export async function renderSongOffline(song: Song, sampleRate = 48000, tailSeco
   if (crushActive(crush)) master.connect(createBitcrusher(offline, crush)).connect(offline.destination)
   else master.connect(offline.destination)
 
-  const soundFontAudio = await renderSoundFontTracks(song, sampleRate, frameCount)
+  const soundFontAudio = await renderSoundFontTracks(song, timeline.notes, sampleRate, frameCount)
   if (soundFontAudio) {
     const buffer = offline.createBuffer(2, frameCount, sampleRate)
     buffer.copyToChannel(soundFontAudio[0], 0)
@@ -86,7 +104,7 @@ export async function renderSongOffline(song: Song, sampleRate = 48000, tailSeco
   // One chip synth per synth track (or per piece of a synth drum kit), with all its notes handed over up front.
   song.tracks.forEach((track, trackIndex) => {
     const instrument = track.instrument
-    if (instrument.kind === 'soundfont') return
+    if (instrument.kind === 'soundfont' || !audible[trackIndex]) return
     const bus = createTrackBus(offline, master, track.volume, track.pan)
     const notes = timeline.notes.filter((n) => n.trackIndex === trackIndex)
     const toSynth = (pitch: (n: (typeof notes)[number]) => number) => (n: (typeof notes)[number]) => ({ time: n.start, pitch: pitch(n), velocity: n.velocity, duration: n.duration * GATE })
@@ -100,5 +118,16 @@ export async function renderSongOffline(song: Song, sampleRate = 48000, tailSeco
     }
   })
 
-  return offline.startRendering()
+  const buffer = await offline.startRendering()
+  if (ending === 'cut') fadeOut(buffer, CUT_FADE_SECONDS)
+  return buffer
+}
+
+/** Fades the last `seconds` of a buffer to silence. */
+function fadeOut(buffer: AudioBuffer, seconds: number): void {
+  const frames = Math.min(buffer.length, Math.round(seconds * buffer.sampleRate))
+  for (let c = 0; c < buffer.numberOfChannels; c++) {
+    const data = buffer.getChannelData(c)
+    for (let i = 0; i < frames; i++) data[buffer.length - 1 - i] *= i / frames
+  }
 }

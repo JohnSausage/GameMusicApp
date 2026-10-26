@@ -17,6 +17,22 @@ export interface BeatSpan {
   end: number
 }
 
+/** A stretch of the song in seconds, e.g. a loop or an export range. */
+export interface TimeRange {
+  start: number
+  end: number
+}
+
+/** How an exported WAV ends: 'cut' exactly at the end (loopable), or 'tail' to let notes ring out. */
+export type ExportEnding = 'cut' | 'tail'
+
+export const EXPORT_TAIL_SECONDS = 1.5
+
+/** Samples per channel of an exported range; a cut export is exactly as long as the range. */
+export function exportFrameCount(range: TimeRange, sampleRate: number, ending: ExportEnding): number {
+  return Math.round((range.end - range.start + (ending === 'tail' ? EXPORT_TAIL_SECONDS : 0)) * sampleRate)
+}
+
 export interface SongTimeline {
   notes: NoteEvent[]
   beats: BeatSpan[]
@@ -26,6 +42,21 @@ export interface SongTimeline {
 
 export function secondsPerQuarter(song: Song): number {
   return 60 / song.tempo
+}
+
+/** Length of one bar in seconds (all bars share the song's time signature). */
+export function barSeconds(song: Song): number {
+  return secondsPerQuarter(song) * 4 * (song.timeSignature[0] / song.timeSignature[1])
+}
+
+/**
+ * The notes that start from `start` up to (not including) `end` seconds, moved so
+ * that `start` is 0; e.g. to export a bar range. A tiny tolerance keeps notes
+ * exactly on the boundary from slipping out through rounding.
+ */
+export function notesBetween(notes: NoteEvent[], start: number, end: number): NoteEvent[] {
+  const EPSILON = 1e-6
+  return notes.filter((n) => n.start >= start - EPSILON && n.start < end - EPSILON).map((n) => ({ ...n, start: Math.max(0, n.start - start) }))
 }
 
 /** Converts the bar/beat structure into absolute note and beat times. */

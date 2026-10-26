@@ -1,9 +1,11 @@
 import { MIDIControllers } from 'spessasynth_core'
 import { WorkletSynthesizer } from 'spessasynth_lib'
 import processorUrl from 'spessasynth_lib/dist/spessasynth_processor.min.js?url'
-import type { Instrument, MasterSettings, Song } from '../model/song'
+import { audibleTracks, type Instrument, type MasterSettings, type Song } from '../model/song'
 import type { SynthPatch } from '../model/synth'
-import { buildTimeline, type NoteEvent, type SongTimeline } from '../model/timing'
+import { buildTimeline, type NoteEvent, type SongTimeline, type TimeRange } from '../model/timing'
+import { secondsPerClick } from './analysis'
+import { songPosition, startPosition, startSchedule, takeDue, validLoop, type ScheduleState } from './scheduler'
 import { createBitcrusher, createChipSynth, createTrackBus, crushActive, loadSynthWorklet } from './mixer'
 import { channelForTrack, loadSoundFont, panToMidi } from './soundfont'
 import type { ChipSynthMessage } from './synth/chipSynth.worklet'
@@ -16,18 +18,30 @@ const GATE = 0.92
 const LIVE_CHANNEL = 15
 const DRUM_CHANNEL = 9
 
+export interface PlayOptions {
+  /** Context time to start at, so other audio can start in sync. */
+  startAt?: number
+  /** Play this range over and over (PLAY-02). Playback starts at its start unless `from` is inside it. */
+  loop?: TimeRange | null
+  /** Metronome clicks during playback (PLAY-07); setMetronome() switches it while playing. */
+  metronome?: boolean
+}
+
 interface Playback {
   song: Song
   timeline: SongTimeline
   from: number
   /** Context time at which song time `from` is heard. */
   startTime: number
-  nextNote: number
+  loop: TimeRange | null
+  schedule: ScheduleState
   timer: number
   /** Chip synths per track: none for SoundFont tracks, one for a synth, one per piece for a synth drum kit. */
   synths: TrackSynth[]
   buses: GainNode[]
+  audible: boolean[]
 }
+
 
 /** Chip synth nodes of a track by the note they play, with the pitch to send them. */
 type TrackSynth = Map<number | 'any', { node: AudioWorkletNode; pitch?: number }>
@@ -55,6 +69,7 @@ export class AudioEngine {
   private liveSynth: AudioWorkletNode | null = null
   private livePatch: SynthPatch | null = null
   private liveProgram = -1
+  private metronome = false
   onEnded: (() => void) | null = null
 
   private constructor() {
@@ -91,15 +106,18 @@ export class AudioEngine {
   position(): number | null {
     const p = this.playback
     if (!p) return null
-    return Math.max(p.from, p.from + this.ctx.currentTime - p.startTime - (this.ctx.outputLatency || 0))
+    return songPosition(p.from, this.ctx.currentTime - p.startTime - (this.ctx.outputLatency || 0), p.loop)
   }
 
-  /** Plays from song time `from`; `startAt` (context time) lets other audio start in sync. */
-  async play(song: Song, from = 0, startAt?: number): Promise<void> {
+  /** Plays from song time `from`, optionally looping a range and with the metronome. */
+  async play(song: Song, from = 0, options: PlayOptions = {}): Promise<void> {
     this.stop()
     await this.ctx.resume()
     const synth = this.synth!
     const timeline = buildTimeline(song)
+    const loop = validLoop(options.loop)
+    from = startPosition(from, loop)
+    this.metronome = options.metronome ?? false
     const buses = song.tracks.map((track) => createTrackBus(this.ctx, this.master, track.volume, track.pan))
     const synths = song.tracks.map((track, i): TrackSynth => {
       const synth: TrackSynth = new Map()
@@ -118,25 +136,49 @@ export class AudioEngine {
       if (track.instrument.kind !== 'soundfont') return
       const channel = channelForTrack(song, trackIndex)
       synth.programChange(channel, track.instrument.program)
-      synth.controllerChange(channel, MIDIControllers.mainVolume, Math.round(track.volume * 127))
       synth.controllerChange(channel, MIDIControllers.pan, panToMidi(track.pan))
     })
 
+    const startTime = options.startAt ?? this.ctx.currentTime + 0.08
     const playback: Playback = {
       song,
       timeline,
       from,
-      startTime: startAt ?? this.ctx.currentTime + 0.08,
-      nextNote: timeline.notes.findIndex((n) => n.start >= from),
+      startTime,
+      loop,
+      schedule: startSchedule(timeline, from, startTime, loop, secondsPerClick(song.tempo, song.timeSignature), song.timeSignature[0]),
       timer: 0,
       synths,
-      buses
+      buses,
+      audible: []
     }
-    if (playback.nextNote < 0) playback.nextNote = timeline.notes.length
-    playback.timer = window.setInterval(() => this.schedule(playback), SCHEDULER_INTERVAL_MS)
     this.playback = playback
+    this.updateMix(song)
+    playback.timer = window.setInterval(() => this.schedule(playback), SCHEDULER_INTERVAL_MS)
     this.generation++
     this.schedule(playback)
+  }
+
+  /**
+   * Applies track volumes, mute and solo, also while playing (PLAY-05). Tracks
+   * keep their place: only how loud they are changes.
+   */
+  updateMix(song: Song): void {
+    const p = this.playback
+    if (!p || song.tracks.length !== p.song.tracks.length) return
+    p.audible = audibleTracks(song)
+    song.tracks.forEach((track, i) => {
+      const volume = p.audible[i] ? track.volume : 0
+      p.buses[i].gain.setTargetAtTime(volume, this.ctx.currentTime, 0.01)
+      if (p.song.tracks[i].instrument.kind === 'soundfont') {
+        this.synth!.controllerChange(channelForTrack(p.song, i), MIDIControllers.mainVolume, Math.round(volume * 127))
+      }
+    })
+  }
+
+  /** Switches the metronome on or off, also while playing. */
+  setMetronome(on: boolean): void {
+    this.metronome = on
   }
 
   stop(): void {
@@ -159,24 +201,21 @@ export class AudioEngine {
     }, LOOKAHEAD_SECONDS * 1000 + 60)
   }
 
+  /** Hands notes and clicks that are due soon to the audio thread. */
   private schedule(p: Playback): void {
-    const horizon = this.ctx.currentTime + LOOKAHEAD_SECONDS
-    const notes = p.timeline.notes
-    while (p.nextNote < notes.length) {
-      const note = notes[p.nextNote]
-      const when = p.startTime + note.start - p.from
-      if (when > horizon) break
-      if (when >= this.ctx.currentTime - 0.01) this.playNote(p, note, when)
-      p.nextNote++
-    }
+    const now = this.ctx.currentTime
+    const due = takeDue(p.schedule, now, now + LOOKAHEAD_SECONDS)
+    for (const { note, when } of due.notes) this.playNote(p, note, when)
+    if (this.metronome) for (const { when, accent } of due.clicks) this.click(when, accent)
     const position = this.position()
-    if (position !== null && position > p.timeline.duration + 0.5) {
+    if (!p.loop && position !== null && position > p.timeline.duration + 0.5) {
       this.stop()
       this.onEnded?.()
     }
   }
 
   private playNote(p: Playback, note: NoteEvent, when: number): void {
+    if (!p.audible[note.trackIndex]) return
     const instrument = p.song.tracks[note.trackIndex].instrument
     const length = note.duration * GATE
     if (instrument.kind === 'soundfont') {
@@ -253,24 +292,26 @@ export class AudioEngine {
     }
   }
 
+  /** One metronome click at context time `t`; the first beat of a bar is higher. */
+  private click(t: number, accent: boolean): OscillatorNode {
+    const osc = this.ctx.createOscillator()
+    const gain = this.ctx.createGain()
+    osc.frequency.value = accent ? 1500 : 1000
+    gain.gain.setValueAtTime(0.3, t)
+    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.05)
+    osc.connect(gain).connect(this.master)
+    osc.start(t)
+    osc.stop(t + 0.06)
+    return osc
+  }
+
   /**
    * Metronome clicks; the first click of each bar is accented. `firstBeatInBar`
    * says where in the bar the first click falls. Returns a stop function.
    */
   scheduleClicks(startTime: number, secondsPerClick: number, count: number, clicksPerBar: number, firstBeatInBar = 0): () => void {
     const oscillators: OscillatorNode[] = []
-    for (let i = 0; i < count; i++) {
-      const t = startTime + i * secondsPerClick
-      const osc = this.ctx.createOscillator()
-      const gain = this.ctx.createGain()
-      osc.frequency.value = (i + firstBeatInBar) % clicksPerBar === 0 ? 1500 : 1000
-      gain.gain.setValueAtTime(0.3, t)
-      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.05)
-      osc.connect(gain).connect(this.master)
-      osc.start(t)
-      osc.stop(t + 0.06)
-      oscillators.push(osc)
-    }
+    for (let i = 0; i < count; i++) oscillators.push(this.click(startTime + i * secondsPerClick, (i + firstBeatInBar) % clicksPerBar === 0))
     return () => oscillators.forEach((o) => {
       try {
         o.stop()

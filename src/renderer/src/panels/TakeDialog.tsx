@@ -211,7 +211,7 @@ export function TakeDialog({ project, getEngine, onClose }: Props): React.JSX.El
       const count = Math.ceil((buffer.duration - firstClick) / seconds)
       stops.push(engine.scheduleClicks(start + firstClick, seconds, count, clicksPerBar, (((-before) % clicksPerBar) + clicksPerBar) % clicksPerBar))
     }
-    if (options.transcription) void playback.play(options.transcription, 0, start + info.firstDownbeat)
+    if (options.transcription) void playback.play(options.transcription, 0, { startAt: start + info.firstDownbeat })
     stopAudio.current = () =>
       stops.forEach((stop) => {
         try {

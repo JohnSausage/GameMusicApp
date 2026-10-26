@@ -457,6 +457,26 @@ label.inline {
   align-items: center;
 }
 
+/* Mute / solo */
+.track-card .icon.mute,
+.track-card .icon.solo {
+  font-size: 12px;
+  font-weight: 700;
+  padding: 4px 7px;
+}
+
+.track-card .icon.mute.active {
+  background: var(--warning);
+  border-color: var(--warning);
+  color: #fff;
+}
+
+.track-card.silent .track-name,
+.track-card.silent select,
+.track-card.silent .volume {
+  opacity: 0.5;
+}
+
 .track-card-row select,
 .track-name {
   flex: 1;
@@ -971,4 +991,56 @@ kbd {
 
 .drum-cell.beat-start:not(.bar-start) {
   margin-left: 4px;
+}
+
+/* ---------------------------------------------------------------- playback and export */
+
+.loop-control {
+  display: inline-flex;
+}
+
+.loop-control button {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.loop-control select {
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  border-left: none;
+  max-width: 220px;
+}
+
+.zoom-level {
+  min-width: 64px;
+}
+
+.export-dialog {
+  width: min(640px, 100%);
+}
+
+.choice-group {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 12px 10px;
+  margin: 4px 0 12px;
+  display: grid;
+  gap: 8px;
+}
+
+.choice-group legend {
+  font-size: 12px;
+  color: var(--muted);
+  padding: 0 4px;
+}
+
+.choice-group label.checkbox {
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.choice-group input[type='radio'] {
+  margin-top: 3px;
 }
