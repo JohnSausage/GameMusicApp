@@ -101,7 +101,7 @@ async function runSmokeTest(win: BrowserWindow): Promise<void> {
     const recent = [...document.querySelectorAll('.recent-item:not(:disabled)')]
     ;(recent[0] ?? button('demo song'))?.click()
     await sleep(3000)
-    const editor = document.querySelector('.info-line span')?.textContent ?? null
+    const editor = document.querySelector('.status-bar .cursor-info')?.textContent ?? null
     const scoreRenderMs = document.querySelector('.score-scroll')?.dataset.renderMs ?? null
 
     // A drum track with a starter pattern from the drum grid.
@@ -120,14 +120,14 @@ async function runSmokeTest(win: BrowserWindow): Promise<void> {
     await sleep(300)
     const retroSounds = [...document.querySelectorAll('.track-card select')].map((s) => s.selectedOptions[0]?.textContent)
     // Play with loop and metronome on, then switch them off again.
-    button('Loop', document.querySelector('.editor-main'))?.click()
-    button('Metronome', document.querySelector('.editor-main'))?.click()
-    button('▶ Play', document.querySelector('.editor-main'))?.click()
+    const header = document.querySelector('.editor-header')
+    const toggleLoopAndMetronome = () => ['Loop', 'Metronome'].forEach((name) => header?.querySelector('button[aria-label="' + name + '"]')?.click())
+    toggleLoopAndMetronome()
+    header?.querySelector('.transport-play')?.click()
     await sleep(1500)
-    const playing = button('■ Stop', document.querySelector('.editor-main')) !== undefined
-    button('■ Stop', document.querySelector('.editor-main'))?.click()
-    button('Loop', document.querySelector('.editor-main'))?.click()
-    button('Metronome', document.querySelector('.editor-main'))?.click()
+    const playing = header?.querySelector('.transport-play')?.textContent?.includes('Stop') ?? false
+    header?.querySelector('.transport-play')?.click()
+    toggleLoopAndMetronome()
 
     // Three plucked notes (A3, C4, E4), half a second apart, as a 16-bit WAV.
     const rate = 22050
@@ -149,7 +149,7 @@ async function runSmokeTest(win: BrowserWindow): Promise<void> {
     wav.setUint32(28, rate * 2, true); wav.setUint16(32, 2, true); wav.setUint16(34, 16, true); text(36, 'data'); wav.setUint32(40, samples.length * 2, true)
     samples.forEach((v, i) => wav.setInt16(44 + i * 2, Math.max(-1, Math.min(1, v)) * 0x7fff, true))
 
-    button('Record / import')?.click()
+    header?.querySelector('.record-button')?.click()
     await sleep(300)
     const input = document.querySelector('.modal input[type=file]')
     const files = new DataTransfer()
