@@ -4,7 +4,7 @@
 |---|---|
 | **Date** | 2026-10-25 |
 | **Goal** | Prove every risky part of the chosen stack works on Linux and Windows before building the real app (REQUIREMENTS.md §8). |
-| **Status** | Done except two checks. You confirmed playback, the synth switch and WAV export, and chose Basic Pitch for transcription. The Windows `.exe` builds and starts on CI. Still open: MIDI keyboard latency (waiting for a cable) and a hands-on test of the `.exe` by your friend. See [§4](#4-what-still-needs-you). |
+| **Status** | Done except one check. You confirmed playback, the synth switch and WAV export, and chose Basic Pitch for transcription. The Windows `.exe` builds and starts on CI. MIDI keyboard latency is measured and fixed (30 ms on Linux, see [§4](#4-what-still-needs-you)). Still open: a hands-on test of the `.exe` by your friend. See [§4](#4-what-still-needs-you). |
 
 ## 1. What was built
 
@@ -58,12 +58,13 @@ Your test on 2026-10-25:
 | Sound: playback, SoundFont ⇄ synth switch | ✅ works |
 | WAV export | ✅ works |
 | Transcription on your recordings | ✅ Basic Pitch worked better than the pitch tracker → chosen |
-| MIDI keyboard | ⏳ later (cable missing) |
+| MIDI keyboard | ✅ works (LPK25). Latency was 49.8 ms with the default audio buffer; now 30.4 ms and sounds fine (see below) |
+
+**MIDI keyboard latency (2026-10-26).** You measured 0.1 ms MIDI → handler, 10.7 ms base and 39 ms output latency: 49.8 ms, right at the 50 ms limit. Nearly all of it was the audio buffer (Chromium's 512 samples on Linux) and the PipeWire buffering that follows it. Measured on the same machine (PipeWire 1.6): a 256-sample buffer gives 5.3 ms base + 17–25 ms output, about 25 ms key → sound; 128 samples was no faster. The app now starts with a 256-sample buffer on Linux (Chromium's `--audio-buffer-size`), with a "Standard" option in the MIDI keyboard tab in case playback crackles. Your measurement with it: 0.1 ms + 5.3 ms base + 25 ms output = **30.4 ms**, at the 30 ms goal and well under the 50 ms limit. Playing feels fine, so it stays like that.
 
 Still open:
 
-1. **MIDI keyboard.** Once you have the cable: MIDI keyboard tab → Connect. Play some notes and write down the "Estimated key → sound" value. Does it feel instant? If it's above 50 ms, try `PULSE_LATENCY_MSEC=10 npm run dev`.
-2. **Windows, hands-on.** The `.exe` starts on a Windows CI machine, but nobody has listened to it yet. GitHub Actions builds `GameMusicApp-0.0.1-portable.exe` and `GameMusicApp-0.0.1-setup.exe` for every pull request and every push to `main` (download them under *Actions → Build → Artifacts*). Your friend should see the score and hear playback after double-clicking the portable `.exe`.
+1. **Windows, hands-on.** The `.exe` starts on a Windows CI machine, but nobody has listened to it yet. GitHub Actions builds `GameMusicApp-0.0.1-portable.exe` and `GameMusicApp-0.0.1-setup.exe` for every pull request and every push to `main` (download them under *Actions → Build → Artifacts*). Your friend should see the score and hear playback after double-clicking the portable `.exe`.
 
 ## 5. Next step
 

@@ -16,5 +16,10 @@ contextBridge.exposeInMainWorld('gameMusicApp', {
     list: () => ipcRenderer.invoke('presets:list'),
     save: (name: string, text: string) => ipcRenderer.invoke('presets:save', name, text),
     remove: (id: string) => ipcRenderer.invoke('presets:delete', id)
-  }
+  },
+  settings: {
+    get: () => ipcRenderer.invoke('settings:get'),
+    set: (patch: object) => ipcRenderer.invoke('settings:set', patch)
+  },
+  restart: (): Promise<boolean> => ipcRenderer.invoke('app:restart')
 })

@@ -1,9 +1,11 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, net, protocol, session } from 'electron'
+import { spawn } from 'node:child_process'
 import { writeFile } from 'node:fs/promises'
 import { dirname, join, normalize, sep } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { registerPresetHandlers } from './presets'
-import { confirmCloseWhenDirty, registerProjectHandlers } from './projects'
+import { confirmCloseWhenDirty, confirmDiscardChanges, registerProjectHandlers } from './projects'
+import { applyStartupSettings, registerSettingsHandlers } from './settings'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const rendererDir = join(here, '../renderer')
@@ -11,6 +13,9 @@ const rendererDir = join(here, '../renderer')
 // Start with --smoke-test to load the UI, print what rendered, and quit (exit code 1 on errors).
 // Used to check that a production build (or packaged app) starts correctly.
 const smokeTest = process.argv.includes('--smoke-test')
+
+// The audio buffer size is read by Chromium at startup, so settings are applied before the app is ready.
+const startupSettings = applyStartupSettings()
 
 // The production UI is served from app://bundle/ instead of file:// so that
 // fetch(), AudioWorklets and getUserMedia behave like on a normal secure origin.
@@ -53,6 +58,21 @@ function createWindow(): BrowserWindow {
   })
   confirmCloseWhenDirty(win)
   return win
+}
+
+/**
+ * Electron's relaunch helper runs from the AppImage's mount, which goes away
+ * when this instance quits, so a small shell starts the AppImage file again
+ * once this process has exited. It first closes the file descriptors it
+ * inherited from Chromium; while it held them, this process could not exit.
+ */
+function relaunchAppImage(appImage: string): void {
+  const script = [
+    'for fd in /proc/$$/fd/*; do fd=${fd##*/}; [ "$fd" -gt 2 ] && eval "exec $fd>&-" 2>/dev/null; done',
+    'while kill -0 "$0" 2>/dev/null; do sleep 0.2; done',
+    'exec "$@"'
+  ].join('\n')
+  spawn('/bin/bash', ['-c', script, String(process.pid), appImage, ...process.argv.slice(1)], { detached: true, stdio: 'ignore' }).unref()
 }
 
 async function runSmokeTest(win: BrowserWindow): Promise<void> {
@@ -151,7 +171,9 @@ async function runSmokeTest(win: BrowserWindow): Promise<void> {
       retroSounds,
       playing,
       transcription,
-      preloadBridge: typeof window.gameMusicApp?.projects?.listRecent === 'function'
+      preloadBridge: typeof window.gameMusicApp?.projects?.listRecent === 'function' && typeof window.gameMusicApp?.settings?.get === 'function',
+      audioSettings: await window.gameMusicApp?.settings?.get(),
+      audioBaseLatencyMs: Math.round(new AudioContext({ latencyHint: 'interactive' }).baseLatency * 10000) / 10
     }
   })()`)
   const transcribed = /^[1-9]\d* notes? in/.test(result.transcription ?? '')
@@ -166,6 +188,7 @@ app.whenReady().then(() => {
   serveRendererFiles()
   registerProjectHandlers()
   registerPresetHandlers()
+  registerSettingsHandlers(startupSettings)
   session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {
     callback(ALLOWED_PERMISSIONS.has(permission))
   })
@@ -176,6 +199,19 @@ app.whenReady().then(() => {
     if (result.canceled || !result.filePath) return null
     await writeFile(result.filePath, data)
     return result.filePath
+  })
+
+  // Restarts the app, e.g. to apply the audio latency setting (asks first if there are unsaved changes).
+  ipcMain.handle('app:restart', (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender)
+    if (win && !confirmDiscardChanges(win, 'Restart GameMusicApp and lose them?', 'Restart without saving')) return false
+    if (process.env.APPIMAGE) {
+      relaunchAppImage(process.env.APPIMAGE)
+    } else {
+      app.relaunch()
+    }
+    app.quit()
+    return true
   })
 
   const win = createWindow()
