@@ -4,6 +4,7 @@ import type { LatencyInfo } from '../audio/engine'
 import { COMPUTER_KEYS, MidiKeyboard, type MidiNoteMessage } from '../midi/midiInput'
 import { GM_ACOUSTIC_GUITAR_STEEL, type Instrument } from '../model/song'
 import { factoryPreset } from '../model/synth'
+import type { AudioLatency, SettingsState } from '../platform'
 import { noteName } from '../transcription/notes'
 
 const INSTRUMENTS: { label: string; instrument: Instrument }[] = [
@@ -11,6 +12,62 @@ const INSTRUMENTS: { label: string; instrument: Instrument }[] = [
   { label: 'SoundFont: acoustic grand piano', instrument: { kind: 'soundfont', program: 0 } },
   { label: 'SoundFont: steel-string guitar', instrument: { kind: 'soundfont', program: GM_ACOUSTIC_GUITAR_STEEL } }
 ]
+
+const LATENCY_LABELS: Record<AudioLatency, string> = { low: 'Low latency', standard: 'Standard' }
+
+/** Audio buffer setting (SET-01); Chromium reads it at startup, so changes need a restart. */
+function AudioLatencySetting(): React.JSX.Element | null {
+  const bridge = window.gameMusicApp
+  const [settings, setSettings] = useState<SettingsState | null>(null)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    void bridge?.settings.get().then(setSettings)
+  }, [bridge])
+
+  if (!bridge) return null
+  if (!settings) return null
+
+  const choose = async (audioLatency: AudioLatency): Promise<void> => {
+    setError('')
+    try {
+      const saved = await bridge.settings.set({ audioLatency })
+      setSettings({ ...settings, saved })
+    } catch (e) {
+      setError(`Could not save the setting: ${e instanceof Error ? e.message : String(e)}`)
+    }
+  }
+
+  const option = (value: AudioLatency, text: React.ReactNode): React.JSX.Element => (
+    <label className="checkbox">
+      <input type="radio" name="audio-latency" checked={settings.saved.audioLatency === value} onChange={() => void choose(value)} />
+      <span>
+        <strong>{LATENCY_LABELS[value]}</strong>
+        {settings.defaults.audioLatency === value && <span className="muted"> (default)</span>}. {text}
+      </span>
+    </label>
+  )
+
+  return (
+    <div className="card">
+      <h3>Audio latency</h3>
+      <fieldset className="choice-group">
+        <legend>Audio buffer</legend>
+        {option('low', 'A 256-sample buffer: best for playing the MIDI keyboard live. On Linux about 30 ms from key to sound instead of 50 ms.')}
+        {option('standard', 'The browser engine’s default buffer. Choose this if playback crackles or drops out, e.g. in big songs.')}
+      </fieldset>
+      {settings.saved.audioLatency !== settings.active.audioLatency ? (
+        <p className="warning">
+          Restart GameMusicApp to use “{LATENCY_LABELS[settings.saved.audioLatency]}”.{' '}
+          <button onClick={() => void bridge.restart()}>Restart now</button>
+        </p>
+      ) : (
+        <p className="muted small">In use now: {LATENCY_LABELS[settings.active.audioLatency]}. Changes apply after a restart.</p>
+      )}
+      {error && <p className="warning">{error}</p>}
+    </div>
+  )
+}
 
 export function MidiPanel({ getEngine }: { getEngine: GetEngine }): React.JSX.Element {
   const [devices, setDevices] = useState<string[] | null>(null)
@@ -107,6 +164,8 @@ export function MidiPanel({ getEngine }: { getEngine: GetEngine }): React.JSX.El
           </table>
         )}
       </div>
+
+      <AudioLatencySetting />
     </section>
   )
 }

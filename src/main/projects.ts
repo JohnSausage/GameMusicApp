@@ -106,21 +106,30 @@ export function registerProjectHandlers(): void {
   })
 }
 
+/**
+ * If the window's project has unsaved changes, asks whether to go on and lose
+ * them. Returns true when it's fine to go on (nothing unsaved, or confirmed).
+ */
+export function confirmDiscardChanges(win: BrowserWindow, detail: string, goOn: string): boolean {
+  const id = win.webContents.id
+  if (!dirtyContents.has(id)) return true
+  const choice = dialog.showMessageBoxSync(win, {
+    type: 'warning',
+    buttons: ['Cancel', goOn],
+    defaultId: 0,
+    cancelId: 0,
+    title: 'Unsaved changes',
+    message: 'This project has unsaved changes.',
+    detail
+  })
+  if (choice === 0) return false
+  dirtyContents.delete(id)
+  return true
+}
+
 /** Asks before closing a window whose project has unsaved changes. */
 export function confirmCloseWhenDirty(win: BrowserWindow): void {
-  const id = win.webContents.id
   win.on('close', (event) => {
-    if (!dirtyContents.has(id)) return
-    const choice = dialog.showMessageBoxSync(win, {
-      type: 'warning',
-      buttons: ['Cancel', 'Close without saving'],
-      defaultId: 0,
-      cancelId: 0,
-      title: 'Unsaved changes',
-      message: 'This project has unsaved changes.',
-      detail: 'Close GameMusicApp and lose them?'
-    })
-    if (choice === 0) event.preventDefault()
-    else dirtyContents.delete(id)
+    if (!confirmDiscardChanges(win, 'Close GameMusicApp and lose them?', 'Close without saving')) event.preventDefault()
   })
 }

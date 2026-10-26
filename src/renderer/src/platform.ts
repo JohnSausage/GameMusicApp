@@ -10,6 +10,19 @@ export interface OpenedProject {
   data: Uint8Array
 }
 
+export type AudioLatency = 'low' | 'standard'
+
+export interface AppSettings {
+  audioLatency: AudioLatency
+}
+
+/** Saved settings, the ones the app started with (applied at startup), and the defaults. */
+export interface SettingsState {
+  saved: AppSettings
+  active: AppSettings
+  defaults: AppSettings
+}
+
 interface ElectronBridge {
   platform: string
   saveFile(defaultName: string, data: Uint8Array): Promise<string | null>
@@ -26,6 +39,12 @@ interface ElectronBridge {
     save(name: string, text: string): Promise<string>
     remove(id: string): Promise<void>
   }
+  settings: {
+    get(): Promise<SettingsState>
+    set(patch: Partial<AppSettings>): Promise<AppSettings>
+  }
+  /** Restarts the app; false if the user chose to keep unsaved changes. */
+  restart(): Promise<boolean>
 }
 
 declare global {
