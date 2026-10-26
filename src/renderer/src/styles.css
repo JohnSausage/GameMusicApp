@@ -212,13 +212,6 @@ label.block input {
   align-items: center;
 }
 
-.info-line {
-  display: flex;
-  gap: 24px;
-  color: var(--muted);
-  margin-bottom: 8px;
-}
-
 .status {
   color: var(--muted);
 }
@@ -379,12 +372,174 @@ button.icon {
 
 .editor-header {
   gap: 8px;
+  padding: 8px 12px;
+}
+
+.header-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.header-group:not(:empty) {
+  padding: 0 4px;
+}
+
+.tempo {
+  flex-direction: row;
+  align-items: center;
+  gap: 4px;
+  font-size: 16px;
+  color: var(--text);
+}
+
+.tempo input {
+  width: 64px;
+  font-size: 14px;
+}
+
+/* Buttons with an icon (and maybe a short label). */
+.icon-button,
+.transport-play,
+.record-button,
+.menu-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.icon-button {
+  min-width: 34px;
+  padding: 6px 8px;
+}
+
+.icon-svg {
+  flex-shrink: 0;
+}
+
+.transport-play {
+  min-width: 84px;
+}
+
+.record-button .icon-svg {
+  color: var(--danger);
+}
+
+.save-button.dirty::after {
+  content: '';
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--warning);
+  display: inline-block;
+  margin-left: 6px;
+  vertical-align: middle;
+}
+
+/* Dropdown menus */
+.menu {
+  position: relative;
+  display: inline-block;
+}
+
+.menu-button.open {
+  border-color: var(--accent);
+}
+
+.icon-menu .menu-button {
+  min-width: 34px;
+  padding: 6px 8px;
+}
+
+.menu-list {
+  position: absolute;
+  top: calc(100% + 4px);
+  z-index: 50;
+  min-width: 220px;
+  display: flex;
+  flex-direction: column;
+  padding: 4px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+}
+
+.menu-list.left {
+  left: 0;
+}
+
+.menu-list.right {
+  right: 0;
+}
+
+.menu-list button {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 24px;
+  border: none;
+  background: none;
+  text-align: left;
+  padding: 6px 10px;
+  white-space: nowrap;
+}
+
+.menu-list button:hover:not(:disabled),
+.menu-list button:focus-visible {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  outline: none;
+}
+
+.menu-list kbd {
+  color: var(--muted);
+}
+
+.menu-separator {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--border);
+}
+
+/* Keyboard shortcut cheat sheet */
+.shortcuts-dialog {
+  width: min(920px, 100%);
+  max-height: calc(100vh - 48px);
+  overflow: auto;
+}
+
+.shortcut-groups {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
+  gap: 8px 24px;
+}
+
+.shortcut-groups h3 {
+  margin: 8px 0 4px;
+}
+
+.shortcut-groups table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 13px;
+}
+
+.shortcut-groups td {
+  padding: 3px 0;
+  vertical-align: top;
+}
+
+.shortcut-groups td:first-child {
+  white-space: nowrap;
+  padding-right: 12px;
+  width: 1%;
 }
 
 .song-title {
   font-weight: 600;
-  min-width: 180px;
-  max-width: 280px;
+  flex: 0 1 240px;
+  min-width: 120px;
 }
 
 label.inline {
@@ -411,6 +566,11 @@ label.inline {
 
 .edit-toolbar {
   gap: 6px;
+  margin-bottom: 8px;
+}
+
+.edit-toolbar .lengths button {
+  padding: 6px 9px;
 }
 
 .divider {
@@ -525,13 +685,9 @@ label.inline {
   white-space: nowrap;
 }
 
-.shortcuts {
-  line-height: 2;
-}
-
 kbd {
-  font-family: ui-monospace, monospace;
-  font-size: 11px;
+  font-family: inherit;
+  font-size: 11.5px;
   padding: 1px 5px;
   border: 1px solid var(--border);
   border-bottom-width: 2px;
@@ -572,8 +728,35 @@ kbd {
   max-height: none;
 }
 
-.editor-main .shortcuts {
-  margin: 8px 0 0;
+/* Status bar under the score: cursor info, messages, view and zoom. */
+.status-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+  font-size: 13px;
+  flex-shrink: 0;
+}
+
+.status-bar .segmented button,
+.status-bar .icon-button {
+  padding: 3px 8px;
+  font-size: 12px;
+}
+
+.cursor-info {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.help-button {
+  font-weight: 700;
+  border-radius: 50%;
+  min-width: 26px;
+  height: 26px;
 }
 
 /* ---------------------------------------------------------------- record / import dialog */
@@ -1008,11 +1191,11 @@ kbd {
   border-top-left-radius: 0;
   border-bottom-left-radius: 0;
   border-left: none;
-  max-width: 220px;
+  max-width: 170px;
 }
 
 .zoom-level {
-  min-width: 64px;
+  min-width: 52px;
 }
 
 .export-dialog {
@@ -1043,4 +1226,23 @@ kbd {
 
 .choice-group input[type='radio'] {
   margin-top: 3px;
+}
+
+/* Smaller windows: the top bar keeps to one line with icon-only buttons (their tooltips name them). */
+@media (max-width: 1180px) {
+  .editor-header .button-label {
+    display: none;
+  }
+
+  .transport-play {
+    min-width: 40px;
+  }
+
+  .loop-control select {
+    max-width: 130px;
+  }
+
+  .song-title {
+    flex-basis: 170px;
+  }
 }

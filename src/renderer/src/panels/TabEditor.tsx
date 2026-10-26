@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import type { GetEngine } from '../App'
 import { songToMidi } from '../audio/midiExport'
+import { ExportIcon, LoopIcon, MetronomeIcon, PencilIcon, PlayIcon, RecordIcon, StopIcon } from '../components/icons'
+import { Menu } from '../components/Menu'
 import {
   addBars,
   addTrack,
@@ -65,6 +68,7 @@ import { legatoTarget, toggleLegato, toggleTie, type Legato } from '../model/tec
 import { barSeconds, buildTimeline } from '../model/timing'
 import { saveFile } from '../platform'
 import { readPref, writePref } from '../prefs'
+import type { HeaderSlots } from '../pages/EditorPage'
 import type { ApplyOptions, Project } from '../project/useProject'
 import { ScoreView, type ScoreTarget, type StaveMode } from '../score/ScoreView'
 import { noteName } from '../transcription/notes'
@@ -109,6 +113,9 @@ function isTyping(target: EventTarget | null): boolean {
 interface Props {
   project: Project
   getEngine: GetEngine
+  /** Where to put the transport and the record/export buttons in the page's top bar. */
+  headerSlots?: HeaderSlots
+  onShowShortcuts?: () => void
 }
 
 function soundValue(track: Track): string {
@@ -208,17 +215,20 @@ function TrackList({ project, onSelect, onEditSound }: { project: Project; onSel
                 </>
               )}
             </select>
-          </div>
-          {track.instrument.kind !== 'soundfont' && (
-            <div className="track-card-row">
-              <button onClick={(e) => {
-                e.stopPropagation()
-                onEditSound(index)
-              }}>
-                Edit sound…
+            {track.instrument.kind !== 'soundfont' && (
+              <button
+                className="icon-button"
+                title="Edit sound…"
+                aria-label={`Edit the sound of ${track.name}`}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onEditSound(index)
+                }}
+              >
+                <PencilIcon size={16} />
               </button>
-            </div>
-          )}
+            )}
+          </div>
           <label className="track-card-row volume">
             Volume
             <input
@@ -265,7 +275,7 @@ function TrackList({ project, onSelect, onEditSound }: { project: Project; onSel
   )
 }
 
-export function TabEditor({ project, getEngine }: Props): React.JSX.Element {
+export function TabEditor({ project, getEngine, headerSlots, onShowShortcuts }: Props): React.JSX.Element {
   const { song, cursor } = project
   const [staveMode, setStaveMode] = useState<StaveMode>('notation+tab')
   const [entryDuration, setEntryDuration] = useState<Duration>({ value: 4, dotted: false })
@@ -566,6 +576,7 @@ export function TabEditor({ project, getEngine }: Props): React.JSX.Element {
     else if (key.toLowerCase() === 's' && !ctrl && !drums) legato('slide')
     else if (key.toLowerCase() === 'l' && !ctrl) toggleLoop()
     else if (key.toLowerCase() === 'm' && !ctrl) toggleMetronome()
+    else if (key === '?') onShowShortcuts?.()
     else if (key === 'Insert') edit(insertBarBefore(song, cursor))
     else if (ctrl && key.toLowerCase() === 'a') selectAll()
     else if (ctrl && key.toLowerCase() === 'c') copy()
@@ -639,75 +650,94 @@ export function TabEditor({ project, getEngine }: Props): React.JSX.Element {
         }}
       />
 
-      <div ref={editorRef} className="editor-main" tabIndex={0} onKeyDown={onKeyDown}>
-        <div className="toolbar">
-          {playing ? <button onClick={stop}>■ Stop</button> : <button onClick={playFromCursor} title="Play from the cursor (Space)">▶ Play</button>}
-          <div className="loop-control">
-            <button className={loop ? 'active' : ''} aria-pressed={loop} title="Loop playback on/off (L)" onClick={toggleLoop}>
-              ⟲ Loop
-            </button>
-            <select
-              aria-label="What to loop"
-              title="What loop playback repeats. It stays the same while you click around in the score."
-              value={loopRange.kind === 'section' ? `section:${loopRange.start}` : loopRange.kind}
-              onChange={(e) => chooseLoop(e.target.value)}
-            >
-              <option value="song">Whole song</option>
-              {sectionRanges(song).map((s) => (
-                <option key={s.start} value={`section:${s.start}`}>
-                  “{s.name}” ({barsLabel(s)})
+      {headerSlots?.transport &&
+        createPortal(
+          <>
+            {playing ? (
+              <button className="transport-play active" onClick={stop} title="Stop (Space)">
+                <StopIcon /> <span className="button-label">Stop</span>
+              </button>
+            ) : (
+              <button className="transport-play" onClick={playFromCursor} title="Play from the cursor (Space)">
+                <PlayIcon /> <span className="button-label">Play</span>
+              </button>
+            )}
+            <div className="loop-control">
+              <button className={`icon-button ${loop ? 'active' : ''}`} aria-pressed={loop} aria-label="Loop" title="Loop playback on/off (L)" onClick={toggleLoop}>
+                <LoopIcon />
+              </button>
+              <select
+                aria-label="What to loop"
+                title="What loop playback repeats. It stays the same while you click around in the score."
+                value={loopRange.kind === 'section' ? `section:${loopRange.start}` : loopRange.kind}
+                onChange={(e) => chooseLoop(e.target.value)}
+              >
+                <option value="song">Whole song</option>
+                {sectionRanges(song).map((s) => (
+                  <option key={s.start} value={`section:${s.start}`}>
+                    “{s.name}” ({barsLabel(s)})
+                  </option>
+                ))}
+                {loopRange.kind === 'bars' && <option value="bars">{barsLabel(loopRange).replace(/^b/, 'B')}</option>}
+                <option value="selection" disabled={!selectedBars}>
+                  {selectedBars ? `Selected ${barsLabel(selectedBars)}` : 'Selected bars (select some beats first)'}
                 </option>
-              ))}
-              {loopRange.kind === 'bars' && <option value="bars">{barsLabel(loopRange).replace(/^b/, 'B')}</option>}
-              <option value="selection" disabled={!selectedBars}>
-                {selectedBars ? `Selected ${barsLabel(selectedBars)}` : 'Selected bars (select some beats first)'}
-              </option>
-            </select>
-          </div>
-          <button className={metronome ? 'active' : ''} aria-pressed={metronome} title="Metronome during playback (M)" onClick={toggleMetronome}>
-            Metronome
-          </button>
-          <span className="divider" />
-          <div className="segmented">
-            <button className={staveMode === 'notation+tab' ? 'active' : ''} onClick={() => setStaveMode('notation+tab')}>Notation + tab</button>
-            <button className={staveMode === 'tab' ? 'active' : ''} onClick={() => setStaveMode('tab')}>Tab only</button>
-          </div>
-          <div className="segmented" role="group" aria-label="Zoom">
-            <button title="Zoom out (Ctrl+−, Ctrl+wheel)" aria-label="Zoom out" disabled={zoom <= ZOOM_STEPS[0]} onClick={() => changeZoom((z) => stepZoom(z, -1))}>
-              −
+              </select>
+            </div>
+            <button
+              className={`icon-button ${metronome ? 'active' : ''}`}
+              aria-pressed={metronome}
+              aria-label="Metronome"
+              title="Metronome during playback (M)"
+              onClick={toggleMetronome}
+            >
+              <MetronomeIcon />
             </button>
-            <button title="Back to 100 % (Ctrl+0)" className="zoom-level" onClick={() => changeZoom(() => 1)}>
-              {Math.round(zoom * 100)} %
-            </button>
-            <button title="Zoom in (Ctrl++, Ctrl+wheel)" aria-label="Zoom in" disabled={zoom >= ZOOM_STEPS.at(-1)!} onClick={() => changeZoom((z) => stepZoom(z, 1))}>
-              +
-            </button>
-          </div>
-          <button
-            title={song.tracks.some((t) => t.kind !== 'drums') ? 'Record or import a take and transcribe it into a guitar or bass track' : 'Add a guitar or bass track first'}
-            disabled={!song.tracks.some((t) => t.kind !== 'drums')}
-            onClick={() => {
-              stop()
-              setTakeDialog(true)
-            }}
-          >
-            ● Record / import
-          </button>
-          <span className="spacer" />
-          <button
-            title="Export the song, a section or some bars as WAV (loopable for Unity)"
-            onClick={() => {
-              stop()
-              setExportDialog(true)
-            }}
-          >
-            Export WAV…
-          </button>
-          <button onClick={() => void exportMidi()}>Export MIDI</button>
-        </div>
+          </>,
+          headerSlots.transport
+        )}
 
+      {headerSlots?.actions &&
+        createPortal(
+          <>
+            <button
+              className="record-button"
+              title={song.tracks.some((t) => t.kind !== 'drums') ? 'Record or import a take and transcribe it into a guitar or bass track' : 'Add a guitar or bass track first'}
+              disabled={!song.tracks.some((t) => t.kind !== 'drums')}
+              onClick={() => {
+                stop()
+                setTakeDialog(true)
+              }}
+            >
+              <RecordIcon size={14} /> <span className="button-label">Record</span>
+            </button>
+            <Menu
+              label={
+                <>
+                  <ExportIcon size={16} /> <span className="button-label">Export</span>
+                </>
+              }
+              title="Export"
+              align="right"
+              items={[
+                {
+                  label: 'WAV…',
+                  title: 'The song, a section or some bars, loopable for Unity',
+                  onSelect: () => {
+                    stop()
+                    setExportDialog(true)
+                  }
+                },
+                { label: 'MIDI', title: 'All tracks as a MIDI file', onSelect: () => void exportMidi() }
+              ]}
+            />
+          </>,
+          headerSlots.actions
+        )}
+
+      <div ref={editorRef} className="editor-main" tabIndex={0} onKeyDown={onKeyDown}>
         <div className="toolbar edit-toolbar">
-          <div className="segmented" role="group" aria-label="Note length">
+          <div className="segmented lengths" role="group" aria-label="Note length">
             {NOTE_VALUES.map((value) => (
               <button
                 key={value}
@@ -719,10 +749,14 @@ export function TabEditor({ project, getEngine }: Props): React.JSX.Element {
               </button>
             ))}
           </div>
-          <button className={beat.dotted ? 'active' : ''} title="Dotted (.); works on all selected beats" onClick={toggleDots}>
-            Dotted
-          </button>
-          <button title="Make this beat a rest (R)" onClick={() => edit(clearBeat(song, cursor))}>Rest</button>
+          <div className="segmented">
+            <button className={beat.dotted ? 'active' : ''} title="Dotted (.); works on all selected beats" onClick={toggleDots}>
+              Dotted
+            </button>
+            <button title="Make this beat a rest (R)" onClick={() => edit(clearBeat(song, cursor))}>
+              Rest
+            </button>
+          </div>
           {!drums && (
             <div className="segmented" role="group" aria-label="Techniques">
               <button
@@ -751,38 +785,44 @@ export function TabEditor({ project, getEngine }: Props): React.JSX.Element {
               </button>
             </div>
           )}
-          <button title="Remove this beat or rest; the rest of the bar moves up (Shift+Delete, or Delete on a rest)" onClick={removeBeat}>
-            Delete beat
-          </button>
           <span className="divider" />
-          <button title="Insert an empty bar before this one (Insert)" onClick={() => edit(insertBarBefore(song, cursor))}>Insert bar</button>
-          <button title="Duplicate this bar (Ctrl+D)" onClick={() => edit(duplicateBar(song, cursor))}>Duplicate</button>
-          <button title="Copy the selected beats, or this bar (Ctrl+C). Ctrl+X cuts." onClick={() => copy()}>Copy</button>
-          <button title="Paste at the cursor or the start of the selection, overwriting what's there (Ctrl+V)" onClick={paste}>Paste</button>
-          <button title="Clear this bar in the current track" onClick={() => edit(clearBar(song, cursor))}>Clear</button>
-          <button title="Delete this bar from all tracks (Ctrl+Delete)" onClick={() => edit(deleteBar(song, cursor), 'A song needs at least one bar.')}>Delete bar</button>
-          <span className="divider" />
-          {section === null ? (
-            <button title="Start a named section at this bar" onClick={() => edit(setSection(song, cursor, cursor.bar, nextSectionName(song)))}>
-              Start section here
-            </button>
-          ) : (
-            <label className="section-name">
+          <Menu
+            label="Edit"
+            title="Edit"
+            items={[
+              { label: selection ? 'Copy selection' : 'Copy bar', shortcut: 'Ctrl+C', onSelect: () => copy() },
+              { label: selection ? 'Cut selection' : 'Cut bar', shortcut: 'Ctrl+X', onSelect: () => copy(true) },
+              { label: 'Paste', shortcut: 'Ctrl+V', title: 'At the cursor or the start of the selection, overwriting what’s there', onSelect: paste },
+              'separator',
+              { label: 'Delete beat', shortcut: 'Shift+Del', title: 'The rest of the bar moves up', onSelect: removeBeat },
+              { label: 'Select whole track', shortcut: 'Ctrl+A', onSelect: selectAll }
+            ]}
+          />
+          <Menu
+            label="Bar"
+            title="Bar"
+            items={[
+              { label: 'Insert bar before', shortcut: 'Insert', onSelect: () => edit(insertBarBefore(song, cursor)) },
+              { label: 'Duplicate bar', shortcut: 'Ctrl+D', onSelect: () => edit(duplicateBar(song, cursor)) },
+              { label: 'Clear bar in this track', onSelect: () => edit(clearBar(song, cursor)) },
+              { label: 'Delete bar in all tracks', shortcut: 'Ctrl+Del', onSelect: () => edit(deleteBar(song, cursor), 'A song needs at least one bar.') },
+              'separator',
+              section === null
+                ? { label: 'Start a section here', onSelect: () => edit(setSection(song, cursor, cursor.bar, nextSectionName(song))) }
+                : { label: `Remove section “${section}”`, onSelect: () => edit(setSection(song, cursor, cursor.bar, null)) },
+              { label: 'Add a bar at the end', onSelect: addBar },
+              { label: 'Add a section at the end', title: '4 empty bars with a new section name', onSelect: addSection }
+            ]}
+          />
+          {section !== null && (
+            <label className="section-name" title="Name of the section that starts at this bar">
               Section
               <input
                 value={section}
                 onChange={(e) => project.apply(setSection(song, cursor, cursor.bar, e.target.value), { mergeKey: `section:${cursor.bar}` })}
               />
-              <button className="icon" title="Remove section" aria-label="Remove section" onClick={() => edit(setSection(song, cursor, cursor.bar, null))}>
-                ×
-              </button>
             </label>
           )}
-        </div>
-
-        <div className="info-line">
-          <span>{describeCursor()}</span>
-          {message && <span className="status">{message}</span>}
         </div>
 
         <ScoreView
@@ -815,31 +855,33 @@ export function TabEditor({ project, getEngine }: Props): React.JSX.Element {
           />
         )}
 
-        <p className="shortcuts muted small">
-          <kbd>←</kbd> <kbd>→</kbd> beat · <kbd>↑</kbd> <kbd>↓</kbd> {drums ? 'kit piece' : 'string'} · <kbd>Ctrl</kbd>+<kbd>↑</kbd>/<kbd>↓</kbd> track · <kbd>Ctrl</kbd>+<kbd>←</kbd>/<kbd>→</kbd> bar ·{' '}
-          {drums ? (
-            <>
-              <kbd>X</kbd> or <kbd>0</kbd>–<kbd>9</kbd> hit
-            </>
-          ) : (
-            <>
-              <kbd>0</kbd>–<kbd>9</kbd> fret (type two digits for 10–24)
-            </>
-          )}{' '}
-          · <kbd>Del</kbd> remove note or rest · <kbd>Shift</kbd>+<kbd>Del</kbd> remove beat · <kbd>R</kbd> rest · {!drums && (
-            <>
-              <kbd>T</kbd> hold · <kbd>H</kbd> hammer-on/pull-off · <kbd>S</kbd> slide ·{' '}
-            </>
-          )} <kbd>+</kbd> <kbd>−</kbd> length ·
-          <kbd>.</kbd> dotted · <kbd>Space</kbd> play · <kbd>L</kbd> loop · <kbd>M</kbd> metronome · <kbd>Ctrl</kbd>+wheel zoom · <kbd>Ctrl</kbd>+<kbd>Z</kbd>/<kbd>Y</kbd> undo/redo · <kbd>Ctrl</kbd>+<kbd>S</kbd> save ·
-          select: <kbd>Shift</kbd>+click, drag a box, <kbd>Shift</kbd>+<kbd>←</kbd>/<kbd>→</kbd>, <kbd>Ctrl</kbd>+<kbd>A</kbd> · <kbd>Ctrl</kbd>+<kbd>C</kbd>/<kbd>X</kbd>/<kbd>V</kbd> copy/cut/paste
-          {gridTrack !== null && (
-            <>
-              {' '}
-              · drum grid: click add/remove, <kbd>Shift</kbd>+click accent, <kbd>Alt</kbd>+click ghost
-            </>
-          )}
-        </p>
+        <div className="status-bar">
+          <span className="cursor-info">{describeCursor()}</span>
+          {message && <span className="status">{message}</span>}
+          <span className="spacer" />
+          <div className="segmented" role="group" aria-label="View">
+            <button className={staveMode === 'notation+tab' ? 'active' : ''} title="Notation above the tab" onClick={() => setStaveMode('notation+tab')}>
+              Notation + tab
+            </button>
+            <button className={staveMode === 'tab' ? 'active' : ''} title="Only the tab (drums as a rhythm line)" onClick={() => setStaveMode('tab')}>
+              Tab only
+            </button>
+          </div>
+          <div className="segmented" role="group" aria-label="Zoom">
+            <button title="Zoom out (Ctrl+−, Ctrl+wheel)" aria-label="Zoom out" disabled={zoom <= ZOOM_STEPS[0]} onClick={() => changeZoom((z) => stepZoom(z, -1))}>
+              −
+            </button>
+            <button title="Back to 100 % (Ctrl+0)" className="zoom-level" onClick={() => changeZoom(() => 1)}>
+              {Math.round(zoom * 100)} %
+            </button>
+            <button title="Zoom in (Ctrl++, Ctrl+wheel)" aria-label="Zoom in" disabled={zoom >= ZOOM_STEPS.at(-1)!} onClick={() => changeZoom((z) => stepZoom(z, 1))}>
+              +
+            </button>
+          </div>
+          <button className="icon-button help-button" title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts" onClick={onShowShortcuts}>
+            ?
+          </button>
+        </div>
       </div>
 
       {soundEditor !== null && song.tracks[soundEditor] && song.tracks[soundEditor].instrument.kind !== 'soundfont' && (
