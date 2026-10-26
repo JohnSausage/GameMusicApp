@@ -513,6 +513,41 @@ export function sectionAt(song: Song, bar: number): string | null {
   return song.sections.find((s) => s.bar === bar)?.name ?? null
 }
 
+/** A run of bars: `start` up to (not including) `end`. */
+export interface BarRange {
+  start: number
+  end: number
+}
+
+/** Every section with its bars: from its start to the next section (or the end of the song). */
+export function sectionRanges(song: Song): (BarRange & { name: string })[] {
+  const total = barCount(song)
+  const sections = [...song.sections].filter((s) => s.bar < total).sort((a, b) => a.bar - b.bar)
+  return sections.map((s, i) => ({ name: s.name, start: s.bar, end: sections[i + 1]?.bar ?? total }))
+}
+
+/** What loop playback repeats (PLAY-02). It is chosen explicitly, so it stays put while you click around. */
+export type LoopChoice = { kind: 'song' } | { kind: 'section'; start: number } | { kind: 'bars'; start: number; end: number }
+
+/**
+ * The bars a loop choice covers in the song as it is now, and the section's name
+ * for a section. A section or bars that no longer exist fall back to the whole song.
+ */
+export function loopBars(song: Song, choice: LoopChoice): BarRange & { name: string | null; kind: LoopChoice['kind'] } {
+  const total = barCount(song)
+  if (choice.kind === 'section') {
+    const section = sectionRanges(song).find((s) => s.start === choice.start)
+    if (section) return { ...section, kind: 'section' }
+  }
+  if (choice.kind === 'bars' && choice.start < total) return { start: choice.start, end: Math.min(choice.end, total), name: null, kind: 'bars' }
+  return { start: 0, end: total, name: null, kind: 'song' }
+}
+
+/** The section the bar belongs to, if it is in one. */
+export function sectionRangeOf(song: Song, bar: number): (BarRange & { name: string }) | null {
+  return sectionRanges(song).find((r) => bar >= r.start && bar < r.end) ?? null
+}
+
 // ---------------------------------------------------------------- tracks
 
 export function addTrack(song: Song, cursor: Cursor, kind: TrackKind): EditResult {
@@ -531,7 +566,7 @@ export function deleteTrack(song: Song, cursor: Cursor, index: number): EditResu
   })
 }
 
-export function updateTrack(song: Song, cursor: Cursor, index: number, patch: Partial<Pick<Track, 'name' | 'instrument' | 'volume' | 'pan'>>): EditResult {
+export function updateTrack(song: Song, cursor: Cursor, index: number, patch: Partial<Pick<Track, 'name' | 'instrument' | 'volume' | 'pan' | 'mute' | 'solo'>>): EditResult {
   return edit(song, cursor, (draft) => {
     Object.assign(draft.tracks[index], patch)
   })!

@@ -40,6 +40,9 @@ export interface Track {
   /** MIDI note per string, string 1 (highest) first. */
   tuning: number[]
   instrument: Instrument
+  /** Mute and solo (PLAY-05); they apply to playback and WAV export. */
+  mute?: boolean
+  solo?: boolean
   volume: number
   pan: number
   /** Every track has the same number of bars as the song. */
@@ -133,6 +136,12 @@ export function notePitch(track: Track, note: Note): number {
 /** Length of a beat in quarter notes. */
 export function beatQuarters(beat: Pick<Beat, 'value' | 'dotted'>): number {
   return (4 / beat.value) * (beat.dotted ? 1.5 : 1)
+}
+
+/** Which tracks are heard: not muted, and soloed if any track is soloed. */
+export function audibleTracks(song: Song): boolean[] {
+  const anySolo = song.tracks.some((t) => t.solo)
+  return song.tracks.map((t) => !t.mute && (!anySolo || !!t.solo))
 }
 
 export function isBassTrack(track: Track): boolean {

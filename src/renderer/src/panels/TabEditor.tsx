@@ -1,8 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { GetEngine } from '../App'
 import { songToMidi } from '../audio/midiExport'
-import { renderSongOffline } from '../audio/offline'
-import { audioBufferToWav16 } from '../audio/wav'
 import {
   addBars,
   addTrack,
@@ -24,8 +22,11 @@ import {
   moveTrack,
   nextSectionName,
   pasteBeats,
+  loopBars,
   restoreSounds,
   sectionAt,
+  sectionRangeOf,
+  sectionRanges,
   selectionBeats,
   selectionBetween,
   selectTrack,
@@ -37,12 +38,15 @@ import {
   switchTrack,
   updateMaster,
   updateTrack,
+  type BarRange,
   type BeatPos,
   type Cursor,
+  type LoopChoice,
   type Duration,
   type EditResult
 } from '../model/edit'
 import {
+  audibleTracks,
   barCount,
   defaultInstrument,
   DRUM_PIECES,
@@ -57,12 +61,14 @@ import {
   trackKind
 } from '../model/song'
 import { CRUSH_RATES, eightBitKit, FACTORY_PRESETS, formatSampleRate } from '../model/synth'
-import { buildTimeline } from '../model/timing'
+import { barSeconds, buildTimeline } from '../model/timing'
 import { saveFile } from '../platform'
+import { readPref, writePref } from '../prefs'
 import type { ApplyOptions, Project } from '../project/useProject'
 import { ScoreView, type ScoreTarget, type StaveMode } from '../score/ScoreView'
 import { noteName } from '../transcription/notes'
 import { DrumGrid } from './DrumGrid'
+import { ExportDialog } from './ExportDialog'
 import { InstrumentEditor } from './InstrumentEditor'
 import { TakeDialog } from './TakeDialog'
 import { usePlayback } from './usePlayback'
@@ -82,15 +88,18 @@ const TWO_DIGIT_MS = 1000
 const cursorKey = (c: Cursor): string => `${c.track}/${c.bar}/${c.beat}/${c.string}`
 
 const GRID_COLLAPSED_KEY = 'drumGridCollapsed'
+const ZOOM_KEY = 'scoreZoom'
+/** Zoom levels of the score (VIEW-10). */
+const ZOOM_STEPS = [0.5, 0.6, 0.75, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2]
 
-/** Whether the drum grid was minimized last time (a per-computer preference). */
-function readGridCollapsed(): boolean {
-  try {
-    return localStorage.getItem(GRID_COLLAPSED_KEY) === 'true'
-  } catch {
-    return false
-  }
+/** The next zoom level up (+1) or down (-1) from `zoom`. */
+function stepZoom(zoom: number, direction: 1 | -1): number {
+  const index = ZOOM_STEPS.findIndex((z) => z >= zoom - 0.001)
+  const current = index < 0 ? ZOOM_STEPS.length - 1 : index
+  return ZOOM_STEPS[Math.max(0, Math.min(ZOOM_STEPS.length - 1, current + direction))]
 }
+
+const barsLabel = (range: BarRange): string => (range.end - range.start === 1 ? `bar ${range.start + 1}` : `bars ${range.start + 1}–${range.end}`)
 
 function isTyping(target: EventTarget | null): boolean {
   return target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement
@@ -113,6 +122,7 @@ function TrackList({ project, onSelect, onEditSound }: { project: Project; onSel
   const { song, cursor } = project
   const retro = isRetro(song)
   const master = { ...MASTER_DEFAULTS, ...song.master }
+  const audible = audibleTracks(song)
 
   const setSound = (index: number, track: Track, value: string): void => {
     if (value === 'synth:current' || value === soundValue(track)) return
@@ -142,7 +152,7 @@ function TrackList({ project, onSelect, onEditSound }: { project: Project; onSel
         </button>
       </div>
       {song.tracks.map((track, index) => (
-        <div key={track.id} className={`track-card ${index === cursor.track ? 'selected' : ''}`} onClick={() => onSelect(index)}>
+        <div key={track.id} className={`track-card ${index === cursor.track ? 'selected' : ''} ${audible[index] ? '' : 'silent'}`} onClick={() => onSelect(index)}>
           <div className="track-card-row">
             <input
               className="track-name"
@@ -150,6 +160,30 @@ function TrackList({ project, onSelect, onEditSound }: { project: Project; onSel
               aria-label="Track name"
               onChange={(e) => project.apply(updateTrack(song, cursor, index, { name: e.target.value }), { mergeKey: `name:${track.id}` })}
             />
+            <button
+              className={`icon mute ${track.mute ? 'active' : ''}`}
+              aria-pressed={!!track.mute}
+              aria-label={`Mute ${track.name}`}
+              title="Mute: don't play this track (also left out of WAV export)"
+              onClick={(e) => {
+                e.stopPropagation()
+                project.apply(updateTrack(song, cursor, index, { mute: !track.mute }))
+              }}
+            >
+              M
+            </button>
+            <button
+              className={`icon solo ${track.solo ? 'active' : ''}`}
+              aria-pressed={!!track.solo}
+              aria-label={`Solo ${track.name}`}
+              title="Solo: play only the soloed tracks (also for WAV export)"
+              onClick={(e) => {
+                e.stopPropagation()
+                project.apply(updateTrack(song, cursor, index, { solo: !track.solo }))
+              }}
+            >
+              S
+            </button>
             <button className="icon" title="Delete track" aria-label={`Delete ${track.name}`} disabled={song.tracks.length <= 1} onClick={(e) => {
               e.stopPropagation()
               remove(index, track)
@@ -239,15 +273,20 @@ export function TabEditor({ project, getEngine }: Props): React.JSX.Element {
   const [clipboard, setClipboard] = useState<{ beats: Beat[]; drums: boolean } | null>(null)
   /** Where the current selection started; the selection runs from here to the cursor. */
   const [anchor, setAnchor] = useState<{ track: number; pos: BeatPos } | null>(null)
-  const [busy, setBusy] = useState(false)
   const [takeDialog, setTakeDialog] = useState(false)
+  const [exportDialog, setExportDialog] = useState(false)
+  const [loop, setLoop] = useState(false)
+  const [loopChoice, setLoopChoice] = useState<LoopChoice>({ kind: 'song' })
+  const [metronome, setMetronome] = useState(false)
+  const [zoom, setZoom] = useState(() => readPref(ZOOM_KEY, 1))
   const [soundEditor, setSoundEditor] = useState<number | null>(null)
-  const [gridCollapsed, setGridCollapsed] = useState(readGridCollapsed)
+  const [gridCollapsed, setGridCollapsed] = useState(() => readPref(GRID_COLLAPSED_KEY, false))
   /** The drum track the grid showed last, so it stays when the cursor moves to another track. */
   const [gridTrackId, setGridTrackId] = useState<string | null>(null)
   const pendingDigit = useRef<{ key: string; digit: number; at: number } | null>(null)
   const editorRef = useRef<HTMLDivElement>(null)
-  const { playing, positionRef, play, stop } = usePlayback(getEngine)
+  const playback = usePlayback(getEngine)
+  const { playing, positionRef, stop } = playback
   const timeline = useMemo(() => buildTimeline(song), [song])
 
   const track = song.tracks[cursor.track]
@@ -263,6 +302,9 @@ export function TabEditor({ project, getEngine }: Props): React.JSX.Element {
       ? selectionBetween(cursor.track, anchor.pos, cursor)
       : null
   const selectedCount = selection ? selectionBeats(song, selection).length : 0
+  const cursorSection = sectionRangeOf(song, cursor.bar)
+  const selectedBars: BarRange | null = selection ? { start: selection.start.bar, end: selection.end.bar + 1 } : null
+  const loopRange = loopBars(song, loopChoice)
 
   useEffect(() => {
     editorRef.current?.focus()
@@ -274,14 +316,36 @@ export function TabEditor({ project, getEngine }: Props): React.JSX.Element {
 
   const toggleGrid = (): void => {
     setGridCollapsed((collapsed) => {
-      try {
-        localStorage.setItem(GRID_COLLAPSED_KEY, String(!collapsed))
-      } catch {
-        // Not remembered then; the grid still works.
-      }
+      writePref(GRID_COLLAPSED_KEY, !collapsed)
       return !collapsed
     })
   }
+
+  const changeZoom = (next: (zoom: number) => number): void => {
+    setZoom((zoom) => {
+      const value = next(zoom)
+      writePref(ZOOM_KEY, value)
+      return value
+    })
+  }
+
+  // Ctrl + mouse wheel over the editor zooms the score.
+  useEffect(() => {
+    const element = editorRef.current
+    if (!element) return
+    const onWheel = (event: WheelEvent): void => {
+      if (!event.ctrlKey) return
+      event.preventDefault()
+      changeZoom((z) => stepZoom(z, event.deltaY < 0 ? 1 : -1))
+    }
+    element.addEventListener('wheel', onWheel, { passive: false })
+    return () => element.removeEventListener('wheel', onWheel)
+  }, [])
+
+  // Volume, mute and solo changes are heard right away while playing.
+  useEffect(() => {
+    if (playing) playback.updateMix(song)
+  }, [song, playing])
 
   useEffect(() => {
     if (!message) return
@@ -327,9 +391,42 @@ export function TabEditor({ project, getEngine }: Props): React.JSX.Element {
     }
   }
 
+  /** Plays from `from` seconds with the current (or given) loop and metronome settings. */
+  const playFrom = (from: number, withLoop = loop, range: BarRange = loopRange): void => {
+    const bar = barSeconds(song)
+    void playback.play(song, from, { loop: withLoop ? { start: range.start * bar, end: range.end * bar } : null, metronome })
+  }
+
   const playFromCursor = (): void => {
     const span = timeline.beats.find((b) => b.trackIndex === cursor.track && b.barIndex === cursor.bar && b.beatIndex === cursor.beat)
-    void play(song, span?.start ?? 0)
+    playFrom(span?.start ?? 0)
+  }
+
+  /** Loop on/off; while playing, playback continues from where it is with the new setting. */
+  const toggleLoop = (): void => {
+    setLoop(!loop)
+    if (playing) playFrom(positionRef.current ?? 0, !loop)
+  }
+
+  /** Picks what to loop and switches looping on; while playing, it applies right away. */
+  const chooseLoop = (value: string): void => {
+    const choice: LoopChoice =
+      value === 'selection' && selectedBars
+        ? { kind: 'bars', ...selectedBars }
+        : value.startsWith('section:')
+          ? { kind: 'section', start: Number(value.slice(8)) }
+          : value === 'song'
+            ? { kind: 'song' }
+            : loopChoice
+    setLoopChoice(choice)
+    setLoop(true)
+    if (playing) playFrom(positionRef.current ?? 0, true, loopBars(song, choice))
+    focus()
+  }
+
+  const toggleMetronome = (): void => {
+    setMetronome(!metronome)
+    playback.setMetronome(!metronome)
   }
 
   /** Moves the cursor; with `extend` (Shift) the selection grows from where it started. */
@@ -419,7 +516,10 @@ export function TabEditor({ project, getEngine }: Props): React.JSX.Element {
     const key = event.key
     let handled = true
     const shift = event.shiftKey
-    if (drums && /^[0-9xX]$/.test(key) && !ctrl && !event.altKey) {
+    if (ctrl && (key === '=' || key === '+')) changeZoom((z) => stepZoom(z, 1))
+    else if (ctrl && key === '-') changeZoom((z) => stepZoom(z, -1))
+    else if (ctrl && key === '0') changeZoom(() => 1)
+    else if (drums && /^[0-9xX]$/.test(key) && !ctrl && !event.altKey) {
       setAnchor(null)
       enterHit()
     } else if (/^[0-9]$/.test(key) && !ctrl && !event.altKey) {
@@ -443,6 +543,8 @@ export function TabEditor({ project, getEngine }: Props): React.JSX.Element {
     else if (key === '.') toggleDots()
     else if (key.toLowerCase() === 'r' && !ctrl) selection ? removeSelection(false) : edit(clearBeat(song, cursor))
     else if (key === ' ') playing ? stop() : playFromCursor()
+    else if (key.toLowerCase() === 'l' && !ctrl) toggleLoop()
+    else if (key.toLowerCase() === 'm' && !ctrl) toggleMetronome()
     else if (key === 'Insert') edit(insertBarBefore(song, cursor))
     else if (ctrl && key.toLowerCase() === 'a') selectAll()
     else if (ctrl && key.toLowerCase() === 'c') copy()
@@ -473,20 +575,6 @@ export function TabEditor({ project, getEngine }: Props): React.JSX.Element {
     const strings = song.tracks[area.track].tuning.length
     project.setCursor({ track: area.track, bar: area.end.bar, beat: area.end.beat, string: Math.min(cursor.string, strings) })
     focus()
-  }
-
-  const exportWav = async (): Promise<void> => {
-    setBusy(true)
-    setMessage('Rendering WAV…')
-    try {
-      const buffer = await renderSongOffline(song, 48000)
-      const path = await saveFile(`${song.title}.wav`, audioBufferToWav16(buffer))
-      setMessage(path ? `WAV saved: ${path}` : '')
-    } catch (error) {
-      setMessage(`WAV export failed: ${error instanceof Error ? error.message : String(error)}`)
-    } finally {
-      setBusy(false)
-    }
   }
 
   const exportMidi = async (): Promise<void> => {
@@ -520,9 +608,46 @@ export function TabEditor({ project, getEngine }: Props): React.JSX.Element {
       <div ref={editorRef} className="editor-main" tabIndex={0} onKeyDown={onKeyDown}>
         <div className="toolbar">
           {playing ? <button onClick={stop}>■ Stop</button> : <button onClick={playFromCursor} title="Play from the cursor (Space)">▶ Play</button>}
+          <div className="loop-control">
+            <button className={loop ? 'active' : ''} aria-pressed={loop} title="Loop playback on/off (L)" onClick={toggleLoop}>
+              ⟲ Loop
+            </button>
+            <select
+              aria-label="What to loop"
+              title="What loop playback repeats. It stays the same while you click around in the score."
+              value={loopRange.kind === 'section' ? `section:${loopRange.start}` : loopRange.kind}
+              onChange={(e) => chooseLoop(e.target.value)}
+            >
+              <option value="song">Whole song</option>
+              {sectionRanges(song).map((s) => (
+                <option key={s.start} value={`section:${s.start}`}>
+                  “{s.name}” ({barsLabel(s)})
+                </option>
+              ))}
+              {loopRange.kind === 'bars' && <option value="bars">{barsLabel(loopRange).replace(/^b/, 'B')}</option>}
+              <option value="selection" disabled={!selectedBars}>
+                {selectedBars ? `Selected ${barsLabel(selectedBars)}` : 'Selected bars (select some beats first)'}
+              </option>
+            </select>
+          </div>
+          <button className={metronome ? 'active' : ''} aria-pressed={metronome} title="Metronome during playback (M)" onClick={toggleMetronome}>
+            Metronome
+          </button>
+          <span className="divider" />
           <div className="segmented">
             <button className={staveMode === 'notation+tab' ? 'active' : ''} onClick={() => setStaveMode('notation+tab')}>Notation + tab</button>
             <button className={staveMode === 'tab' ? 'active' : ''} onClick={() => setStaveMode('tab')}>Tab only</button>
+          </div>
+          <div className="segmented" role="group" aria-label="Zoom">
+            <button title="Zoom out (Ctrl+−, Ctrl+wheel)" aria-label="Zoom out" disabled={zoom <= ZOOM_STEPS[0]} onClick={() => changeZoom((z) => stepZoom(z, -1))}>
+              −
+            </button>
+            <button title="Back to 100 % (Ctrl+0)" className="zoom-level" onClick={() => changeZoom(() => 1)}>
+              {Math.round(zoom * 100)} %
+            </button>
+            <button title="Zoom in (Ctrl++, Ctrl+wheel)" aria-label="Zoom in" disabled={zoom >= ZOOM_STEPS.at(-1)!} onClick={() => changeZoom((z) => stepZoom(z, 1))}>
+              +
+            </button>
           </div>
           <button
             title={song.tracks.some((t) => t.kind !== 'drums') ? 'Record or import a take and transcribe it into a guitar or bass track' : 'Add a guitar or bass track first'}
@@ -535,7 +660,15 @@ export function TabEditor({ project, getEngine }: Props): React.JSX.Element {
             ● Record / import
           </button>
           <span className="spacer" />
-          <button disabled={busy} onClick={() => void exportWav()}>Export WAV</button>
+          <button
+            title="Export the song, a section or some bars as WAV (loopable for Unity)"
+            onClick={() => {
+              stop()
+              setExportDialog(true)
+            }}
+          >
+            Export WAV…
+          </button>
           <button onClick={() => void exportMidi()}>Export MIDI</button>
         </div>
 
@@ -593,6 +726,7 @@ export function TabEditor({ project, getEngine }: Props): React.JSX.Element {
         <ScoreView
           song={song}
           staveMode={staveMode}
+          zoom={zoom}
           positionRef={positionRef}
           editCursor={cursor}
           selection={selection}
@@ -631,7 +765,7 @@ export function TabEditor({ project, getEngine }: Props): React.JSX.Element {
             </>
           )}{' '}
           · <kbd>Del</kbd> remove note or rest · <kbd>Shift</kbd>+<kbd>Del</kbd> remove beat · <kbd>R</kbd> rest · <kbd>+</kbd> <kbd>−</kbd> length ·
-          <kbd>.</kbd> dotted · <kbd>Space</kbd> play · <kbd>Ctrl</kbd>+<kbd>Z</kbd>/<kbd>Y</kbd> undo/redo · <kbd>Ctrl</kbd>+<kbd>S</kbd> save ·
+          <kbd>.</kbd> dotted · <kbd>Space</kbd> play · <kbd>L</kbd> loop · <kbd>M</kbd> metronome · <kbd>Ctrl</kbd>+wheel zoom · <kbd>Ctrl</kbd>+<kbd>Z</kbd>/<kbd>Y</kbd> undo/redo · <kbd>Ctrl</kbd>+<kbd>S</kbd> save ·
           select: <kbd>Shift</kbd>+click, drag a box, <kbd>Shift</kbd>+<kbd>←</kbd>/<kbd>→</kbd>, <kbd>Ctrl</kbd>+<kbd>A</kbd> · <kbd>Ctrl</kbd>+<kbd>C</kbd>/<kbd>X</kbd>/<kbd>V</kbd> copy/cut/paste
           {gridTrack !== null && (
             <>
@@ -649,6 +783,19 @@ export function TabEditor({ project, getEngine }: Props): React.JSX.Element {
           getEngine={getEngine}
           onClose={() => {
             setSoundEditor(null)
+            focus()
+          }}
+        />
+      )}
+
+      {exportDialog && (
+        <ExportDialog
+          song={song}
+          bars={selectedBars ?? { start: cursor.bar, end: cursor.bar + 1 }}
+          section={cursorSection?.name ?? null}
+          onClose={(result) => {
+            setExportDialog(false)
+            if (result) setMessage(result)
             focus()
           }}
         />

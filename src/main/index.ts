@@ -95,14 +95,19 @@ async function runSmokeTest(win: BrowserWindow): Promise<void> {
     await sleep(500)
     const drumHits = document.querySelectorAll('.drum-cell:not(.off)').length
 
-    // Retro sounds + a second of playback: loads the chip synth worklet and SoundFont synth.
+    // Retro sounds + a second of looped playback: loads the chip synth worklet and SoundFont synth.
     button('Make it retro')?.click()
     await sleep(300)
     const retroSounds = [...document.querySelectorAll('.track-card select')].map((s) => s.selectedOptions[0]?.textContent)
+    // Play with loop and metronome on, then switch them off again.
+    button('Loop', document.querySelector('.editor-main'))?.click()
+    button('Metronome', document.querySelector('.editor-main'))?.click()
     button('▶ Play', document.querySelector('.editor-main'))?.click()
     await sleep(1500)
     const playing = button('■ Stop', document.querySelector('.editor-main')) !== undefined
     button('■ Stop', document.querySelector('.editor-main'))?.click()
+    button('Loop', document.querySelector('.editor-main'))?.click()
+    button('Metronome', document.querySelector('.editor-main'))?.click()
 
     // Three plucked notes (A3, C4, E4), half a second apart, as a 16-bit WAV.
     const rate = 22050
