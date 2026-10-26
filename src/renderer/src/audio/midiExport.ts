@@ -20,8 +20,9 @@ export function songToMidi(song: Song): Uint8Array {
   song.tracks.forEach((track, trackIndex) => {
     const out = midi.addTrack()
     out.name = track.name
-    out.channel = channelForTrack(trackIndex)
-    out.instrument.number = track.instrument.kind === 'soundfont' ? track.instrument.program : GM_SQUARE_LEAD
+    out.channel = channelForTrack(song, trackIndex)
+    // Drums keep their General MIDI drum notes on channel 9; a synth kit exports as the standard kit.
+    out.instrument.number = track.kind === 'drums' ? 0 : track.instrument.kind === 'soundfont' ? track.instrument.program : GM_SQUARE_LEAD
     for (const note of timeline.notes) {
       if (note.trackIndex !== trackIndex) continue
       out.addNote({ midi: note.pitch, ticks: toTicks(note.start), durationTicks: toTicks(note.duration), velocity: note.velocity / 127 })

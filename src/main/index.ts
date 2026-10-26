@@ -69,7 +69,7 @@ async function runSmokeTest(win: BrowserWindow): Promise<void> {
   win.webContents.on('render-process-gone', (_event, details) => fail(`renderer gone: ${details.reason}`))
   await new Promise<void>((resolve) => win.webContents.once('did-finish-load', () => resolve()))
   // Start page → most recent project (or the demo song if there is none) → editor with a rendered score
-  // → import a generated WAV in the record/import dialog and transcribe it with Basic Pitch.
+  // → add drums with a pattern → retro sounds and playback → import a generated WAV in the record/import dialog and transcribe it with Basic Pitch.
   // alphaTab only renders into a visible, non-zero-size container: run headless with
   // --ozone-platform=headless --ozone-override-screen-size=1600,1000 (see package.json "smoke").
   const result = await win.webContents.executeJavaScript(`(async () => {
@@ -83,6 +83,17 @@ async function runSmokeTest(win: BrowserWindow): Promise<void> {
     await sleep(3000)
     const editor = document.querySelector('.info-line span')?.textContent ?? null
     const scoreRenderMs = document.querySelector('.score-scroll')?.dataset.renderMs ?? null
+
+    // A drum track with a starter pattern from the drum grid.
+    button('+ Drums')?.click()
+    await sleep(500)
+    const pattern = document.querySelector('.drum-grid select[aria-label="Starter pattern"]')
+    if (pattern) {
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(pattern, '0')
+      pattern.dispatchEvent(new Event('change', { bubbles: true }))
+    }
+    await sleep(500)
+    const drumHits = document.querySelectorAll('.drum-cell:not(.off)').length
 
     // Retro sounds + a second of playback: loads the chip synth worklet and SoundFont synth.
     button('Make it retro')?.click()
@@ -131,6 +142,7 @@ async function runSmokeTest(win: BrowserWindow): Promise<void> {
       opened: recent.length > 0 ? 'recent project' : 'demo song',
       editor,
       scoreRenderMs,
+      drumHits,
       retroSounds,
       playing,
       transcription,
@@ -138,7 +150,8 @@ async function runSmokeTest(win: BrowserWindow): Promise<void> {
     }
   })()`)
   const transcribed = /^[1-9]\d* notes? in/.test(result.transcription ?? '')
-  const passed = errors.length === 0 && result.startPage && result.scoreRenderMs !== null && result.preloadBridge && result.playing && transcribed
+  const passed =
+    errors.length === 0 && result.startPage && result.scoreRenderMs !== null && result.preloadBridge && result.drumHits > 0 && result.playing && transcribed
   console.log('SMOKE_TEST_RESULT ' + JSON.stringify({ ...result, userData: app.getPath('userData'), errors }))
   app.exit(passed ? 0 : 1)
 }

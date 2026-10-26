@@ -14,6 +14,7 @@ const SCHEDULER_INTERVAL_MS = 25
 /** Sequenced notes are shortened slightly so repeated notes re-attack audibly. */
 const GATE = 0.92
 const LIVE_CHANNEL = 15
+const DRUM_CHANNEL = 9
 
 interface Playback {
   song: Song
@@ -23,10 +24,13 @@ interface Playback {
   startTime: number
   nextNote: number
   timer: number
-  /** Chip synth per track (null for SoundFont tracks). */
-  synths: (AudioWorkletNode | null)[]
+  /** Chip synths per track: none for SoundFont tracks, one for a synth, one per piece for a synth drum kit. */
+  synths: TrackSynth[]
   buses: GainNode[]
 }
+
+/** Chip synth nodes of a track by the note they play, with the pitch to send them. */
+type TrackSynth = Map<number | 'any', { node: AudioWorkletNode; pitch?: number }>
 
 const send = (node: AudioWorkletNode, message: ChipSynthMessage): void => node.port.postMessage(message)
 
@@ -97,17 +101,22 @@ export class AudioEngine {
     const synth = this.synth!
     const timeline = buildTimeline(song)
     const buses = song.tracks.map((track) => createTrackBus(this.ctx, this.master, track.volume, track.pan))
-    const synths = song.tracks.map((track, i) => {
-      if (track.instrument.kind !== 'synth') return null
-      const node = createChipSynth(this.ctx, track.instrument.patch)
-      node.connect(buses[i])
-      return node
+    const synths = song.tracks.map((track, i): TrackSynth => {
+      const synth: TrackSynth = new Map()
+      const add = (key: number | 'any', patch: SynthPatch, pitch?: number): void => {
+        const node = createChipSynth(this.ctx, patch)
+        node.connect(buses[i])
+        synth.set(key, { node, pitch })
+      }
+      if (track.instrument.kind === 'synth') add('any', track.instrument.patch)
+      else if (track.instrument.kind === 'synthkit') for (const piece of track.instrument.pieces) add(piece.note, piece.patch, piece.pitch)
+      return synth
     })
     this.setMasterCrush(song.master)
 
     song.tracks.forEach((track, trackIndex) => {
       if (track.instrument.kind !== 'soundfont') return
-      const channel = channelForTrack(trackIndex)
+      const channel = channelForTrack(song, trackIndex)
       synth.programChange(channel, track.instrument.program)
       synth.controllerChange(channel, MIDIControllers.mainVolume, Math.round(track.volume * 127))
       synth.controllerChange(channel, MIDIControllers.pan, panToMidi(track.pan))
@@ -135,10 +144,11 @@ export class AudioEngine {
     if (!p) return
     this.playback = null
     window.clearInterval(p.timer)
-    for (const node of p.synths) {
-      if (!node) continue
-      send(node, { type: 'dispose' })
-      node.disconnect()
+    for (const synth of p.synths) {
+      for (const { node } of synth.values()) {
+        send(node, { type: 'dispose' })
+        node.disconnect()
+      }
     }
     p.buses.forEach((b) => b.disconnect())
     this.synth?.stopAll(true)
@@ -170,12 +180,13 @@ export class AudioEngine {
     const instrument = p.song.tracks[note.trackIndex].instrument
     const length = note.duration * GATE
     if (instrument.kind === 'soundfont') {
-      const channel = channelForTrack(note.trackIndex)
+      const channel = channelForTrack(p.song, note.trackIndex)
       this.synth!.noteOn(channel, note.pitch, note.velocity, { time: when })
       this.synth!.noteOff(channel, note.pitch, { time: when + length })
     } else {
-      const node = p.synths[note.trackIndex]
-      if (node) send(node, { type: 'note', time: when, pitch: note.pitch, velocity: note.velocity, duration: length })
+      const synth = p.synths[note.trackIndex]
+      const target = synth.get(note.pitch) ?? synth.get('any')
+      if (target) send(target.node, { type: 'note', time: when, pitch: target.pitch ?? note.pitch, velocity: note.velocity, duration: length })
     }
   }
 
@@ -214,24 +225,32 @@ export class AudioEngine {
     if (this.liveSynth) this.liveSynthFor(patch)
   }
 
-  /** Live note from the MIDI keyboard or computer keyboard. */
-  liveNoteOn(instrument: Instrument, pitch: number, velocity: number): void {
+  /** Live note from the MIDI keyboard or computer keyboard; `drums` plays SoundFont notes on the drum channel. */
+  liveNoteOn(instrument: Instrument, pitch: number, velocity: number, drums = false): void {
     void this.ctx.resume()
-    this.liveNoteOff(instrument, pitch)
-    if (instrument.kind === 'soundfont') {
+    this.liveNoteOff(instrument, pitch, drums)
+    if (instrument.kind === 'soundfont' && drums) {
+      this.synth!.noteOn(DRUM_CHANNEL, pitch, velocity)
+    } else if (instrument.kind === 'soundfont') {
       if (this.liveProgram !== instrument.program) {
         this.synth!.programChange(LIVE_CHANNEL, instrument.program)
         this.liveProgram = instrument.program
       }
       this.synth!.noteOn(LIVE_CHANNEL, pitch, velocity)
-    } else {
+    } else if (instrument.kind === 'synth') {
       send(this.liveSynthFor(instrument.patch), { type: 'on', pitch, velocity })
+    } else {
+      const piece = instrument.pieces.find((p) => p.note === pitch)
+      if (piece) send(this.liveSynthFor(piece.patch), { type: 'on', pitch: piece.pitch, velocity })
     }
   }
 
-  liveNoteOff(instrument: Instrument, pitch: number): void {
-    if (instrument.kind === 'soundfont') this.synth!.noteOff(LIVE_CHANNEL, pitch)
-    else if (this.liveSynth) send(this.liveSynth, { type: 'off', pitch })
+  liveNoteOff(instrument: Instrument, pitch: number, drums = false): void {
+    if (instrument.kind === 'soundfont') this.synth!.noteOff(drums ? DRUM_CHANNEL : LIVE_CHANNEL, pitch)
+    else if (this.liveSynth) {
+      const piece = instrument.kind === 'synthkit' ? instrument.pieces.find((p) => p.note === pitch) : undefined
+      send(this.liveSynth, { type: 'off', pitch: piece ? piece.pitch : pitch })
+    }
   }
 
   /**

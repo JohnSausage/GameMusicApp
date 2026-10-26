@@ -24,7 +24,7 @@ async function renderSoundFontTracks(song: Song, sampleRate: number, frameCount:
   synth.soundBankManager.addSoundBank(SoundBankLoader.fromArrayBuffer(await loadSoundFont()), 'main')
   for (const { track, index } of tracks) {
     if (track.instrument.kind !== 'soundfont') continue
-    const channel = channelForTrack(index)
+    const channel = channelForTrack(song, index)
     synth.programChange(channel, track.instrument.program)
     synth.controllerChange(channel, MIDIControllers.mainVolume, Math.round(track.volume * 127))
     synth.controllerChange(channel, MIDIControllers.pan, panToMidi(track.pan))
@@ -33,7 +33,7 @@ async function renderSoundFontTracks(song: Song, sampleRate: number, frameCount:
   const steps: MidiStep[] = []
   for (const note of buildTimeline(song).notes) {
     if (song.tracks[note.trackIndex].instrument.kind !== 'soundfont') continue
-    const channel = channelForTrack(note.trackIndex)
+    const channel = channelForTrack(song, note.trackIndex)
     steps.push({ frame: Math.round(note.start * sampleRate), order: 1, apply: (s) => s.noteOn(channel, note.pitch, note.velocity) })
     steps.push({ frame: Math.round((note.start + note.duration * GATE) * sampleRate), order: 0, apply: (s) => s.noteOff(channel, note.pitch) })
   }
@@ -83,13 +83,21 @@ export async function renderSongOffline(song: Song, sampleRate = 48000, tailSeco
     source.start(0)
   }
 
-  // One chip synth per synth track, with all its notes handed over up front.
+  // One chip synth per synth track (or per piece of a synth drum kit), with all its notes handed over up front.
   song.tracks.forEach((track, trackIndex) => {
-    if (track.instrument.kind !== 'synth') return
-    const notes = timeline.notes
-      .filter((n) => n.trackIndex === trackIndex)
-      .map((n) => ({ time: n.start, pitch: n.pitch, velocity: n.velocity, duration: n.duration * GATE }))
-    createChipSynth(offline, track.instrument.patch, notes).connect(createTrackBus(offline, master, track.volume, track.pan))
+    const instrument = track.instrument
+    if (instrument.kind === 'soundfont') return
+    const bus = createTrackBus(offline, master, track.volume, track.pan)
+    const notes = timeline.notes.filter((n) => n.trackIndex === trackIndex)
+    const toSynth = (pitch: (n: (typeof notes)[number]) => number) => (n: (typeof notes)[number]) => ({ time: n.start, pitch: pitch(n), velocity: n.velocity, duration: n.duration * GATE })
+    if (instrument.kind === 'synth') {
+      createChipSynth(offline, instrument.patch, notes.map(toSynth((n) => n.pitch))).connect(bus)
+      return
+    }
+    for (const piece of instrument.pieces) {
+      const hits = notes.filter((n) => n.pitch === piece.note)
+      if (hits.length > 0) createChipSynth(offline, piece.patch, hits.map(toSynth(() => piece.pitch))).connect(bus)
+    }
   })
 
   return offline.startRendering()

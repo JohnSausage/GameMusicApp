@@ -54,7 +54,8 @@ export function TakeDialog({ project, getEngine, onClose }: Props): React.JSX.El
   const [sensitivity, setSensitivity] = useState<Sensitivity>('normal')
   const [stepsPerQuarter, setStepsPerQuarter] = useState(4)
   const [preferredFret, setPreferredFret] = useState(3)
-  const [targetTrack, setTargetTrack] = useState(cursor.track)
+  // Transcriptions go into fretted tracks only, not drums.
+  const [targetTrack, setTargetTrack] = useState(() => (song.tracks[cursor.track].kind === 'drums' ? Math.max(0, song.tracks.findIndex((t) => t.kind !== 'drums')) : cursor.track))
   const [startBar, setStartBar] = useState(cursor.bar + 1)
   const models = useRef(new Map<string, ModelOutput>())
 
@@ -483,9 +484,11 @@ export function TakeDialog({ project, getEngine, onClose }: Props): React.JSX.El
           <label>
             Insert into
             <select value={targetTrack} onChange={(e) => setTargetTrack(Number(e.target.value))}>
-              {song.tracks.map((t, i) => (
-                <option key={t.id} value={i}>{t.name}</option>
-              ))}
+              {song.tracks.map((t, i) =>
+                t.kind === 'drums' ? null : (
+                  <option key={t.id} value={i}>{t.name}</option>
+                )
+              )}
             </select>
           </label>
           <label>
@@ -523,7 +526,7 @@ export function TakeDialog({ project, getEngine, onClose }: Props): React.JSX.El
         {error && <p className="warning dialog-error">{error}</p>}
         {step.kind === 'source' && (
           <p className="muted small">
-            The transcription goes into {song.tracks[cursor.track].name} from bar {cursor.bar + 1} (the cursor); you can change that before inserting.
+            The transcription goes into {song.tracks[targetTrack].name} from bar {cursor.bar + 1}; you can change that before inserting.
           </p>
         )}
       </div>
