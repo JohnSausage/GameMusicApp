@@ -5,6 +5,7 @@ import { audibleTracks, type Instrument, type MasterSettings, type Song } from '
 import type { SynthPatch } from '../model/synth'
 import { buildTimeline, type NoteEvent, type SongTimeline, type TimeRange } from '../model/timing'
 import { secondsPerClick } from './analysis'
+import { BEND_RANGE, pitchWheelSteps, WHEEL_CENTER } from './bends'
 import { songPosition, startPosition, startSchedule, takeDue, validLoop, type ScheduleState } from './scheduler'
 import { createBitcrusher, createChipSynth, createTrackBus, crushActive, loadSynthWorklet } from './mixer'
 import { channelForTrack, loadSoundFont, panToMidi } from './soundfont'
@@ -36,6 +37,8 @@ interface Playback {
   loop: TimeRange | null
   schedule: ScheduleState
   timer: number
+  /** Pitch wheel moves for SoundFont hammer-ons and slides, in time order; handed out like notes, shortly before they're due. */
+  wheel: { when: number; channel: number; value: number }[]
   /** Chip synths per track: none for SoundFont tracks, one for a synth, one per piece for a synth drum kit. */
   synths: TrackSynth[]
   buses: GainNode[]
@@ -137,6 +140,8 @@ export class AudioEngine {
       const channel = channelForTrack(song, trackIndex)
       synth.programChange(channel, track.instrument.program)
       synth.controllerChange(channel, MIDIControllers.pan, panToMidi(track.pan))
+      synth.pitchWheelRange(channel, BEND_RANGE)
+      synth.pitchWheel(channel, WHEEL_CENTER)
     })
 
     const startTime = options.startAt ?? this.ctx.currentTime + 0.08
@@ -148,6 +153,7 @@ export class AudioEngine {
       loop,
       schedule: startSchedule(timeline, from, startTime, loop, secondsPerClick(song.tempo, song.timeSignature), song.timeSignature[0]),
       timer: 0,
+      wheel: [],
       synths,
       buses,
       audible: []
@@ -207,6 +213,10 @@ export class AudioEngine {
     const due = takeDue(p.schedule, now, now + LOOKAHEAD_SECONDS)
     for (const { note, when } of due.notes) this.playNote(p, note, when)
     if (this.metronome) for (const { when, accent } of due.clicks) this.click(when, accent)
+    while (p.wheel.length > 0 && p.wheel[0].when <= now + LOOKAHEAD_SECONDS) {
+      const { when, channel, value } = p.wheel.shift()!
+      this.synth!.pitchWheel(channel, value, { time: when })
+    }
     const position = this.position()
     if (!p.loop && position !== null && position > p.timeline.duration + 0.5) {
       this.stop()
@@ -222,10 +232,16 @@ export class AudioEngine {
       const channel = channelForTrack(p.song, note.trackIndex)
       this.synth!.noteOn(channel, note.pitch, note.velocity, { time: when })
       this.synth!.noteOff(channel, note.pitch, { time: when + length })
+      const steps = pitchWheelSteps(note, note.start + length)
+      if (steps.length > 0) {
+        p.wheel.push(...steps.map((step) => ({ when: when + step.time - note.start, channel, value: step.value })))
+        p.wheel.sort((a, b) => a.when - b.when)
+      }
     } else {
       const synth = p.synths[note.trackIndex]
       const target = synth.get(note.pitch) ?? synth.get('any')
-      if (target) send(target.node, { type: 'note', time: when, pitch: target.pitch ?? note.pitch, velocity: note.velocity, duration: length })
+      const bends = note.bends?.map((bend) => ({ ...bend, time: when + bend.time - note.start }))
+      if (target) send(target.node, { type: 'note', time: when, pitch: target.pitch ?? note.pitch, velocity: note.velocity, duration: length, bends })
     }
   }
 

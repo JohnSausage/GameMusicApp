@@ -2,7 +2,7 @@ import * as alphaTab from '@coderline/alphatab'
 import { strengthOf } from '../model/drums'
 import type { NoteValue, Song } from '../model/song'
 
-const { AccentuationType, Automation, Bar, Beat, Clef, Duration, MasterBar, Note, Ottavia, Score, Section, Track, Tuning, Voice } = alphaTab.model
+const { AccentuationType, Automation, SlideOutType, Bar, Beat, Clef, Duration, MasterBar, Note, Ottavia, Score, Section, Track, Tuning, Voice } = alphaTab.model
 
 export interface BeatRef {
   trackIndex: number
@@ -71,6 +71,11 @@ export function songToAlphaTab(song: Song, settings: alphaTab.Settings, tabOnly 
     if (!drums) staff.stringTuning = new Tuning('', [...track.tuning], false)
 
     const trackBeats: alphaTab.model.Beat[][] = []
+    // Ties, hammer-ons and slides only link to the beat right before or after (as in playback).
+    const flat = track.bars.flatMap((b) => b.beats)
+    const fretBefore = (k: number, string: number): number | undefined => flat[k - 1]?.notes.find((m) => m.string === string)?.fret
+    const fretAfter = (k: number, string: number): number | undefined => flat[k + 1]?.notes.find((m) => m.string === string)?.fret
+    let k = -1
     // Guitar is notated in treble clef, bass in bass clef, both an octave above how they sound.
     const clef = drums ? Clef.Neutral : track.tuning.length <= 5 ? Clef.F4 : Clef.G2
     for (let barIndex = 0; barIndex < barCount; barIndex++) {
@@ -84,6 +89,7 @@ export function songToAlphaTab(song: Song, settings: alphaTab.Settings, tabOnly 
       const sourceBeats = track.bars[barIndex]?.beats ?? [{ value: 1 as const, dotted: false, notes: [] }]
       const barBeats: alphaTab.model.Beat[] = []
       sourceBeats.forEach((source, beatIndex) => {
+        k++
         const beat = new Beat()
         beat.isEmpty = false
         beat.duration = DURATIONS[source.value]
@@ -100,6 +106,11 @@ export function songToAlphaTab(song: Song, settings: alphaTab.Settings, tabOnly 
             // alphaTab numbers strings from the lowest (1); we number from the highest.
             note.string = track.tuning.length - n.string + 1
             note.fret = n.fret
+            note.isTieDestination = !!n.tie && fretBefore(k, n.string) === n.fret
+            const next = fretAfter(k, n.string)
+            const legato = next !== undefined && next !== n.fret
+            note.isHammerPullOrigin = !!n.hammer && legato
+            if (n.slide && legato) note.slideOutType = SlideOutType.Legato
           }
           beat.addNote(note)
         }

@@ -118,10 +118,27 @@ export function setFret(song: Song, cursor: Cursor, fret: number, duration: Dura
       beat.dotted = duration.dotted
       beats.splice(c.beat + 1, 0, ...restsFor(rest))
     }
+    // A new fret is played again (no longer held), but keeps a hammer-on or slide into the next note.
+    const old = beat.notes.find((n) => n.string === c.string)
     beat.notes = beat.notes.filter((n) => n.string !== c.string)
-    beat.notes.push({ string: c.string, fret, velocity: 96 })
+    beat.notes.push({ string: c.string, fret, velocity: 96, ...(old?.hammer && { hammer: true }), ...(old?.slide && { slide: true }) })
     beat.notes.sort((a, b) => a.string - b.string)
+    followTies(draft, c)
   })
+}
+
+/** Notes held from the cursor's note (ties, possibly over several beats) take on its fret. */
+export function followTies(song: Song, c: Cursor): void {
+  let from = beatAt(song, c).notes.find((n) => n.string === c.string)
+  let at = c
+  while (from) {
+    const next = moveBeat(song, at, 1)
+    if (next.bar === at.bar && next.beat === at.beat) return
+    const held = beatAt(song, next).notes.find((n) => n.string === c.string && n.tie)
+    if (held) held.fret = from.fret
+    from = held
+    at = next
+  }
 }
 
 /** Removes the note on the cursor's string; the beat becomes a rest when it was the last one. */

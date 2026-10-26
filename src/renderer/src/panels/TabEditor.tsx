@@ -61,6 +61,7 @@ import {
   trackKind
 } from '../model/song'
 import { CRUSH_RATES, eightBitKit, FACTORY_PRESETS, formatSampleRate } from '../model/synth'
+import { legatoTarget, toggleLegato, toggleTie, type Legato } from '../model/techniques'
 import { barSeconds, buildTimeline } from '../model/timing'
 import { saveFile } from '../platform'
 import { readPref, writePref } from '../prefs'
@@ -501,6 +502,23 @@ export function TabEditor({ project, getEngine }: Props): React.JSX.Element {
     else edit(deleteBeat(song, cursor), 'Only rests follow in this bar, so there is nothing to move up.')
   }
 
+  /** Hold (tie) the note before the cursor through this beat, or stop holding it. */
+  const tie = (): void => {
+    setAnchor(null)
+    edit(toggleTie(song, cursor, entryDuration), 'Nothing to hold: the beat before has no note on this string.')
+  }
+
+  /** Hammer-on/pull-off or slide from the note at the cursor into the next one. */
+  const legato = (kind: Legato): void => {
+    setAnchor(null)
+    edit(
+      toggleLegato(song, cursor, kind),
+      noteOnString
+        ? 'Hammer-ons and slides go into a note on another fret of this string, in the very next beat. Enter that note first.'
+        : 'Put the cursor on a note first.'
+    )
+  }
+
   const selectAll = (): void => {
     const all = selectTrack(song, cursor.track)
     setAnchor({ track: cursor.track, pos: all.start })
@@ -543,6 +561,9 @@ export function TabEditor({ project, getEngine }: Props): React.JSX.Element {
     else if (key === '.') toggleDots()
     else if (key.toLowerCase() === 'r' && !ctrl) selection ? removeSelection(false) : edit(clearBeat(song, cursor))
     else if (key === ' ') playing ? stop() : playFromCursor()
+    else if (key.toLowerCase() === 't' && !ctrl && !drums) tie()
+    else if (key.toLowerCase() === 'h' && !ctrl && !drums) legato('hammer')
+    else if (key.toLowerCase() === 's' && !ctrl && !drums) legato('slide')
     else if (key.toLowerCase() === 'l' && !ctrl) toggleLoop()
     else if (key.toLowerCase() === 'm' && !ctrl) toggleMetronome()
     else if (key === 'Insert') edit(insertBarBefore(song, cursor))
@@ -582,11 +603,24 @@ export function TabEditor({ project, getEngine }: Props): React.JSX.Element {
     setMessage(path ? `MIDI saved: ${path}` : '')
   }
 
+  /** E.g. " · held · hammer-on" for the note at the cursor. */
+  const techniqueText = (): string => {
+    if (!noteOnString) return ''
+    const target = legatoTarget(song, cursor)
+    const into = target ? (target.fret > noteOnString.fret ? 'up' : 'down') : null
+    const parts = [
+      noteOnString.tie && 'held from the note before',
+      noteOnString.hammer && (into === 'down' ? 'pull-off' : 'hammer-on'),
+      noteOnString.slide && `slide${into ? ` ${into}` : ''}`
+    ].filter(Boolean)
+    return parts.length > 0 ? ` · ${parts.join(' · ')}` : ''
+  }
+
   const describeCursor = (): string => {
     const open = noteName(track.tuning[cursor.string - 1])
     const what = drums
       ? noteOnString ? 'hit' : beat.notes.length === 0 ? 'rest' : 'no hit'
-      : noteOnString ? `fret ${noteOnString.fret} (${noteName(notePitch(track, noteOnString))})` : beat.notes.length === 0 ? 'rest' : 'empty string'
+      : noteOnString ? `fret ${noteOnString.fret} (${noteName(notePitch(track, noteOnString))})${techniqueText()}` : beat.notes.length === 0 ? 'rest' : 'empty string'
     const spot = drums ? DRUM_PIECES[cursor.string - 1]?.name : `string ${cursor.string} (${open})`
     const where = `${track.name} · bar ${cursor.bar + 1} of ${barCount(song)} · beat ${cursor.beat + 1} · ${spot} · ${what}`
     if (!selection) return where
@@ -689,6 +723,34 @@ export function TabEditor({ project, getEngine }: Props): React.JSX.Element {
             Dotted
           </button>
           <button title="Make this beat a rest (R)" onClick={() => edit(clearBeat(song, cursor))}>Rest</button>
+          {!drums && (
+            <div className="segmented" role="group" aria-label="Techniques">
+              <button
+                className={noteOnString?.tie ? 'active' : ''}
+                aria-pressed={!!noteOnString?.tie}
+                title="Hold (T): the note before keeps sounding through this beat, also across a bar line (a tie)"
+                onClick={tie}
+              >
+                Hold
+              </button>
+              <button
+                className={noteOnString?.hammer ? 'active' : ''}
+                aria-pressed={!!noteOnString?.hammer}
+                title="Hammer-on / pull-off (H) from this note into the next note on this string"
+                onClick={() => legato('hammer')}
+              >
+                H/P
+              </button>
+              <button
+                className={noteOnString?.slide ? 'active' : ''}
+                aria-pressed={!!noteOnString?.slide}
+                title="Slide (S) from this note into the next note on this string"
+                onClick={() => legato('slide')}
+              >
+                Slide
+              </button>
+            </div>
+          )}
           <button title="Remove this beat or rest; the rest of the bar moves up (Shift+Delete, or Delete on a rest)" onClick={removeBeat}>
             Delete beat
           </button>
@@ -764,7 +826,11 @@ export function TabEditor({ project, getEngine }: Props): React.JSX.Element {
               <kbd>0</kbd>–<kbd>9</kbd> fret (type two digits for 10–24)
             </>
           )}{' '}
-          · <kbd>Del</kbd> remove note or rest · <kbd>Shift</kbd>+<kbd>Del</kbd> remove beat · <kbd>R</kbd> rest · <kbd>+</kbd> <kbd>−</kbd> length ·
+          · <kbd>Del</kbd> remove note or rest · <kbd>Shift</kbd>+<kbd>Del</kbd> remove beat · <kbd>R</kbd> rest · {!drums && (
+            <>
+              <kbd>T</kbd> hold · <kbd>H</kbd> hammer-on/pull-off · <kbd>S</kbd> slide ·{' '}
+            </>
+          )} <kbd>+</kbd> <kbd>−</kbd> length ·
           <kbd>.</kbd> dotted · <kbd>Space</kbd> play · <kbd>L</kbd> loop · <kbd>M</kbd> metronome · <kbd>Ctrl</kbd>+wheel zoom · <kbd>Ctrl</kbd>+<kbd>Z</kbd>/<kbd>Y</kbd> undo/redo · <kbd>Ctrl</kbd>+<kbd>S</kbd> save ·
           select: <kbd>Shift</kbd>+click, drag a box, <kbd>Shift</kbd>+<kbd>←</kbd>/<kbd>→</kbd>, <kbd>Ctrl</kbd>+<kbd>A</kbd> · <kbd>Ctrl</kbd>+<kbd>C</kbd>/<kbd>X</kbd>/<kbd>V</kbd> copy/cut/paste
           {gridTrack !== null && (

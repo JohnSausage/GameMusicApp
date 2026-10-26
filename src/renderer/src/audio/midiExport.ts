@@ -15,7 +15,7 @@ export function songToMidi(song: Song): Uint8Array {
 
   const ppq = midi.header.ppq
   const toTicks = (seconds: number): number => Math.round((seconds / secondsPerQuarter(song)) * ppq)
-  const timeline = buildTimeline(song)
+  const timeline = buildTimeline(song, { legato: false })
 
   song.tracks.forEach((track, trackIndex) => {
     const out = midi.addTrack()

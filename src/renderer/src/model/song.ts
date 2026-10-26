@@ -13,6 +13,12 @@ export interface Note {
   string: number
   fret: number
   velocity: number
+  /** Held: tied to the note before it on this string, so it keeps sounding instead of being played again (EDIT-02). */
+  tie?: boolean
+  /** Hammer-on (to a higher fret) or pull-off (to a lower one) into the next note on this string (EDIT-12). */
+  hammer?: boolean
+  /** Slide into the next note on this string (EDIT-12). */
+  slide?: boolean
 }
 
 export interface Beat {

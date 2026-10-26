@@ -9,9 +9,13 @@ const OUTPUT_GAIN = 0.2
 
 export interface ScheduledNote {
   frame: number
-  type: 'on' | 'off'
+  /** 'bend' moves the voice playing `pitch` to `to` without playing it again (hammer-ons, slides). */
+  type: 'on' | 'off' | 'bend'
   pitch: number
   velocity: number
+  to?: number
+  /** Seconds a bend takes; 0 jumps. */
+  glide?: number
 }
 
 /** Reduces bit depth and sample rate (SYN-30). */
@@ -58,6 +62,8 @@ class Voice {
   // Filter state (topology-preserving state variable filter).
   ic1 = 0
   ic2 = 0
+  /** A slide in progress: from which pitch, starting when (voice time) and for how long. */
+  slide: { from: number; start: number; duration: number } | null = null
 
   constructor(
     public pitch: number,
@@ -126,7 +132,20 @@ export class ChipSynth {
 
   private apply(event: ScheduledNote): void {
     if (event.type === 'on') this.noteOn(event.pitch, event.velocity)
-    else this.noteOff(event.pitch)
+    else if (event.type === 'off') this.noteOff(event.pitch)
+    else this.bend(event.pitch, event.to ?? event.pitch, event.glide ?? 0)
+  }
+
+  /** Moves the voice that plays `pitch` to another pitch; it keeps answering to `pitch` (e.g. for its note-off). */
+  private bend(pitch: number, to: number, glide: number): void {
+    const voice = this.voices.find((v) => v.pitch === pitch && !v.released)
+    if (!voice) return
+    voice.targetPitch = to
+    if (glide > 0) voice.slide = { from: voice.currentPitch, start: voice.time, duration: glide }
+    else {
+      voice.slide = null
+      voice.currentPitch = to
+    }
   }
 
   private noteOn(pitch: number, velocity: number): void {
@@ -212,8 +231,13 @@ export class ChipSynth {
       lfo = Math.sin(2 * Math.PI * p.lfoRate * since) * Math.min(1, since / 0.15)
     }
 
-    // Pitch: glide (eases towards the target, ~`glide` seconds), octave/fine, pitch envelope, vibrato.
-    if (v.currentPitch !== v.targetPitch) {
+    // Pitch: a slide (straight to the target in its time) or glide (eases towards the target, ~`glide` seconds),
+    // then octave/fine, pitch envelope, vibrato.
+    if (v.slide) {
+      const progress = Math.min(1, (t - v.slide.start) / v.slide.duration)
+      v.currentPitch = v.slide.from + (v.targetPitch - v.slide.from) * progress
+      if (progress >= 1) v.slide = null
+    } else if (v.currentPitch !== v.targetPitch) {
       const distance = v.targetPitch - v.currentPitch
       v.currentPitch = Math.abs(distance) < 0.001 ? v.targetPitch : v.currentPitch + (distance * this.dt * 4) / Math.max(p.glide, 1e-3)
     }
