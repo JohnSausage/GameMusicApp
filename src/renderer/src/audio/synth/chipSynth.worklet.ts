@@ -1,6 +1,7 @@
 // AudioWorklet processors: "chip-synth" (one per synth track or live preview)
 // and "bitcrusher" (master effect). Loaded with audioWorklet.addModule().
 import { normalizePatch, type SynthPatch } from '../../model/synth'
+import type { PitchChange } from '../../model/timing'
 import { Bitcrusher, ChipSynth } from './chipSynthCore'
 
 // AudioWorkletGlobalScope (not part of TypeScript's DOM types).
@@ -18,6 +19,8 @@ export interface SynthNote {
   pitch: number
   velocity: number
   duration: number
+  /** Hammer-ons, pull-offs and slides; their times are context times too. */
+  bends?: PitchChange[]
 }
 
 export type ChipSynthMessage =
@@ -48,6 +51,9 @@ class ChipSynthProcessor extends AudioWorkletProcessor {
   private scheduleNote(note: SynthNote): void {
     const start = Math.round(note.time * sampleRate)
     this.synth.schedule({ frame: start, type: 'on', pitch: note.pitch, velocity: note.velocity })
+    for (const bend of note.bends ?? []) {
+      this.synth.schedule({ frame: Math.round(bend.time * sampleRate), type: 'bend', pitch: note.pitch, velocity: 0, to: bend.pitch, glide: bend.glide })
+    }
     this.synth.schedule({ frame: start + Math.max(1, Math.round(note.duration * sampleRate)), type: 'off', pitch: note.pitch, velocity: 0 })
   }
 

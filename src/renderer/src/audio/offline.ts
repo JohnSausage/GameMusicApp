@@ -2,6 +2,7 @@ import { MIDIControllers, SoundBankLoader, SpessaSynthProcessor } from 'spessasy
 import { audibleTracks, type Song } from '../model/song'
 import { buildTimeline, exportFrameCount, notesBetween, type ExportEnding, type NoteEvent, type TimeRange } from '../model/timing'
 import { createBitcrusher, createChipSynth, createTrackBus, crushActive, loadSynthWorklet } from './mixer'
+import { BEND_RANGE, pitchWheelSteps } from './bends'
 import { channelForTrack, loadSoundFont, panToMidi } from './soundfont'
 
 const GATE = 0.92
@@ -28,6 +29,11 @@ async function renderSoundFontTracks(song: Song, notes: NoteEvent[], sampleRate:
     synth.programChange(channel, track.instrument.program)
     synth.controllerChange(channel, MIDIControllers.mainVolume, Math.round(track.volume * 127))
     synth.controllerChange(channel, MIDIControllers.pan, panToMidi(track.pan))
+    // Pitch wheel range for hammer-ons and slides (RPN 0).
+    synth.controllerChange(channel, MIDIControllers.registeredParameterMSB, 0)
+    synth.controllerChange(channel, MIDIControllers.registeredParameterLSB, 0)
+    synth.controllerChange(channel, MIDIControllers.dataEntryMSB, BEND_RANGE)
+    synth.controllerChange(channel, MIDIControllers.dataEntryLSB, 0)
   }
 
   const steps: MidiStep[] = []
@@ -36,6 +42,9 @@ async function renderSoundFontTracks(song: Song, notes: NoteEvent[], sampleRate:
     const channel = channelForTrack(song, note.trackIndex)
     steps.push({ frame: Math.round(note.start * sampleRate), order: 1, apply: (s) => s.noteOn(channel, note.pitch, note.velocity) })
     steps.push({ frame: Math.round((note.start + note.duration * GATE) * sampleRate), order: 0, apply: (s) => s.noteOff(channel, note.pitch) })
+    for (const wheel of pitchWheelSteps(note, note.start + note.duration * GATE)) {
+      steps.push({ frame: Math.round(wheel.time * sampleRate), order: 0, apply: (s) => s.pitchWheel(channel, wheel.value) })
+    }
   }
   steps.sort((a, b) => a.frame - b.frame || a.order - b.order)
 
@@ -107,7 +116,13 @@ export async function renderSongOffline(song: Song, sampleRate = 48000, options:
     if (instrument.kind === 'soundfont' || !audible[trackIndex]) return
     const bus = createTrackBus(offline, master, track.volume, track.pan)
     const notes = timeline.notes.filter((n) => n.trackIndex === trackIndex)
-    const toSynth = (pitch: (n: (typeof notes)[number]) => number) => (n: (typeof notes)[number]) => ({ time: n.start, pitch: pitch(n), velocity: n.velocity, duration: n.duration * GATE })
+    const toSynth = (pitch: (n: (typeof notes)[number]) => number) => (n: (typeof notes)[number]) => ({
+      time: n.start,
+      pitch: pitch(n),
+      velocity: n.velocity,
+      duration: n.duration * GATE,
+      bends: n.bends
+    })
     if (instrument.kind === 'synth') {
       createChipSynth(offline, instrument.patch, notes.map(toSynth((n) => n.pitch))).connect(bus)
       return

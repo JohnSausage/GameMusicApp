@@ -143,6 +143,9 @@ function checkSong(value: unknown): Song {
           if (!isInt(note.string) || note.string < 1 || note.string > track.tuning.length || !isInt(note.fret) || note.fret < 0) {
             fail(`track ${t + 1}, bar ${b + 1} has an invalid note`)
           }
+          if ([note.tie, note.hammer, note.slide].some((flag) => flag !== undefined && typeof flag !== 'boolean')) {
+            fail(`track ${t + 1}, bar ${b + 1} has a note with invalid techniques`)
+          }
         }
       }
     })
