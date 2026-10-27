@@ -2,7 +2,7 @@
 // each kit piece is a "string" whose open note is its General MIDI drum number
 // and every hit is fret 0, so timing, selection, copy/paste and playback work
 // exactly like for guitar tracks.
-import { barTicks, beatTicks, edit, restsFor, type Cursor, type EditResult } from './edit'
+import { appendBars, barTicks, beatTicks, edit, restsFor, type Cursor, type EditResult } from './edit'
 import { barCount, DRUM_TUNING, type Bar, type Note, type Song, type Track } from './song'
 
 /** Hit strengths (DRUM-03), stored as note velocity. */
@@ -80,8 +80,7 @@ export function toggleHit(song: Song, cursor: Cursor, track: number, bar: number
 export function repeatBar(song: Song, cursor: Cursor, track: number, bar: number, times: number): EditResult | null {
   if (times < 1) return null
   return edit(song, cursor, (draft) => {
-    const needed = bar + times + 1 - barCount(draft)
-    for (const t of draft.tracks) for (let i = 0; i < needed; i++) t.bars.push({ beats: restsFor(barTicks(draft)) })
+    appendBars(draft, bar + times + 1 - barCount(draft))
     for (let i = 1; i <= times; i++) draft.tracks[track].bars[bar + i] = structuredClone(draft.tracks[track].bars[bar])
   })
 }

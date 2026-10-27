@@ -58,12 +58,36 @@ export interface Track {
   bars: Bar[]
   /** The sound before "Make it retro" replaced it, so it can be switched back (SYN-31). */
   originalInstrument?: Instrument
+  /** The pieces of music this track plays in the arrangement (see Song.arrangement). */
+  parts?: Part[]
 }
 
 /** A named part of the song that starts at a bar (PRJ-05), e.g. "Intro" or "Loop A". */
 export interface Section {
   bar: number
   name: string
+  /** In an arranged song: the arrangement section it marks. */
+  id?: string
+}
+
+/**
+ * A piece of one track's music, e.g. "Theme A" or "Groove". Wherever the
+ * arrangement places it, the same bars play, so changing it changes every repeat.
+ */
+export interface Part {
+  id: string
+  name: string
+  bars: Bar[]
+}
+
+/** One section of the song form: how long it is, and which part each track plays in it. */
+export interface ArrangementSection {
+  id: string
+  name: string
+  /** Length in bars. A shorter part repeats to fill it; a longer one is cut off. */
+  length: number
+  /** Part id by track id; a track without one is silent in this section. */
+  parts: Record<string, string>
 }
 
 /**
@@ -97,6 +121,11 @@ export interface Song {
   timeSignature: [number, number]
   tracks: Track[]
   sections: Section[]
+  /**
+   * The song form: sections in order, each with a part per track (see model/arrangement.ts).
+   * When present, it is the source of every track's bars and of `sections`.
+   */
+  arrangement?: ArrangementSection[]
   takes: TakeInfo[]
   master?: MasterSettings
 }

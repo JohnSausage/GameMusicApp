@@ -2,7 +2,8 @@
 // song.json and one audio/<take id>.wav per recorded or imported take.
 import { strFromU8, strToU8, unzipSync, zipSync, type Zippable } from 'fflate'
 import { decodeWav16, encodeWav16 } from '../audio/wav'
-import { MASTER_DEFAULTS, NOTE_VALUES, type Instrument, type MasterSettings, type ProjectAudio, type Song, type TakeInfo } from '../model/song'
+import { writeOut } from '../model/arrangement'
+import { MASTER_DEFAULTS, NOTE_VALUES, type Bar, type Instrument, type MasterSettings, type ProjectAudio, type Song, type TakeInfo, type Track } from '../model/song'
 import { normalizePatch, PATCH_LIMITS } from '../model/synth'
 import { checkLayout, type Layout } from './layout'
 
@@ -119,6 +120,47 @@ function checkMaster(value: unknown): MasterSettings | undefined {
   return { crushBits: clamp(crushBits, PATCH_LIMITS.crushBits, MASTER_DEFAULTS.crushBits), crushRate: clamp(crushRate, PATCH_LIMITS.crushRate, MASTER_DEFAULTS.crushRate) }
 }
 
+function checkBars(bars: Bar[], track: Track, where: string): void {
+  bars.forEach((bar, b) => {
+    if (!Array.isArray(bar.beats) || bar.beats.length === 0) fail(`${where}, bar ${b + 1} has no beats`)
+    for (const beat of bar.beats) {
+      if (!NOTE_VALUES.includes(beat.value) || typeof beat.dotted !== 'boolean' || !Array.isArray(beat.notes)) {
+        fail(`${where}, bar ${b + 1} has an invalid beat`)
+      }
+      for (const note of beat.notes) {
+        if (!isInt(note.string) || note.string < 1 || note.string > track.tuning.length || !isInt(note.fret) || note.fret < 0) {
+          fail(`${where}, bar ${b + 1} has an invalid note`)
+        }
+        if ([note.tie, note.hammer, note.slide].some((flag) => flag !== undefined && typeof flag !== 'boolean')) {
+          fail(`${where}, bar ${b + 1} has a note with invalid techniques`)
+        }
+      }
+    }
+  })
+}
+
+function checkParts(track: Track, t: number): void {
+  if (!Array.isArray(track.parts)) fail(`track ${t + 1} has an invalid part list`)
+  for (const part of track.parts) {
+    if (typeof part?.id !== 'string' || typeof part.name !== 'string') fail(`track ${t + 1} has a part without a valid id or name`)
+    if (!Array.isArray(part.bars) || part.bars.length === 0) fail(`part "${part.name}" of track ${t + 1} has no bars`)
+    checkBars(part.bars, track, `part "${part.name}" of track ${t + 1}`)
+  }
+}
+
+function checkArrangement(song: Song): void {
+  if (!Array.isArray(song.arrangement)) fail('invalid arrangement')
+  for (const section of song.arrangement) {
+    if (typeof section?.id !== 'string' || typeof section.name !== 'string') fail('a section has no valid id or name')
+    if (!isInt(section.length) || section.length < 1) fail(`section "${section.name}" has an invalid length`)
+    if (!section.parts || typeof section.parts !== 'object') fail(`section "${section.name}" has an invalid part list`)
+    for (const [trackId, partId] of Object.entries(section.parts)) {
+      const track = song.tracks.find((t) => t.id === trackId)
+      if (!track?.parts?.some((p) => p.id === partId)) fail(`section "${section.name}" plays a part that doesn't exist`)
+    }
+  }
+}
+
 /** Checks the structure we rely on, so a damaged file fails here instead of crashing the editor. */
 function checkSong(value: unknown): Song {
   const song = value as Song
@@ -138,24 +180,13 @@ function checkSong(value: unknown): Song {
     track.instrument = checkInstrument(track.instrument, `track ${t + 1}`)
     if (track.originalInstrument !== undefined) track.originalInstrument = checkInstrument(track.originalInstrument, `track ${t + 1} (original sound)`)
     if (!Array.isArray(track.bars) || track.bars.length !== bars) fail(`track ${t + 1} has the wrong number of bars`)
-    track.bars.forEach((bar, b) => {
-      if (!Array.isArray(bar.beats) || bar.beats.length === 0) fail(`track ${t + 1}, bar ${b + 1} has no beats`)
-      for (const beat of bar.beats) {
-        if (!NOTE_VALUES.includes(beat.value) || typeof beat.dotted !== 'boolean' || !Array.isArray(beat.notes)) {
-          fail(`track ${t + 1}, bar ${b + 1} has an invalid beat`)
-        }
-        for (const note of beat.notes) {
-          if (!isInt(note.string) || note.string < 1 || note.string > track.tuning.length || !isInt(note.fret) || note.fret < 0) {
-            fail(`track ${t + 1}, bar ${b + 1} has an invalid note`)
-          }
-          if ([note.tie, note.hammer, note.slide].some((flag) => flag !== undefined && typeof flag !== 'boolean')) {
-            fail(`track ${t + 1}, bar ${b + 1} has a note with invalid techniques`)
-          }
-        }
-      }
-    })
+    checkBars(track.bars, track, `track ${t + 1}`)
+    if (track.parts !== undefined) checkParts(track, t)
   })
-  return { ...song, sections: Array.isArray(song.sections) ? song.sections : [], takes: checkTakes(song.takes), master: checkMaster(song.master) }
+  if (song.arrangement !== undefined) checkArrangement(song)
+  const checked = { ...song, sections: Array.isArray(song.sections) ? song.sections : [], takes: checkTakes(song.takes), master: checkMaster(song.master) }
+  // The arrangement is what counts; the bars written out in the file are for reading it without one.
+  return writeOut(checked)
 }
 
 /** File name for a new project, from its title. */

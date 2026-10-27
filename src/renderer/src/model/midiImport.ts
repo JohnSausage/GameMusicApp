@@ -3,7 +3,7 @@
 // placed by beats (not seconds), snapped to thirty-seconds, from the first bar.
 import { Midi } from '@tonejs/midi'
 import { drumRowFor, stepsToBar } from './drums'
-import { barTicks, edit, restsFor, type EditResult, type Cursor } from './edit'
+import { appendBars, barTicks, edit, type EditResult, type Cursor } from './edit'
 import { rollToBars, withoutOverlaps, type RollNote } from './keys'
 import { barCount, createTrack, keyRow, type Note, type Song, type Track } from './song'
 
@@ -50,7 +50,7 @@ export function importMidi(song: Song, cursor: Cursor, bytes: Uint8Array): MidiI
 
   const bars = Math.max(barCount(song), Math.ceil(Math.max(...parts.flatMap((p) => p.notes.map((n) => n.start + (p.drums ? GRID : n.length)))) / T))
   const result = edit(song, cursor, (draft) => {
-    for (const t of draft.tracks) while (t.bars.length < bars) t.bars.push({ beats: restsFor(T) })
+    appendBars(draft, bars - barCount(draft))
     for (const part of parts) {
       const track: Track = createTrack(part.drums ? 'drums' : 'keys', part.drums ? drumBars(part.notes, bars, T) : rollToBars(part.notes, bars, T), part.name)
       if (!part.drums) track.instrument = { kind: 'soundfont', program: part.program }

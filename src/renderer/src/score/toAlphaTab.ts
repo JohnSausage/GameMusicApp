@@ -1,4 +1,5 @@
 import * as alphaTab from '@coderline/alphatab'
+import { partStarts } from '../model/arrangement'
 import { strengthOf } from '../model/drums'
 import type { NoteValue, Song } from '../model/song'
 
@@ -54,6 +55,10 @@ export function songToAlphaTab(song: Song, settings: alphaTab.Settings, tabOnly 
 
   const beats: alphaTab.model.Beat[][][] = []
   const refs = new Map<alphaTab.model.Beat, BeatRef>()
+  // Part names over the bar where a part starts, by track and bar. A part played
+  // only in the section it is named after needs none: the section name says it.
+  const partLabels = new Map<string, string>()
+  for (const start of partStarts(song)) if (start.uses > 1 || !start.sameName) partLabels.set(`${start.track}:${start.bar}`, start.name)
 
   song.tracks.forEach((track, trackIndex) => {
     const atTrack = new Track()
@@ -99,6 +104,7 @@ export function songToAlphaTab(song: Song, settings: alphaTab.Settings, tabOnly 
         beat.isEmpty = false
         beat.duration = DURATIONS[source.value]
         beat.dots = source.dotted ? 1 : 0
+        if (beatIndex === 0) beat.text = partLabels.get(`${trackIndex}:${barIndex}`) ?? null
         for (const n of source.notes) {
           const note = new Note()
           if (drums) {

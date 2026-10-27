@@ -243,23 +243,38 @@ export function nextSectionName(song: Song): string {
 }
 
 /**
+ * Appends empty bars to every track of a song being edited. In an arranged song
+ * they start a new section when the last section plays a part that also plays
+ * elsewhere: that part stays as it is instead of being copied to make room.
+ */
+export function appendBars(draft: Song, count: number): void {
+  if (count <= 0) return
+  const first = barCount(draft)
+  const arrangement = draft.arrangement ?? []
+  const last = arrangement.at(-1)
+  const shared = last && Object.values(last.parts).some((id) => arrangement.some((s) => s !== last && Object.values(s.parts).includes(id)))
+  if (shared && !draft.sections.some((s) => s.bar === first)) draft.sections.push({ bar: first, name: nextSectionName(draft) })
+  for (const track of draft.tracks) for (let i = 0; i < count; i++) track.bars.push(emptyBar(draft))
+}
+
+/**
  * Appends empty bars to every track; the cursor moves to the first new bar.
  * With `sectionName`, the new bars start a named section.
  */
 export function addBars(song: Song, cursor: Cursor, count: number, sectionName?: string): EditResult {
   return edit(song, cursor, (draft, c) => {
     const first = barCount(draft)
-    for (const track of draft.tracks) for (let i = 0; i < count; i++) track.bars.push(emptyBar(draft))
     if (sectionName) draft.sections.push({ bar: first, name: sectionName })
+    appendBars(draft, count)
     return { ...c, bar: first, beat: 0 }
   })!
 }
 
-/** Inserts an empty bar before the cursor's bar, in every track. */
+/** Inserts an empty bar before the cursor's bar, in every track. At a section's first bar, the new bar starts that section. */
 export function insertBarBefore(song: Song, cursor: Cursor): EditResult {
   return edit(song, cursor, (draft, c) => {
     for (const track of draft.tracks) track.bars.splice(c.bar, 0, emptyBar(draft))
-    shiftSections(draft, c.bar, 1)
+    shiftSections(draft, c.bar + 1, 1)
     return { ...c, beat: 0 }
   })!
 }
@@ -279,9 +294,10 @@ export function deleteBar(song: Song, cursor: Cursor): EditResult | null {
   return edit(song, cursor, (draft, c) => {
     for (const track of draft.tracks) track.bars.splice(c.bar, 1)
     const remaining = barCount(draft)
+    // A section whose only bar is deleted goes; the next one keeps its start.
     draft.sections = draft.sections
       .map((s) => ({ ...s, bar: s.bar > c.bar ? s.bar - 1 : s.bar }))
-      .filter((s, i, all) => s.bar < remaining && all.findIndex((o) => o.bar === s.bar) === i)
+      .filter((s, i, all) => s.bar < remaining && all.findLastIndex((o) => o.bar === s.bar) === i)
     return { ...c, bar: Math.min(c.bar, remaining - 1), beat: 0 }
   })
 }
@@ -449,8 +465,7 @@ export function pasteBeats(song: Song, cursor: Cursor, beats: Beat[]): EditResul
     const strings = track.tuning.length
     const start = c.bar * T + beatStart(track.bars[c.bar], c.beat)
     const end = start + ticksOf(beats)
-    const extra = Math.ceil(end / T) - barCount(draft)
-    for (const t of draft.tracks) for (let i = 0; i < extra; i++) t.bars.push(emptyBar(draft))
+    appendBars(draft, Math.ceil(end / T) - barCount(draft))
 
     const spans: Span[] = []
     for (const span of trackSpans(track)) {
@@ -481,8 +496,7 @@ export function pasteBeats(song: Song, cursor: Cursor, beats: Beat[]): EditResul
 export function writeBars(song: Song, cursor: Cursor, trackIndex: number, startBar: number, bars: Bar[], take?: TakeInfo): EditResult | null {
   if (bars.length === 0 || bars.some((bar) => bar.beats.reduce((sum, b) => sum + beatTicks(b), 0) !== barTicks(song))) return null
   return edit(song, cursor, (draft) => {
-    const needed = startBar + bars.length - barCount(draft)
-    for (const track of draft.tracks) for (let i = 0; i < needed; i++) track.bars.push(emptyBar(draft))
+    appendBars(draft, startBar + bars.length - barCount(draft))
     bars.forEach((bar, i) => {
       draft.tracks[trackIndex].bars[startBar + i] = structuredClone(bar)
     })
@@ -521,8 +535,9 @@ export function removeTake(song: Song, cursor: Cursor, id: string): EditResult |
 /** Sets, renames (name) or removes (null) the section that starts at `bar`. */
 export function setSection(song: Song, cursor: Cursor, bar: number, name: string | null): EditResult {
   return edit(song, cursor, (draft) => {
+    const existing = draft.sections.find((s) => s.bar === bar)
     draft.sections = draft.sections.filter((s) => s.bar !== bar)
-    if (name !== null) draft.sections.push({ bar, name })
+    if (name !== null) draft.sections.push({ ...existing, bar, name })
     draft.sections.sort((a, b) => a.bar - b.bar)
   })!
 }

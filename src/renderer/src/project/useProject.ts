@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { arrange, syncArrangement } from '../model/arrangement'
 import { clampCursor, type Cursor, type EditResult } from '../model/edit'
 import type { ProjectAudio, Song } from '../model/song'
 import { lastLayout, rememberLayout, sameLayout, type Layout } from './layout'
@@ -65,7 +66,9 @@ export function useProject(): {
 } {
   const [state, setState] = useState<ProjectState | null>(null)
 
-  const openProject = useCallback((song: Song, path: string | null, saved: boolean, audio: ProjectAudio = new Map(), layout: Layout = lastLayout()) => {
+  const openProject = useCallback((opened: Song, path: string | null, saved: boolean, audio: ProjectAudio = new Map(), layout: Layout = lastLayout()) => {
+    // Songs from before the arrangement get one, from their sections.
+    const song = arrange(opened)
     setState({ song, cursor: START_CURSOR, path, audio, savedSong: saved ? song : null, layout, savedLayout: layout, past: [], future: [], lastMergeKey: null })
   }, [])
 
@@ -81,7 +84,9 @@ export function useProject(): {
   const applyTo = (s: ProjectState, result: EditResult, options: ApplyOptions): ProjectState => {
     const merge = options.mergeKey !== undefined && options.mergeKey === s.lastMergeKey && s.past.length > 0
     const past = merge ? s.past : [...s.past, { song: s.song, cursor: s.cursor }].slice(-MAX_UNDO)
-    return { ...s, song: result.song, cursor: result.cursor, past, future: [], lastMergeKey: options.mergeKey ?? null }
+    // Changed bars go back into their parts, and every repeat of a part follows.
+    const song = syncArrangement(s.song, result.song)
+    return { ...s, song, cursor: result.cursor, past, future: [], lastMergeKey: options.mergeKey ?? null }
   }
 
   const apply = (result: EditResult | null, options: ApplyOptions = {}): boolean => {

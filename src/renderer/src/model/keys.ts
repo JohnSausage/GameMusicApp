@@ -2,7 +2,7 @@
 // length, converted to and from the beat model. A note longer than a beat is
 // written as a note plus held (tied) notes, so chords, sustained notes under a
 // melody and notes across bar lines all fit the one-voice-per-track model.
-import { barTicks, beatTicks, edit, restsFor, type Cursor, type EditResult } from './edit'
+import { appendBars, barTicks, beatTicks, edit, restsFor, type Cursor, type EditResult } from './edit'
 import { barCount, keyRow, type Bar, type Note, type Song } from './song'
 
 export interface RollNote {
@@ -77,8 +77,7 @@ export function writeRoll(song: Song, cursor: Cursor, track: number, from: numbe
   if (to <= from) return null
   return edit(song, cursor, (draft) => {
     const T = barTicks(draft)
-    const extra = to - barCount(draft)
-    for (const t of draft.tracks) for (let i = 0; i < extra; i++) t.bars.push({ beats: restsFor(T) })
+    appendBars(draft, to - barCount(draft))
     const bars = rollToBars(notes, to - from, T)
     bars.forEach((bar, i) => (draft.tracks[track].bars[from + i] = bar))
   })
