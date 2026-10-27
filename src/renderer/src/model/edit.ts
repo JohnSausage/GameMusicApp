@@ -5,6 +5,7 @@ import {
   barCount,
   createTrack,
   isBassTrack,
+  keyRow,
   MASTER_DEFAULTS,
   MAX_FRET,
   NOTE_VALUES,
@@ -571,7 +572,7 @@ export function addTrack(song: Song, cursor: Cursor, kind: TrackKind): EditResul
   return edit(song, cursor, (draft, c) => {
     const bars = Array.from({ length: Math.max(1, barCount(draft)) }, () => emptyBar(draft))
     draft.tracks.push(createTrack(kind, bars))
-    return { ...c, track: draft.tracks.length - 1, beat: 0, string: 1 }
+    return { ...c, track: draft.tracks.length - 1, beat: 0, string: kind === 'keys' ? keyRow(60) : 1 }
   })!
 }
 
@@ -617,7 +618,7 @@ export function makeRetro(song: Song, cursor: Cursor): EditResult {
         track.instrument = { kind: 'synthkit', pieces: eightBitKit() }
         continue
       }
-      const name = isBassTrack(track) ? 'Triangle bass' : ['8-bit lead', '8-bit thin lead'][leads++] ?? '8-bit square'
+      const name = isBassTrack(track) ? 'Triangle bass' : track.kind === 'keys' ? 'PWM lead' : (['8-bit lead', '8-bit thin lead'][leads++] ?? '8-bit square')
       track.instrument = { kind: 'synth', patch: factoryPreset(name) }
     }
   })!
@@ -687,7 +688,17 @@ export function switchTrack(song: Song, c: Cursor, track: number): Cursor {
     if (start <= time) beat = i
     start += beatTicks(bar.beats[i])
   }
-  return clampCursor(song, { track, bar: c.bar, beat, string: c.string })
+  return clampCursor(song, { track, bar: c.bar, beat, string: startRow(song, track, c.bar, beat, song.tracks[track].kind === song.tracks[c.track].kind ? c.string : null) })
+}
+
+/**
+ * The row ("string") for a cursor arriving on a beat: `keep` if given, else on
+ * a keys track the beat's first note or middle C, else the top string.
+ */
+export function startRow(song: Song, track: number, bar: number, beat: number, keep: number | null): number {
+  if (keep !== null) return keep
+  if (song.tracks[track].kind !== 'keys') return 1
+  return song.tracks[track].bars[bar]?.beats[beat]?.notes[0]?.string ?? keyRow(60)
 }
 
 export function moveBar(song: Song, c: Cursor, delta: 1 | -1): Cursor {

@@ -112,6 +112,21 @@ export class AudioEngine {
     return songPosition(p.from, this.ctx.currentTime - p.startTime - (this.ctx.outputLatency || 0), p.loop)
   }
 
+  /**
+   * The song position that was audible at a performance.now() time, e.g. a MIDI
+   * key press, so recorded notes land where the player heard the music. Null when not playing.
+   */
+  positionAt(performanceMs: number): number | null {
+    const p = this.playback
+    if (!p) return null
+    const stamp = this.ctx.getOutputTimestamp()
+    const heard =
+      stamp.contextTime !== undefined && stamp.performanceTime !== undefined && stamp.performanceTime > 0
+        ? stamp.contextTime + (performanceMs - stamp.performanceTime) / 1000
+        : this.ctx.currentTime - (this.ctx.outputLatency || 0) - (performance.now() - performanceMs) / 1000
+    return songPosition(p.from, heard - p.startTime, p.loop)
+  }
+
   /** Plays from song time `from`, optionally looping a range and with the metronome. */
   async play(song: Song, from = 0, options: PlayOptions = {}): Promise<void> {
     this.stop()

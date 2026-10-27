@@ -4,14 +4,24 @@ export interface MidiNoteMessage {
   velocity: number
   /** Milliseconds between the MIDI event's timestamp and our handler running. */
   handlerDelayMs: number
+  /** When the key was pressed or released, on the performance.now() clock. */
+  timeStamp: number
   inputName: string
 }
 
 export type MidiListener = (message: MidiNoteMessage) => void
 
-/** Listens to note on/off messages from all connected MIDI inputs (hot-plugging included). */
+/**
+ * Listens to note on/off messages from all connected MIDI inputs (hot-plugging
+ * included). Several MidiKeyboard objects can listen at the same time.
+ */
 export class MidiKeyboard {
   private access: MIDIAccess | null = null
+  private readonly attached = new WeakSet<MIDIInput>()
+  private readonly listener = (event: Event): void => {
+    const input = event.target as MIDIInput
+    this.handle(event as MIDIMessageEvent, input.name ?? 'Unknown device')
+  }
   onNote: MidiListener | null = null
   onDevicesChanged: ((names: string[]) => void) | null = null
 
@@ -25,14 +35,25 @@ export class MidiKeyboard {
     return this.inputNames()
   }
 
+  /** Names of the connected keyboards (Linux's "Midi Through" loopback port isn't one). */
   inputNames(): string[] {
-    return this.access ? [...this.access.inputs.values()].map((i) => i.name ?? 'Unknown device') : []
+    return this.access ? [...this.access.inputs.values()].map((i) => i.name ?? 'Unknown device').filter((name) => !/^midi through/i.test(name)) : []
   }
 
   private attach(): void {
     for (const input of this.access?.inputs.values() ?? []) {
-      input.onmidimessage = (event) => this.handle(event, input.name ?? 'Unknown device')
+      if (this.attached.has(input)) continue
+      input.addEventListener('midimessage', this.listener)
+      this.attached.add(input)
     }
+  }
+
+  /** Stops listening. */
+  dispose(): void {
+    for (const input of this.access?.inputs.values() ?? []) input.removeEventListener('midimessage', this.listener)
+    if (this.access) this.access.onstatechange = null
+    this.onNote = null
+    this.onDevicesChanged = null
   }
 
   private handle(event: MIDIMessageEvent, inputName: string): void {
@@ -40,10 +61,11 @@ export class MidiKeyboard {
     if (!data || data.length < 3) return
     const status = data[0] & 0xf0
     const handlerDelayMs = performance.now() - event.timeStamp
+    const timeStamp = event.timeStamp
     if (status === 0x90 && data[2] > 0) {
-      this.onNote?.({ type: 'on', pitch: data[1], velocity: data[2], handlerDelayMs, inputName })
+      this.onNote?.({ type: 'on', pitch: data[1], velocity: data[2], handlerDelayMs, timeStamp, inputName })
     } else if (status === 0x80 || (status === 0x90 && data[2] === 0)) {
-      this.onNote?.({ type: 'off', pitch: data[1], velocity: 0, handlerDelayMs, inputName })
+      this.onNote?.({ type: 'off', pitch: data[1], velocity: 0, handlerDelayMs, timeStamp, inputName })
     }
   }
 }

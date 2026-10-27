@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { GetEngine } from '../App'
+import { secondsPerClick } from '../audio/analysis'
 import { songToMidi } from '../audio/midiExport'
 import { ExportIcon, LoopIcon, MetronomeIcon, PencilIcon, PlayIcon, RecordIcon, StopIcon } from '../components/icons'
 import { Menu } from '../components/Menu'
 import {
   addBars,
+  barTicks,
   addTrack,
   clearBar,
   clearBeat,
@@ -30,6 +32,7 @@ import {
   sectionAt,
   sectionRangeOf,
   sectionRanges,
+  startRow,
   selectionBeats,
   selectionBetween,
   selectTrack,
@@ -53,6 +56,9 @@ import {
   barCount,
   defaultInstrument,
   DRUM_PIECES,
+  isFretted,
+  KEYS_PROGRAMS,
+  rowPitch,
   MASTER_DEFAULTS,
   MAX_FRET,
   NOTE_VALUES,
@@ -63,9 +69,13 @@ import {
   type Track,
   trackKind
 } from '../model/song'
+import { MidiKeyboard, type MidiNoteMessage } from '../midi/midiInput'
+import { quantizeNotes, writeRoll, type TimedNote } from '../model/keys'
+import { importMidi } from '../model/midiImport'
+import { stepAdvance, stepEnter } from '../model/stepEntry'
 import { CRUSH_RATES, eightBitKit, FACTORY_PRESETS, formatSampleRate } from '../model/synth'
 import { legatoTarget, toggleLegato, toggleTie, type Legato } from '../model/techniques'
-import { barSeconds, buildTimeline } from '../model/timing'
+import { barSeconds, buildTimeline, secondsPerQuarter } from '../model/timing'
 import { saveFile } from '../platform'
 import { readPref, writePref } from '../prefs'
 import type { HeaderSlots } from '../pages/EditorPage'
@@ -75,6 +85,7 @@ import { noteName } from '../transcription/notes'
 import { DrumGrid } from './DrumGrid'
 import { ExportDialog } from './ExportDialog'
 import { InstrumentEditor } from './InstrumentEditor'
+import { PianoRoll } from './PianoRoll'
 import { TakeDialog } from './TakeDialog'
 import { usePlayback } from './usePlayback'
 
@@ -93,6 +104,23 @@ const TWO_DIGIT_MS = 1000
 const cursorKey = (c: Cursor): string => `${c.track}/${c.bar}/${c.beat}/${c.string}`
 
 const GRID_COLLAPSED_KEY = 'drumGridCollapsed'
+const ROLL_COLLAPSED_KEY = 'pianoRollCollapsed'
+const STEP_INPUT_KEY = 'midiStepInput'
+/** Empty bars added while recording, so you can play on past the end of the song. */
+const RECORD_EXTRA_BARS = 8
+
+/** A live MIDI recording into a keys track: notes in seconds from the start bar. */
+interface MidiRecording {
+  track: number
+  startBar: number
+  startSeconds: number
+  gridTicks: number
+  notes: TimedNote[]
+  /** Keys held down: when they were pressed, and how hard. */
+  open: Map<number, { start: number; velocity: number }>
+  /** Playback has started (after the count-in). */
+  started: boolean
+}
 const ZOOM_KEY = 'scoreZoom'
 /** Zoom levels of the score (VIEW-10). */
 const ZOOM_STEPS = [0.5, 0.6, 0.75, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2]
@@ -119,14 +147,21 @@ interface Props {
 }
 
 function soundValue(track: Track): string {
-  if (track.instrument.kind === 'soundfont') return 'soundfont'
+  if (track.instrument.kind === 'soundfont') return track.kind === 'keys' ? `gm:${track.instrument.program}` : 'soundfont'
   if (track.instrument.kind === 'synthkit') return 'synthkit'
   return 'synth:current'
 }
 
-const SOUNDFONT_LABELS = { guitar: 'Guitar (SoundFont)', bass: 'Bass (SoundFont)', drums: 'Drum kit (SoundFont)' }
+const SOUNDFONT_LABELS = { guitar: 'Guitar (SoundFont)', bass: 'Bass (SoundFont)', drums: 'Drum kit (SoundFont)', keys: 'Piano (SoundFont)' }
 
-function TrackList({ project, onSelect, onEditSound }: { project: Project; onSelect: (index: number) => void; onEditSound: (index: number) => void }): React.JSX.Element {
+interface TrackListProps {
+  project: Project
+  onSelect: (index: number) => void
+  onEditSound: (index: number) => void
+  onMessage: (message: string) => void
+}
+
+function TrackList({ project, onSelect, onEditSound, onMessage }: TrackListProps): React.JSX.Element {
   const { song, cursor } = project
   const retro = isRetro(song)
   const master = { ...MASTER_DEFAULTS, ...song.master }
@@ -137,11 +172,30 @@ function TrackList({ project, onSelect, onEditSound }: { project: Project; onSel
     const instrument: Instrument =
       value === 'soundfont'
         ? defaultInstrument(trackKind(track))
-        : value === 'synthkit'
+        : value.startsWith('gm:')
+          ? { kind: 'soundfont', program: Number(value.slice(3)) }
+          : value === 'synthkit'
           ? { kind: 'synthkit', pieces: eightBitKit() }
           : { kind: 'synth', patch: { ...FACTORY_PRESETS[Number(value.slice(7))] } }
     project.apply(updateTrack(song, cursor, index, { instrument }))
   }
+  /** Adds the tracks of a MIDI file (EXP-08). */
+  const importMidiFile = async (file: File): Promise<void> => {
+    try {
+      const imported = importMidi(song, cursor, new Uint8Array(await file.arrayBuffer()))
+      if (!imported) {
+        onMessage(`${file.name} has no notes to import.`)
+        return
+      }
+      project.apply(imported.result)
+      const tempo = imported.fileTempo && Math.round(imported.fileTempo) !== song.tempo ? ` The file is at ${Math.round(imported.fileTempo)} BPM; the song stays at ${song.tempo} BPM (change it at the top).` : ''
+      const skipped = imported.skipped > 0 ? ` ${imported.skipped} notes outside the piano or the drum kit were left out.` : ''
+      onMessage(`Imported ${imported.tracks} ${imported.tracks === 1 ? 'track' : 'tracks'} (${imported.notes} notes) from ${file.name}.${tempo}${skipped}`)
+    } catch (error) {
+      onMessage(`${file.name} could not be read as a MIDI file: ${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+
   const remove = (index: number, track: Track): void => {
     if (song.tracks.length <= 1) return
     if (window.confirm(`Delete the track "${track.name}"?`)) project.apply(deleteTrack(song, cursor, index))
@@ -201,7 +255,18 @@ function TrackList({ project, onSelect, onEditSound }: { project: Project; onSel
           </div>
           <div className="track-card-row">
             <select value={soundValue(track)} aria-label="Sound" onChange={(e) => setSound(index, track, e.target.value)}>
-              <option value="soundfont">{SOUNDFONT_LABELS[trackKind(track)]}</option>
+              {track.kind === 'keys' ? (
+                <optgroup label="SoundFont">
+                  {KEYS_PROGRAMS.map((p) => (
+                    <option key={p.program} value={`gm:${p.program}`}>{p.name}</option>
+                  ))}
+                  {track.instrument.kind === 'soundfont' && !KEYS_PROGRAMS.some((p) => track.instrument.kind === 'soundfont' && p.program === track.instrument.program) && (
+                    <option value={`gm:${track.instrument.program}`}>General MIDI sound {track.instrument.program + 1}</option>
+                  )}
+                </optgroup>
+              ) : (
+                <option value="soundfont">{SOUNDFONT_LABELS[trackKind(track)]}</option>
+              )}
               {track.kind === 'drums' ? (
                 <option value="synthkit">8-bit drum kit (synth)</option>
               ) : (
@@ -246,6 +311,21 @@ function TrackList({ project, onSelect, onEditSound }: { project: Project; onSel
         <button onClick={() => project.apply(addTrack(song, cursor, 'guitar'))}>+ Guitar</button>
         <button onClick={() => project.apply(addTrack(song, cursor, 'bass'))}>+ Bass</button>
         <button onClick={() => project.apply(addTrack(song, cursor, 'drums'))}>+ Drums</button>
+        <button title="A track for keyboard parts: synth leads, pads, piano; edited in a piano roll or played in with a MIDI keyboard" onClick={() => project.apply(addTrack(song, cursor, 'keys'))}>
+          + Keys
+        </button>
+        <label className="file-button" title="Add the tracks of a MIDI file (.mid): drums become a drum track, everything else keys tracks">
+          Import MIDI…
+          <input
+            type="file"
+            accept=".mid,.midi,audio/midi"
+            onChange={(e) => {
+              const file = e.target.files?.[0]
+              e.target.value = ''
+              if (file) void importMidiFile(file)
+            }}
+          />
+        </label>
       </div>
 
       <div className="track-card master-card">
@@ -294,6 +374,15 @@ export function TabEditor({ project, getEngine, headerSlots, onShowShortcuts }: 
   const [gridCollapsed, setGridCollapsed] = useState(() => readPref(GRID_COLLAPSED_KEY, false))
   /** The drum track the grid showed last, so it stays when the cursor moves to another track. */
   const [gridTrackId, setGridTrackId] = useState<string | null>(null)
+  const [rollCollapsed, setRollCollapsed] = useState(() => readPref(ROLL_COLLAPSED_KEY, false))
+  /** MIDI keyboards found (null: MIDI not available or not connected yet). */
+  const [midiDevices, setMidiDevices] = useState<string[] | null>(null)
+  const [stepInput, setStepInput] = useState(() => readPref(STEP_INPUT_KEY, false))
+  const [recording, setRecording] = useState(false)
+  const recordingRef = useRef<MidiRecording | null>(null)
+  /** Keys of the chord being step-entered, and its undo key. */
+  const stepChord = useRef<{ held: Set<number>; id: string } | null>(null)
+  const onMidiNoteRef = useRef<(message: MidiNoteMessage) => void>(() => {})
   const pendingDigit = useRef<{ key: string; digit: number; at: number } | null>(null)
   const editorRef = useRef<HTMLDivElement>(null)
   const playback = usePlayback(getEngine)
@@ -302,6 +391,8 @@ export function TabEditor({ project, getEngine, headerSlots, onShowShortcuts }: 
 
   const track = song.tracks[cursor.track]
   const drums = track.kind === 'drums'
+  const keys = track.kind === 'keys'
+  const fretted = isFretted(track)
   const drumTracks = song.tracks.flatMap((t, i) => (t.kind === 'drums' ? [i] : []))
   // The drum grid shows the drum track at the cursor, else the one shown last, else the first one.
   const gridTrack = drums ? cursor.track : (drumTracks.find((i) => song.tracks[i].id === gridTrackId) ?? drumTracks[0] ?? null)
@@ -440,6 +531,114 @@ export function TabEditor({ project, getEngine, headerSlots, onShowShortcuts }: 
     playback.setMetronome(!metronome)
   }
 
+  // ---------------------------------------------------------------- MIDI keyboard
+
+  // Connects to MIDI keyboards (also ones plugged in later); notes go to onMidiNote below.
+  useEffect(() => {
+    const keyboard = new MidiKeyboard()
+    keyboard.onNote = (message) => onMidiNoteRef.current(message)
+    keyboard.onDevicesChanged = setMidiDevices
+    keyboard.connect().then(setMidiDevices, () => setMidiDevices(null))
+    return () => keyboard.dispose()
+  }, [])
+
+  const modalOpen = soundEditor !== null || takeDialog || exportDialog
+
+  /**
+   * A key on the MIDI keyboard: it sounds with the track's instrument, and is
+   * recorded (live recording) or entered at the cursor (step input).
+   */
+  const onMidiNote = (m: MidiNoteMessage): void => {
+    if (modalOpen) return
+    const rec = recordingRef.current
+    const soundOf = song.tracks[rec ? rec.track : cursor.track]
+    const drumSound = soundOf.kind === 'drums'
+    void getEngine().then((engine) =>
+      m.type === 'on' ? engine.liveNoteOn(soundOf.instrument, m.pitch, m.velocity, drumSound) : engine.liveNoteOff(soundOf.instrument, m.pitch, drumSound)
+    )
+
+    if (rec) {
+      const heard = playback.positionAt(m.timeStamp)
+      if (heard === null) return
+      const at = Math.max(0, heard - rec.startSeconds)
+      if (m.type === 'on') rec.open.set(m.pitch, { start: at, velocity: m.velocity })
+      else {
+        const pressed = rec.open.get(m.pitch)
+        if (pressed) rec.notes.push({ pitch: m.pitch, start: pressed.start, end: at, velocity: pressed.velocity })
+        rec.open.delete(m.pitch)
+      }
+      return
+    }
+
+    if (!stepInput) return
+    if (m.type === 'on') {
+      const chord = (stepChord.current ??= { held: new Set(), id: `step:${m.timeStamp}` })
+      chord.held.add(m.pitch)
+      project.update((s, c) => stepEnter(s, c, m.pitch, m.velocity, entryDuration), { mergeKey: chord.id })
+    } else {
+      const chord = stepChord.current
+      if (!chord?.held.delete(m.pitch) || chord.held.size > 0) return
+      stepChord.current = null
+      project.update((s, c) => stepAdvance(s, c), { mergeKey: chord.id })
+    }
+  }
+  onMidiNoteRef.current = onMidiNote
+
+  const toggleStepInput = (): void => {
+    const on = !stepInput
+    setStepInput(on)
+    writePref(STEP_INPUT_KEY, on)
+    setMessage(on ? (midiDevices?.length ? 'Step input on: keys you play are entered at the cursor with the chosen length.' : 'Step input is on, but no MIDI keyboard is connected yet.') : 'Step input off.')
+    focus()
+  }
+
+  /** Records the MIDI keyboard into the keys track at the cursor, from the cursor's bar, after a one-bar count-in. */
+  const startRecording = async (gridTicks: number): Promise<void> => {
+    stop()
+    const engine = await getEngine()
+    const bar = barSeconds(song)
+    // The recorded track is muted while recording, and there is room to play on past the end of the song.
+    const backing = addBars(updateTrack(song, cursor, cursor.track, { mute: true, solo: false }).song, cursor, RECORD_EXTRA_BARS).song
+    const countIn = engine.ctx.currentTime + 0.1
+    const clicks = song.timeSignature[0]
+    engine.scheduleClicks(countIn, secondsPerClick(song.tempo, song.timeSignature), clicks, clicks)
+    const rec: MidiRecording = { track: cursor.track, startBar: cursor.bar, startSeconds: cursor.bar * bar, gridTicks, notes: [], open: new Map(), started: false }
+    recordingRef.current = rec
+    setRecording(true)
+    setMessage(
+      midiDevices?.length
+        ? 'Count-in… then play. Space or "Stop recording" ends the recording.'
+        : 'Recording, but no MIDI keyboard is connected; plug one in (it is found automatically).'
+    )
+    await playback.play(backing, rec.startSeconds, { startAt: countIn + bar, metronome: true })
+    rec.started = true
+  }
+
+  /** Ends a recording and writes the notes, snapped to the grid, into the track (one undo step). */
+  const stopRecording = (): void => {
+    const rec = recordingRef.current
+    if (!rec) return
+    const end = Math.max(0, (playback.positionAt(performance.now()) ?? rec.startSeconds) - rec.startSeconds)
+    recordingRef.current = null
+    setRecording(false)
+    stop()
+    for (const [pitch, pressed] of rec.open) rec.notes.push({ pitch, start: pressed.start, end: Math.max(pressed.start, end), velocity: pressed.velocity })
+    const notes = quantizeNotes(rec.notes, secondsPerQuarter(song) / 960, rec.gridTicks)
+    if (notes.length === 0) {
+      setMessage('Nothing was recorded.')
+      return
+    }
+    const bars = Math.max(1, Math.ceil(Math.max(...notes.map((n) => n.start + n.length)) / barTicks(song)))
+    project.update((s, c) => writeRoll(s, c, rec.track, rec.startBar, rec.startBar + bars, notes))
+    setMessage(`Recorded ${notes.length} ${notes.length === 1 ? 'note' : 'notes'} into ${barsLabel({ start: rec.startBar, end: rec.startBar + bars })}. Ctrl+Z undoes it.`)
+    focus()
+  }
+
+  // The recording ends when playback does (e.g. stopped another way).
+  useEffect(() => {
+    if (!playing && recordingRef.current?.started) stopRecording()
+  }, [playing])
+
   /** Moves the cursor; with `extend` (Shift) the selection grows from where it started. */
   const moveCursor = (next: Cursor, extend = false): void => {
     if (extend && next.track === cursor.track) setAnchor((a) => (a && a.track === cursor.track ? a : { track: cursor.track, pos: { bar: cursor.bar, beat: cursor.beat } }))
@@ -547,6 +746,7 @@ export function TabEditor({ project, getEngine, headerSlots, onShowShortcuts }: 
     if (ctrl && (key === '=' || key === '+')) changeZoom((z) => stepZoom(z, 1))
     else if (ctrl && key === '-') changeZoom((z) => stepZoom(z, -1))
     else if (ctrl && key === '0') changeZoom(() => 1)
+    else if (keys && /^[0-9]$/.test(key) && !ctrl && !event.altKey) setMessage('Keys tracks: add notes in the piano roll, or play them in with a MIDI keyboard (Step input).')
     else if (drums && /^[0-9xX]$/.test(key) && !ctrl && !event.altKey) {
       setAnchor(null)
       enterHit()
@@ -570,10 +770,11 @@ export function TabEditor({ project, getEngine, headerSlots, onShowShortcuts }: 
     else if (key === '-') stepLength('shorter')
     else if (key === '.') toggleDots()
     else if (key.toLowerCase() === 'r' && !ctrl) selection ? removeSelection(false) : edit(clearBeat(song, cursor))
+    else if (key === ' ' && recording) stopRecording()
     else if (key === ' ') playing ? stop() : playFromCursor()
     else if (key.toLowerCase() === 't' && !ctrl && !drums) tie()
-    else if (key.toLowerCase() === 'h' && !ctrl && !drums) legato('hammer')
-    else if (key.toLowerCase() === 's' && !ctrl && !drums) legato('slide')
+    else if (key.toLowerCase() === 'h' && !ctrl && fretted) legato('hammer')
+    else if (key.toLowerCase() === 's' && !ctrl && fretted) legato('slide')
     else if (key.toLowerCase() === 'l' && !ctrl) toggleLoop()
     else if (key.toLowerCase() === 'm' && !ctrl) toggleMetronome()
     else if (key === '?') onShowShortcuts?.()
@@ -594,7 +795,7 @@ export function TabEditor({ project, getEngine, headerSlots, onShowShortcuts }: 
         track: target.trackIndex,
         bar: target.barIndex,
         beat: target.beatIndex,
-        string: target.string ?? (sameTrack ? cursor.string : 1)
+        string: startRow(song, target.trackIndex, target.barIndex, target.beatIndex, target.string ?? (sameTrack ? cursor.string : null))
       },
       extend
     )
@@ -631,8 +832,10 @@ export function TabEditor({ project, getEngine, headerSlots, onShowShortcuts }: 
     const open = noteName(track.tuning[cursor.string - 1])
     const what = drums
       ? noteOnString ? 'hit' : beat.notes.length === 0 ? 'rest' : 'no hit'
+      : keys
+        ? noteOnString ? `note${noteOnString.tie ? ' · held from the note before' : ''}` : beat.notes.length === 0 ? 'rest' : 'not on this key'
       : noteOnString ? `fret ${noteOnString.fret} (${noteName(notePitch(track, noteOnString))})${techniqueText()}` : beat.notes.length === 0 ? 'rest' : 'empty string'
-    const spot = drums ? DRUM_PIECES[cursor.string - 1]?.name : `string ${cursor.string} (${open})`
+    const spot = drums ? DRUM_PIECES[cursor.string - 1]?.name : keys ? noteName(rowPitch(cursor.string)) : `string ${cursor.string} (${open})`
     const where = `${track.name} · bar ${cursor.bar + 1} of ${barCount(song)} · beat ${cursor.beat + 1} · ${spot} · ${what}`
     if (!selection) return where
     const bars = selection.start.bar === selection.end.bar ? `bar ${selection.start.bar + 1}` : `bars ${selection.start.bar + 1}–${selection.end.bar + 1}`
@@ -648,6 +851,7 @@ export function TabEditor({ project, getEngine, headerSlots, onShowShortcuts }: 
           stop()
           setSoundEditor(index)
         }}
+        onMessage={setMessage}
       />
 
       {headerSlots?.transport &&
@@ -702,8 +906,8 @@ export function TabEditor({ project, getEngine, headerSlots, onShowShortcuts }: 
           <>
             <button
               className="record-button"
-              title={song.tracks.some((t) => t.kind !== 'drums') ? 'Record or import a take and transcribe it into a guitar or bass track' : 'Add a guitar or bass track first'}
-              disabled={!song.tracks.some((t) => t.kind !== 'drums')}
+              title={song.tracks.some(isFretted) ? 'Record or import a take and transcribe it into a guitar or bass track' : 'Add a guitar or bass track first'}
+              disabled={!song.tracks.some(isFretted)}
               onClick={() => {
                 stop()
                 setTakeDialog(true)
@@ -767,24 +971,36 @@ export function TabEditor({ project, getEngine, headerSlots, onShowShortcuts }: 
               >
                 Hold
               </button>
-              <button
-                className={noteOnString?.hammer ? 'active' : ''}
-                aria-pressed={!!noteOnString?.hammer}
-                title="Hammer-on / pull-off (H) from this note into the next note on this string"
-                onClick={() => legato('hammer')}
-              >
-                H/P
-              </button>
-              <button
-                className={noteOnString?.slide ? 'active' : ''}
-                aria-pressed={!!noteOnString?.slide}
-                title="Slide (S) from this note into the next note on this string"
-                onClick={() => legato('slide')}
-              >
-                Slide
-              </button>
+              {fretted && (
+                <>
+                  <button
+                    className={noteOnString?.hammer ? 'active' : ''}
+                    aria-pressed={!!noteOnString?.hammer}
+                    title="Hammer-on / pull-off (H) from this note into the next note on this string"
+                    onClick={() => legato('hammer')}
+                  >
+                    H/P
+                  </button>
+                  <button
+                    className={noteOnString?.slide ? 'active' : ''}
+                    aria-pressed={!!noteOnString?.slide}
+                    title="Slide (S) from this note into the next note on this string"
+                    onClick={() => legato('slide')}
+                  >
+                    Slide
+                  </button>
+                </>
+              )}
             </div>
           )}
+          <button
+            className={stepInput ? 'active' : ''}
+            aria-pressed={stepInput}
+            title={`Step input: keys played on the MIDI keyboard are entered at the cursor with the chosen length (chords: press keys together). ${midiDevices?.length ? `Keyboard: ${midiDevices.join(', ')}` : 'No MIDI keyboard connected.'}`}
+            onClick={toggleStepInput}
+          >
+            Step input
+          </button>
           <span className="divider" />
           <Menu
             label="Edit"
@@ -842,7 +1058,25 @@ export function TabEditor({ project, getEngine, headerSlots, onShowShortcuts }: 
           }
         />
 
-        {gridTrack !== null && (
+        {keys ? (
+          <PianoRoll
+            project={project}
+            trackIndex={cursor.track}
+            collapsed={rollCollapsed}
+            onToggleCollapsed={() =>
+              setRollCollapsed((collapsed) => {
+                writePref(ROLL_COLLAPSED_KEY, !collapsed)
+                return !collapsed
+              })
+            }
+            positionRef={positionRef}
+            onEdit={edit}
+            onAudition={(pitch, velocity) => void audition(pitch, velocity)}
+            recording={recording}
+            onRecord={(gridTicks) => void startRecording(gridTicks)}
+            onStopRecording={stopRecording}
+          />
+        ) : gridTrack !== null && (
           <DrumGrid
             project={project}
             trackIndex={gridTrack}
@@ -859,6 +1093,11 @@ export function TabEditor({ project, getEngine, headerSlots, onShowShortcuts }: 
           <span className="cursor-info">{describeCursor()}</span>
           {message && <span className="status">{message}</span>}
           <span className="spacer" />
+          {midiDevices && midiDevices.length > 0 && (
+            <span className="muted small" title="Connected MIDI keyboards">
+              MIDI: {midiDevices.join(', ')}
+            </span>
+          )}
           <div className="segmented" role="group" aria-label="View">
             <button className={staveMode === 'notation+tab' ? 'active' : ''} title="Notation above the tab" onClick={() => setStaveMode('notation+tab')}>
               Notation + tab

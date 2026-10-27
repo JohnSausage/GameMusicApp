@@ -3,7 +3,7 @@ import type { GetEngine } from '../App'
 import { detectFirstOnset, secondsPerClick } from '../audio/analysis'
 import { importAudioFile, listInputDevices, MicRecorder, samplesToBuffer } from '../audio/recorder'
 import { barsHaveNotes, removeTake, writeBars } from '../model/edit'
-import { newId, takeSeconds, type Song, type TakeInfo } from '../model/song'
+import { isFretted, newId, takeSeconds, type Song, type TakeInfo } from '../model/song'
 import type { Project } from '../project/useProject'
 import { ScoreView } from '../score/ScoreView'
 import { extractNotes, runBasicPitch, type ModelOutput, type Sensitivity } from '../transcription/basicPitch'
@@ -55,7 +55,7 @@ export function TakeDialog({ project, getEngine, onClose }: Props): React.JSX.El
   const [stepsPerQuarter, setStepsPerQuarter] = useState(4)
   const [preferredFret, setPreferredFret] = useState(3)
   // Transcriptions go into fretted tracks only, not drums.
-  const [targetTrack, setTargetTrack] = useState(() => (song.tracks[cursor.track].kind === 'drums' ? Math.max(0, song.tracks.findIndex((t) => t.kind !== 'drums')) : cursor.track))
+  const [targetTrack, setTargetTrack] = useState(() => (isFretted(song.tracks[cursor.track]) ? cursor.track : Math.max(0, song.tracks.findIndex(isFretted))))
   const [startBar, setStartBar] = useState(cursor.bar + 1)
   const models = useRef(new Map<string, ModelOutput>())
 
@@ -485,7 +485,7 @@ export function TakeDialog({ project, getEngine, onClose }: Props): React.JSX.El
             Insert into
             <select value={targetTrack} onChange={(e) => setTargetTrack(Number(e.target.value))}>
               {song.tracks.map((t, i) =>
-                t.kind === 'drums' ? null : (
+                !isFretted(t) ? null : (
                   <option key={t.id} value={i}>{t.name}</option>
                 )
               )}

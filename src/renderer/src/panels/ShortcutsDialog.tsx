@@ -65,6 +65,15 @@ const GROUPS: { title: string; rows: Row[] }[] = [
     ]
   },
   {
+    title: 'Keys and MIDI keyboard',
+    rows: [
+      [['Drag'], 'Piano roll: draw a note'],
+      [['Click'], 'Piano roll: remove a note'],
+      [['Space'], 'While recording MIDI: stop the recording'],
+      [['MIDI keys'], 'With Step input on: enter notes at the cursor (chords: together)']
+    ]
+  },
+  {
     title: 'Drum grid',
     rows: [
       [['Click'], 'Add or remove a hit'],

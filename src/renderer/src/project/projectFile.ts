@@ -126,7 +126,7 @@ function checkSong(value: unknown): Song {
   const bars = song.tracks[0].bars?.length
   song.tracks.forEach((track, t) => {
     if (typeof track.name !== 'string' || !Array.isArray(track.tuning) || !track.tuning.every(isInt)) fail(`track ${t + 1} is invalid`)
-    if (track.kind !== undefined && track.kind !== 'drums') fail(`track ${t + 1} has an unknown kind`)
+    if (track.kind !== undefined && track.kind !== 'drums' && track.kind !== 'keys') fail(`track ${t + 1} has an unknown kind`)
     if ((track.mute !== undefined && typeof track.mute !== 'boolean') || (track.solo !== undefined && typeof track.solo !== 'boolean')) {
       fail(`track ${t + 1} has invalid mute/solo settings`)
     }

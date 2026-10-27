@@ -62,7 +62,7 @@ export function toggleTie(song: Song, cursor: Cursor, duration?: Duration): Edit
  * note on its string on or off. That note must be in the very next beat, on another fret.
  */
 export function toggleLegato(song: Song, cursor: Cursor, kind: Legato): EditResult | null {
-  if (song.tracks[cursor.track].kind === 'drums') return null
+  if (song.tracks[cursor.track].kind !== undefined) return null
   const note = noteAt(song, cursor)
   if (!note) return null
   if (note[kind]) {
