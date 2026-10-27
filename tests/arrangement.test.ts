@@ -3,15 +3,19 @@ import {
   addSection,
   arrange,
   copyCellPart,
+  deletePart,
   deleteUnusedParts,
   duplicateSection,
   moveSection,
+  partColors,
   partStarts,
+  placeSection,
   removeSection,
   renamePart,
   renameSection,
   resizeSection,
   setCellPart,
+  setPartColor,
   syncArrangement,
   unusedParts,
   writeOut
@@ -295,6 +299,59 @@ describe('arrangement edits', () => {
 
     const one = apply(cleaned, removeSection(cleaned, at(0), sectionId(cleaned, 1)))
     expect(removeSection(one, at(0), sectionId(one, 0))).toBeNull()
+  })
+})
+
+describe('dragging sections and parts', () => {
+  const sectionId = (song: Song, i: number): string => song.arrangement![i].id
+
+  it('places a section anywhere in the row', () => {
+    const before = arrange(written())
+    const first = apply(before, placeSection(before, at(0), sectionId(before, 2), 0))
+    expect(names(first)).toEqual(['Verse 2', 'Verse', 'Chorus'])
+    const last = apply(before, placeSection(before, at(0), sectionId(before, 0), 3))
+    expect(names(last)).toEqual(['Chorus', 'Verse 2', 'Verse'])
+    expect(frets(last)).toEqual([7, '-', 3, 5, 3, 5])
+    // Dropped next to itself: nothing changes.
+    expect(placeSection(before, at(0), sectionId(before, 1), 1)).toBeNull()
+    expect(placeSection(before, at(0), sectionId(before, 1), 2)).toBeNull()
+  })
+
+  it('deletes a part only when no section plays it', () => {
+    const before = arrange(written())
+    const guitar = before.tracks[0].id
+    expect(deletePart(before, at(0), guitar, partOf(before, 1)!)).toBeNull()
+    const silent = apply(before, setCellPart(before, at(0), sectionId(before, 1), guitar, null))
+    const song = apply(silent, deletePart(silent, at(0), guitar, partOf(before, 1)!))
+    expect(partNames(song)).toEqual(['Verse'])
+  })
+})
+
+describe('part colors', () => {
+  it('gives new parts the color used least, so parts of different tracks differ', () => {
+    let song = written()
+    song = setFret(song, at(0, 1), 2, WHOLE)!.song
+    song = arrange(song)
+    const colors = song.tracks.flatMap((t) => (t.parts ?? []).map((p) => p.color))
+    expect(colors).toEqual([0, 1, 2])
+    const copied = apply(song, copyCellPart(song, at(0), song.arrangement![2].id, song.tracks[0].id))
+    expect(copied.tracks[0].parts!.at(-1)!.color).toBe(3)
+  })
+
+  it('changes a part’s color', () => {
+    const before = arrange(written())
+    const song = apply(before, setPartColor(before, at(0), before.tracks[0].id, partOf(before, 0)!, 6))
+    expect(partColors(song).get(partOf(song, 0)!)).toBe(6)
+    expect(setPartColor(song, at(0), song.tracks[0].id, partOf(song, 0)!, 8)).toBeNull()
+  })
+
+  it('keeps the colors of parts saved without one when other parts go', () => {
+    const song = structuredClone(arrange(written()))
+    for (const part of song.tracks[0].parts!) delete part.color
+    song.tracks[0].parts![1].color = 99
+    const loaded = parseProject(serializeProject(song)).song
+    // The unknown color is dropped, and both parts get the color they were shown in.
+    expect(loaded.tracks[0].parts!.map((p) => p.color)).toEqual([0, 1])
   })
 })
 

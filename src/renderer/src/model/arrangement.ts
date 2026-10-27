@@ -51,8 +51,35 @@ function partName(track: Track, base: string): string {
   return `${base} ${n}`
 }
 
-function addPart(track: Track, name: string, bars: Bar[]): Part {
-  const part: Part = { id: newId(), name: partName(track, name), bars: structuredClone(bars) }
+/** How many colors parts can have (styles.css --part-0 …). */
+export const PART_COLORS = 8
+
+/** The color of every part of the song, by part id. Parts without one get a color by their place in the song. */
+export function partColors(song: Song): Map<string, number> {
+  const colors = new Map<string, number>()
+  let n = 0
+  for (const track of song.tracks) for (const part of track.parts ?? []) colors.set(part.id, part.color ?? n++ % PART_COLORS)
+  return colors
+}
+
+/**
+ * Gives parts saved before they had colors the color they are shown in, so it
+ * stays when other parts are deleted or recolored. Changes the song in place.
+ */
+export function fixPartColors(song: Song): void {
+  const colors = partColors(song)
+  for (const track of song.tracks) for (const part of track.parts ?? []) part.color ??= colors.get(part.id)
+}
+
+/** The color used least in the song, so a new part stands out from the others. */
+function freeColor(song: Song): number {
+  const counts = Array<number>(PART_COLORS).fill(0)
+  for (const color of partColors(song).values()) counts[color]++
+  return counts.indexOf(Math.min(...counts))
+}
+
+function addPart(song: Song, track: Track, name: string, bars: Bar[]): Part {
+  const part: Part = { id: newId(), name: partName(track, name), bars: structuredClone(bars), color: freeColor(song) }
   ;(track.parts ??= []).push(part)
   return part
 }
@@ -77,7 +104,7 @@ export function arrange(song: Song): Song {
       const bars = track.bars.slice(range.start, range.end)
       if (!hasNotes(bars)) return
       const key = JSON.stringify(bars)
-      const part = byNotes.get(key) ?? addPart(track, range.name, bars)
+      const part = byNotes.get(key) ?? addPart(draft, track, range.name, bars)
       byNotes.set(key, part)
       arrangement[i].parts[track.id] = part.id
     })
@@ -164,15 +191,15 @@ export function syncArrangement(before: Song, after: Song): Song {
           })
           section.parts[track.id] = part.id
         } else if (hasNotes(bars)) {
-          section.parts[track.id] = addPart(track, range.name, bars).id
+          section.parts[track.id] = addPart(draft, track, range.name, bars).id
         }
       } else if (part && (uses.get(part.id) ?? 0) > 1) {
-        section.parts[track.id] = addPart(track, part.name, bars).id
+        section.parts[track.id] = addPart(draft, track, part.name, bars).id
       } else if (part) {
         part.bars = structuredClone(bars)
         section.parts[track.id] = part.id
       } else if (hasNotes(bars)) {
-        section.parts[track.id] = addPart(track, range.name, bars).id
+        section.parts[track.id] = addPart(draft, track, range.name, bars).id
       }
     }
     return section
@@ -268,7 +295,7 @@ export function copyCellPart(song: Song, cursor: Cursor, sectionId: string, trac
     const track = draft.tracks.find((t) => t.id === trackId)
     const part = track?.parts?.find((p) => p.id === section?.parts[trackId])
     if (!section || !track || !part) return false
-    section.parts[trackId] = addPart(track, part.name, part.bars).id
+    section.parts[trackId] = addPart(draft, track, part.name, part.bars).id
   })
 }
 
@@ -337,6 +364,35 @@ export function moveSection(song: Song, cursor: Cursor, sectionId: string, delta
     if (index < 0 || to < 0 || to >= sections.length) return false
     ;[sections[index], sections[to]] = [sections[to], sections[index]]
     return sectionId
+  })
+}
+
+/** Moves a section to a place in the row: `index` is where it goes, counted in the row as it is now (0 = first, length = last). */
+export function placeSection(song: Song, cursor: Cursor, sectionId: string, index: number): EditResult | null {
+  return arrangementEdit(song, cursor, (_, sections) => {
+    const from = sections.findIndex((s) => s.id === sectionId)
+    const to = Math.max(0, Math.min(sections.length, index)) - (index > from ? 1 : 0)
+    if (from < 0 || to === from) return false
+    sections.splice(to, 0, ...sections.splice(from, 1))
+    return sectionId
+  })
+}
+
+export function setPartColor(song: Song, cursor: Cursor, trackId: string, partId: string, color: number): EditResult | null {
+  if (!Number.isInteger(color) || color < 0 || color >= PART_COLORS) return null
+  return arrangementEdit(song, cursor, (draft) => {
+    const part = draft.tracks.find((t) => t.id === trackId)?.parts?.find((p) => p.id === partId)
+    if (!part || part.color === color) return false
+    part.color = color
+  })
+}
+
+/** Deletes a part that no section plays. */
+export function deletePart(song: Song, cursor: Cursor, trackId: string, partId: string): EditResult | null {
+  return arrangementEdit(song, cursor, (draft) => {
+    const track = draft.tracks.find((t) => t.id === trackId)
+    if (!track?.parts?.some((p) => p.id === partId) || partUses(draft, track).has(partId)) return false
+    track.parts = track.parts.filter((p) => p.id !== partId)
   })
 }
 

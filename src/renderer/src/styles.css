@@ -14,13 +14,15 @@
   /* The score: paper and ink. */
   --score-bg: #ffffff;
   --score-text: #000000;
-  /* Track lanes in the arrangement. */
-  --lane-0: #7c3aed;
-  --lane-1: #0d9488;
-  --lane-2: #ea580c;
-  --lane-3: #2563eb;
-  --lane-4: #db2777;
-  --lane-5: #65a30d;
+  /* Part colors in the arrangement. */
+  --part-0: #7c3aed;
+  --part-1: #0d9488;
+  --part-2: #ea580c;
+  --part-3: #2563eb;
+  --part-4: #db2777;
+  --part-5: #65a30d;
+  --part-6: #ca8a04;
+  --part-7: #0891b2;
   color-scheme: light;
   font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
   font-size: 14px;
@@ -38,12 +40,14 @@
   --selection: rgba(234, 179, 8, 0.3);
   --score-bg: #24201e;
   --score-text: #ece9e6;
-  --lane-0: #a78bfa;
-  --lane-1: #2dd4bf;
-  --lane-2: #fb923c;
-  --lane-3: #60a5fa;
-  --lane-4: #f472b6;
-  --lane-5: #a3e635;
+  --part-0: #a78bfa;
+  --part-1: #2dd4bf;
+  --part-2: #fb923c;
+  --part-3: #60a5fa;
+  --part-4: #f472b6;
+  --part-5: #a3e635;
+  --part-6: #facc15;
+  --part-7: #22d3ee;
   color-scheme: dark;
 }
 
@@ -908,6 +912,7 @@ kbd {
   flex: 1;
   min-height: 160px;
   overflow: auto;
+  scrollbar-gutter: stable;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--surface);
@@ -918,10 +923,14 @@ kbd {
 }
 
 .arrangement-grid {
-  --arr-label: 120px;
-  --arr-end: 48px;
   position: relative;
   padding: 6px 0 10px;
+  user-select: none;
+}
+
+.arrangement.dragging,
+.arrangement.dragging * {
+  cursor: grabbing;
 }
 
 .arr-row {
@@ -966,7 +975,7 @@ button.arr-label:hover:not(:disabled) {
 .arr-row.selected .arr-label {
   color: var(--text);
   font-weight: 600;
-  box-shadow: inset 3px 0 0 var(--lane);
+  box-shadow: inset 3px 0 0 var(--accent);
 }
 
 .arr-lane {
@@ -996,9 +1005,182 @@ button.arr-label:hover:not(:disabled) {
   background: var(--bg);
 }
 
-.arr-part {
-  background: color-mix(in srgb, var(--lane) 16%, var(--surface));
-  border: 1px solid color-mix(in srgb, var(--lane) 55%, var(--surface));
+.arr-part,
+.arr-chip,
+.arr-ghost.part {
+  background: color-mix(in srgb, var(--part) 18%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--part) 60%, var(--surface));
+  color: var(--text);
+}
+
+/* Section names can be dragged to move them; their right edge changes the length. */
+.arr-section {
+  cursor: grab;
+}
+
+.arr-section.drag-source {
+  opacity: 0.4;
+}
+
+.arr-resize {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 8px;
+  cursor: ew-resize;
+}
+
+.arr-resize::after {
+  content: '';
+  position: absolute;
+  top: 25%;
+  bottom: 25%;
+  right: 3px;
+  border-right: 2px solid var(--border);
+  border-radius: 1px;
+}
+
+.arr-section:hover .arr-resize::after {
+  border-color: var(--accent);
+}
+
+/* While a part is dragged: the cells of its track it can go to, and the one under the pointer. */
+.arr-cell.drop-ok {
+  border-style: solid;
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+}
+
+.arr-cell.drop-target {
+  outline: 2px dashed var(--accent);
+  outline-offset: 1px;
+  z-index: 2;
+}
+
+/* Where a dragged section would go. */
+.arr-insert {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  margin-left: -1.5px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+
+.arr-ghost {
+  position: fixed;
+  z-index: 50;
+  pointer-events: none;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  font-size: 13px;
+  font-weight: 600;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
+}
+
+/* Part colors next to the part name. */
+.arr-swatches {
+  display: inline-flex;
+  gap: 3px;
+}
+
+.arr-swatch {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 2px solid var(--surface);
+  border-radius: 50%;
+  background: var(--part);
+  box-shadow: 0 0 0 1px var(--border);
+}
+
+.arr-swatch.current,
+.arr-swatch:hover:not(:disabled) {
+  border-color: var(--surface);
+  box-shadow: 0 0 0 2px var(--text);
+}
+
+/* The palette: every part of every track, under the grid. */
+.arr-palette {
+  flex-shrink: 0;
+  max-height: 34%;
+  overflow: auto;
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  user-select: none;
+}
+
+.arr-palette-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.arr-palette-row {
+  display: grid;
+  grid-template-columns: 110px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  padding: 3px 0;
+}
+
+.arr-palette-track {
+  font-size: 13px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.arr-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.arr-chip-wrap {
+  display: inline-flex;
+  align-items: center;
+}
+
+.arr-chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  cursor: grab;
+}
+
+.arr-chip small {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.arr-chip.unused {
+  border-style: dashed;
+  background: none;
+}
+
+.arr-chip.selected {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.arr-chip-delete {
+  margin-left: 2px;
+  padding: 0 6px;
+  border: none;
+  background: none;
+  color: var(--muted);
 }
 
 .arr-silent {
@@ -1032,7 +1214,7 @@ button.arr-label:hover:not(:disabled) {
   position: absolute;
   top: 5px;
   bottom: 5px;
-  border-left: 1px dashed color-mix(in srgb, var(--lane) 70%, var(--surface));
+  border-left: 1px dashed color-mix(in srgb, var(--part) 75%, var(--surface));
 }
 
 .arr-cell .arr-name,

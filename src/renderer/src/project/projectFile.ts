@@ -2,7 +2,7 @@
 // song.json and one audio/<take id>.wav per recorded or imported take.
 import { strFromU8, strToU8, unzipSync, zipSync, type Zippable } from 'fflate'
 import { decodeWav16, encodeWav16 } from '../audio/wav'
-import { writeOut } from '../model/arrangement'
+import { fixPartColors, PART_COLORS, writeOut } from '../model/arrangement'
 import { MASTER_DEFAULTS, NOTE_VALUES, type Bar, type Instrument, type MasterSettings, type ProjectAudio, type Song, type TakeInfo, type Track } from '../model/song'
 import { normalizePatch, PATCH_LIMITS } from '../model/synth'
 import { checkLayout, type Layout } from './layout'
@@ -144,6 +144,8 @@ function checkParts(track: Track, t: number): void {
   for (const part of track.parts) {
     if (typeof part?.id !== 'string' || typeof part.name !== 'string') fail(`track ${t + 1} has a part without a valid id or name`)
     if (!Array.isArray(part.bars) || part.bars.length === 0) fail(`part "${part.name}" of track ${t + 1} has no bars`)
+    // A color the app doesn't know is dropped; the part gets one by its place.
+    if (part.color !== undefined && !(isInt(part.color) && part.color >= 0 && part.color < PART_COLORS)) delete part.color
     checkBars(part.bars, track, `part "${part.name}" of track ${t + 1}`)
   }
 }
@@ -184,6 +186,7 @@ function checkSong(value: unknown): Song {
     if (track.parts !== undefined) checkParts(track, t)
   })
   if (song.arrangement !== undefined) checkArrangement(song)
+  fixPartColors(song)
   const checked = { ...song, sections: Array.isArray(song.sections) ? song.sections : [], takes: checkTakes(song.takes), master: checkMaster(song.master) }
   // The arrangement is what counts; the bars written out in the file are for reading it without one.
   return writeOut(checked)

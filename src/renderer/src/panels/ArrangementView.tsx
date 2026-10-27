@@ -1,29 +1,37 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import {
   addSection,
   copyCellPart,
+  deletePart,
   deleteUnusedParts,
   duplicateSection,
   MAX_SECTION_BARS,
   moveSection,
+  PART_COLORS,
+  partColors,
   partUses,
+  placeSection,
   removeSection,
   renamePart,
   renameSection,
   resizeSection,
   sectionStarts,
   setCellPart,
+  setPartColor,
   unusedParts
 } from '../model/arrangement'
 import { startRow, type BarRange, type Cursor, type EditResult } from '../model/edit'
-import { barCount, type ArrangementSection, type Part } from '../model/song'
+import { barCount, type ArrangementSection, type Part, type Track } from '../model/song'
 import { barSeconds } from '../model/timing'
 import type { Project } from '../project/useProject'
 
 /** Narrowest a bar is drawn; longer songs scroll sideways. */
 const MIN_BAR_PX = 28
-/** Lane colors, one per track (styles.css --lane-0 …). */
-const LANE_COLORS = 6
+/** Width of the track names on the left, and of the "+" column on the right. */
+const LABEL_PX = 120
+const END_PX = 48
+/** How far the pointer moves before a press becomes a drag. */
+const DRAG_THRESHOLD = 5
 
 interface Props {
   project: Project
@@ -42,6 +50,32 @@ interface Props {
   onShowShortcuts?: () => void
 }
 
+/** Something being dragged: a part (from a cell or the palette) or a section (by its name). */
+type DragItem = { kind: 'part'; trackId: string; partId: string; label: string; color: number } | { kind: 'section'; sectionId: string; label: string }
+
+interface Drag {
+  item: DragItem
+  startX: number
+  startY: number
+  x: number
+  y: number
+  /** Moved past the threshold: a drag, not a click. */
+  moving: boolean
+  /** A part: the section it would play in if dropped here. */
+  target: string | null
+  /** A section: where in the row it would go. */
+  insertAt: number | null
+}
+
+/** A section's length being dragged; the bar width stays as it was, so the edge follows the pointer. */
+interface Resize {
+  sectionId: string
+  startX: number
+  startLength: number
+  length: number
+  barPx: number
+}
+
 /** How a part fills its section: "4 bars", "2 bars ×2", "8 bars, cut to 4". */
 function fillText(part: Part, section: ArrangementSection): string {
   const bars = `${part.bars.length} ${part.bars.length === 1 ? 'bar' : 'bars'}`
@@ -58,20 +92,52 @@ function formatTime(seconds: number): string {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
 }
 
+/** The click that ends a drag would select what is under the pointer; this swallows it. */
+function swallowClick(): void {
+  const swallow = (event: MouseEvent): void => {
+    event.stopPropagation()
+    event.preventDefault()
+  }
+  window.addEventListener('click', swallow, { capture: true, once: true })
+  window.setTimeout(() => window.removeEventListener('click', swallow, { capture: true }), 0)
+}
+
 /**
  * The song form as a grid: sections from left to right, a lane per track, and
- * in each cell the part the track plays there. The cursor's section and track
- * are the selected cell, so playback starts there and "Edit in score" goes there.
+ * in each cell the part the track plays there, in the part's color. The cursor's
+ * section and track are the selected cell, so playback starts there and "Edit in
+ * score" goes there. Parts can be dragged onto other sections of their track,
+ * sections dragged to another place, and their right edge dragged to resize them.
+ * Under the grid, the palette lists every part of every track.
  */
 export function ArrangementView(props: Props): React.JSX.Element {
   const { project, playing, positionRef, loop, message, onMessage, onMoveCursor, onLoopSection, onEditInScore, onSharedKey, onShowShortcuts } = props
   const { song, cursor } = project
   const rootRef = useRef<HTMLDivElement>(null)
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const laneRef = useRef<HTMLDivElement>(null)
   const playheadRef = useRef<HTMLDivElement>(null)
   const selectedRef = useRef<HTMLButtonElement>(null)
+  const [available, setAvailable] = useState(0)
+  // Drags live in refs (the window listeners read them) and redraw on every change.
+  const dragRef = useRef<Drag | null>(null)
+  const resizeRef = useRef<Resize | null>(null)
+  const dropRef = useRef<(drag: Drag) => void>(() => {})
+  const resizedRef = useRef<(resize: Resize) => void>(() => {})
+  const [, redraw] = useState(0)
+  const setDrag = (next: Drag | null): void => {
+    dragRef.current = next
+    redraw((n) => n + 1)
+  }
+  const setResize = (next: Resize | null): void => {
+    resizeRef.current = next
+    redraw((n) => n + 1)
+  }
+  const drag = dragRef.current
+  const resize = resizeRef.current
+
   const arrangement = song.arrangement ?? []
   const starts = sectionStarts(arrangement)
-  const total = Math.max(1, barCount(song))
   const current = Math.max(0, starts.findLastIndex((start) => start <= cursor.bar))
   const section = arrangement[current]
   const track = song.tracks[cursor.track]
@@ -79,9 +145,28 @@ export function ArrangementView(props: Props): React.JSX.Element {
   const part = track.parts?.find((p) => p.id === section?.parts[track.id])
   const elsewhere = part ? (uses.get(part.id) ?? []).filter((s) => s !== section) : []
   const unused = unusedParts(song)
+  const colors = partColors(song)
+  const colorOf = (p: Part): number => colors.get(p.id) ?? 0
+
+  // While a length is dragged, the grid shows it before it is applied.
+  const shown = resize ? arrangement.map((s) => (s.id === resize.sectionId ? { ...s, length: resize.length } : s)) : arrangement
+  const shownStarts = sectionStarts(shown)
+  const total = Math.max(1, shown.reduce((sum, s) => sum + s.length, 0))
+  // Bars share the width there is; long songs scroll sideways.
+  const barPx = resize ? resize.barPx : Math.max(MIN_BAR_PX, available / total)
+  const live = useRef({ shown, shownStarts, barPx })
+  live.current = { shown, shownStarts, barPx }
 
   useEffect(() => {
     rootRef.current?.focus()
+  }, [])
+
+  useLayoutEffect(() => {
+    const element = scrollRef.current
+    if (!element) return
+    const observer = new ResizeObserver(() => setAvailable(element.clientWidth - LABEL_PX - END_PX))
+    observer.observe(element)
+    return () => observer.disconnect()
   }, [])
 
   // The selected section stays in view in long songs.
@@ -100,17 +185,90 @@ export function ArrangementView(props: Props): React.JSX.Element {
     const tick = (): void => {
       const position = positionRef.current
       playhead.style.display = position === null ? 'none' : 'block'
-      if (position !== null) playhead.style.left = `${Math.min(100, (position / bar / total) * 100)}%`
+      if (position !== null) playhead.style.left = `${(position / bar) * live.current.barPx}px`
       frame = requestAnimationFrame(tick)
     }
     frame = requestAnimationFrame(tick)
     return () => cancelAnimationFrame(frame)
-  }, [playing, song, total, positionRef])
+  }, [playing, song, positionRef])
+
+  // Dragging a part or a section: follow the pointer, drop on release, Esc cancels.
+  const dragging = drag !== null
+  useEffect(() => {
+    if (!dragging) return
+    const move = (event: PointerEvent): void => {
+      const d = dragRef.current
+      if (!d) return
+      const moving = d.moving || Math.hypot(event.clientX - d.startX, event.clientY - d.startY) > DRAG_THRESHOLD
+      if (!moving) return
+      let target: string | null = null
+      let insertAt: number | null = null
+      if (d.item.kind === 'part') {
+        const cell = document.elementFromPoint(event.clientX, event.clientY)?.closest<HTMLElement>('[data-cell]')
+        if (cell?.dataset.track === d.item.trackId) target = cell.dataset.section ?? null
+      } else {
+        const lane = laneRef.current?.getBoundingClientRect()
+        const { shown: sections, shownStarts: at, barPx: px } = live.current
+        if (lane) insertAt = sections.filter((s, i) => (at[i] + s.length / 2) * px < event.clientX - lane.left).length
+      }
+      setDrag({ ...d, moving, x: event.clientX, y: event.clientY, target, insertAt })
+    }
+    const up = (): void => {
+      const d = dragRef.current
+      setDrag(null)
+      if (!d?.moving) return
+      swallowClick()
+      dropRef.current(d)
+    }
+    const key = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') setDrag(null)
+    }
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up)
+    window.addEventListener('keydown', key)
+    return () => {
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', up)
+      window.removeEventListener('keydown', key)
+    }
+  }, [dragging])
+
+  // Dragging a section's right edge.
+  const resizing = resize !== null
+  useEffect(() => {
+    if (!resizing) return
+    const move = (event: PointerEvent): void => {
+      const r = resizeRef.current
+      if (!r) return
+      const length = Math.max(1, Math.min(MAX_SECTION_BARS, r.startLength + Math.round((event.clientX - r.startX) / r.barPx)))
+      if (length !== r.length) setResize({ ...r, length })
+    }
+    const up = (): void => {
+      const r = resizeRef.current
+      setResize(null)
+      if (!r || r.length === r.startLength) return
+      swallowClick()
+      resizedRef.current(r)
+    }
+    const key = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') setResize(null)
+    }
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up)
+    window.addEventListener('keydown', key)
+    return () => {
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', up)
+      window.removeEventListener('keydown', key)
+    }
+  }, [resizing])
 
   if (!section) return <div className="arrangement muted">This song has no arrangement.</div>
 
-  const edit = (result: EditResult | null, failMessage?: string, mergeKey?: string): void => {
-    if (!project.apply(result, { mergeKey }) && failMessage) onMessage(failMessage)
+  const edit = (result: EditResult | null, failMessage?: string, mergeKey?: string): boolean => {
+    const applied = project.apply(result, { mergeKey })
+    if (!applied && failMessage) onMessage(failMessage)
+    return applied
   }
 
   /** Selects a cell: the cursor goes to the start of the section, on that track. */
@@ -122,19 +280,51 @@ export function ArrangementView(props: Props): React.JSX.Element {
     rootRef.current?.focus()
   }
 
-  /** Where bars are drawn in a lane, with a small gap between neighbors. */
-  const span = (start: number, length: number): React.CSSProperties => ({ left: `calc(${(start / total) * 100}% + 2px)`, width: `calc(${(length / total) * 100}% - 4px)` })
+  /** A part plays in a section (the selected one by default), and that cell is selected. */
+  const place = (t: Track, p: Part, sectionIndex = current): void => {
+    edit(setCellPart(song, cursor, arrangement[sectionIndex].id, t.id, p.id))
+    select(sectionIndex, song.tracks.indexOf(t))
+  }
 
-  const duplicate = (): void => edit(duplicateSection(song, cursor, section.id))
-  const remove = (): void => edit(removeSection(song, cursor, section.id), 'A song needs at least one section.')
-  const move = (delta: -1 | 1): void => edit(moveSection(song, cursor, section.id, delta))
-  const silence = (): void => edit(setCellPart(song, cursor, section.id, track.id, null))
+  dropRef.current = ({ item, target, insertAt }: Drag): void => {
+    if (item.kind === 'part' && target) {
+      const t = song.tracks.find((x) => x.id === item.trackId)
+      const p = t?.parts?.find((x) => x.id === item.partId)
+      if (t && p) place(t, p, arrangement.findIndex((s) => s.id === target))
+    } else if (item.kind === 'section' && insertAt !== null) {
+      edit(placeSection(song, cursor, item.sectionId, insertAt))
+    }
+  }
+  resizedRef.current = (r: Resize): void => {
+    edit(resizeSection(song, cursor, r.sectionId, r.length))
+  }
+
+  const startDrag = (event: React.PointerEvent, item: DragItem): void => {
+    if (event.button !== 0) return
+    setDrag({ item, startX: event.clientX, startY: event.clientY, x: event.clientX, y: event.clientY, moving: false, target: null, insertAt: null })
+  }
+  const partItem = (t: Track, p: Part): DragItem => ({ kind: 'part', trackId: t.id, partId: p.id, label: p.name || '(no name)', color: colorOf(p) })
+
+  const startResize = (event: React.PointerEvent, s: ArrangementSection): void => {
+    if (event.button !== 0) return
+    event.stopPropagation()
+    event.preventDefault()
+    setResize({ sectionId: s.id, startX: event.clientX, startLength: s.length, length: s.length, barPx })
+  }
+
+  /** Where bars are drawn in a lane, with a small gap between neighbors. */
+  const span = (start: number, length: number): React.CSSProperties => ({ left: start * barPx + 2, width: Math.max(4, length * barPx - 4) })
+  const partColor = (color: number): React.CSSProperties => ({ '--part': `var(--part-${color})` }) as React.CSSProperties
+
+  const duplicate = (): void => void edit(duplicateSection(song, cursor, section.id))
+  const remove = (): void => void edit(removeSection(song, cursor, section.id), 'A song needs at least one section.')
+  const move = (delta: -1 | 1): void => void edit(moveSection(song, cursor, section.id, delta))
+  const silence = (): void => void edit(setCellPart(song, cursor, section.id, track.id, null))
   const copyPart = (): void => {
     if (!part) return
     const result = copyCellPart(song, cursor, section.id, track.id)
-    edit(result)
     const copy = result?.song.tracks[cursor.track].parts?.at(-1)
-    if (copy) onMessage(`“${section.name}” now plays its own copy, “${copy.name}”: changes to it stay in this section.`)
+    if (edit(result) && copy) onMessage(`“${section.name}” now plays its own copy, “${copy.name}”: changes to it stay in this section.`)
   }
 
   const onKeyDown = (event: React.KeyboardEvent<HTMLDivElement>): void => {
@@ -160,13 +350,17 @@ export function ArrangementView(props: Props): React.JSX.Element {
   }
 
   const describe = (s: ArrangementSection, p: Part | undefined, others: ArrangementSection[]): string => {
-    if (!p) return 'Silent here. Pick a part above, or double-click to write notes in the score.'
+    if (!p) return 'Silent here. Pick a part above, drag one here, or double-click to write notes in the score.'
     const also = others.length > 0 ? `; also plays in ${others.map((o) => `“${o.name}”`).join(', ')}` : ''
-    return `“${p.name}”: ${fillText(p, s)}${also}. Double-click to edit it in the score.`
+    return `“${p.name}”: ${fillText(p, s)}${also}. Drag it onto another section to play it there too; double-click to edit it in the score.`
   }
 
+  const draggingPart = drag?.moving && drag.item.kind === 'part' ? drag.item : null
+  const draggingSection = drag?.moving && drag.item.kind === 'section' ? drag.item : null
+  const insertX = draggingSection && drag?.insertAt !== null && drag?.insertAt !== undefined ? (drag.insertAt < shown.length ? shownStarts[drag.insertAt] : total) * barPx : null
+
   return (
-    <div ref={rootRef} className="arrangement" tabIndex={0} onKeyDown={onKeyDown}>
+    <div ref={rootRef} className={`arrangement ${drag?.moving || resize ? 'dragging' : ''}`} tabIndex={0} onKeyDown={onKeyDown}>
       <div className="toolbar edit-toolbar arrangement-toolbar" role="group" aria-label="Section">
         <strong className="toolbar-title">Section</strong>
         <input
@@ -176,7 +370,7 @@ export function ArrangementView(props: Props): React.JSX.Element {
           title="Name of the section"
           onChange={(e) => edit(renameSection(song, cursor, section.id, e.target.value), undefined, `section-name:${section.id}`)}
         />
-        <label className="inline-field" title="Length of the section in bars. A shorter part repeats to fill it; a longer one is cut off (its bars stay in the part).">
+        <label className="inline-field" title="Length of the section in bars (or drag its right edge). A shorter part repeats to fill it; a longer one is cut off (its bars stay in the part).">
           <input
             type="number"
             min={1}
@@ -188,10 +382,10 @@ export function ArrangementView(props: Props): React.JSX.Element {
           bars
         </label>
         <div className="segmented">
-          <button title="Move the section earlier (Alt+←)" aria-label="Move the section earlier" disabled={current === 0} onClick={() => move(-1)}>
+          <button title="Move the section earlier (Alt+←, or drag its name)" aria-label="Move the section earlier" disabled={current === 0} onClick={() => move(-1)}>
             ◀
           </button>
-          <button title="Move the section later (Alt+→)" aria-label="Move the section later" disabled={current === arrangement.length - 1} onClick={() => move(1)}>
+          <button title="Move the section later (Alt+→, or drag its name)" aria-label="Move the section later" disabled={current === arrangement.length - 1} onClick={() => move(1)}>
             ▶
           </button>
         </div>
@@ -238,6 +432,19 @@ export function ArrangementView(props: Props): React.JSX.Element {
               title="Name of the part, in every section that plays it"
               onChange={(e) => edit(renamePart(song, cursor, track.id, part.id, e.target.value), undefined, `part-name:${part.id}`)}
             />
+            <div className="arr-swatches" role="group" aria-label="Part color">
+              {Array.from({ length: PART_COLORS }, (_, color) => (
+                <button
+                  key={color}
+                  className={`arr-swatch ${color === colorOf(part) ? 'current' : ''}`}
+                  style={partColor(color)}
+                  aria-label={`Color ${color + 1}`}
+                  aria-pressed={color === colorOf(part)}
+                  title="Color of the part, in every section that plays it"
+                  onClick={() => edit(setPartColor(song, cursor, track.id, part.id, color))}
+                />
+              ))}
+            </div>
             <button
               title={elsewhere.length > 0 ? 'Give this section its own copy of the part, to change it here without changing the other sections' : 'Make a copy of the part for this section (it plays nowhere else yet)'}
               onClick={copyPart}
@@ -252,24 +459,29 @@ export function ArrangementView(props: Props): React.JSX.Element {
         <span className="muted small arr-part-info">{part ? (elsewhere.length > 0 ? `Also plays in ${elsewhere.map((s) => `“${s.name}”`).join(', ')}` : 'Plays only here') : 'Silent in this section'}</span>
       </div>
 
-      <div className="arrangement-scroll">
-        <div className="arrangement-grid" style={{ minWidth: `calc(var(--arr-label) + var(--arr-end) + ${total * MIN_BAR_PX}px)` }}>
+      <div ref={scrollRef} className="arrangement-scroll">
+        <div
+          className="arrangement-grid"
+          style={{ '--arr-label': `${LABEL_PX}px`, '--arr-end': `${END_PX}px`, width: LABEL_PX + END_PX + total * barPx } as React.CSSProperties}
+        >
           <div className="arr-row arr-ruler">
             <div className="arr-label">Song</div>
-            <div className="arr-lane">
+            <div ref={laneRef} className="arr-lane">
               {loop && <div className="arr-loop" style={span(loop.start, loop.end - loop.start)} title="Loop playback repeats these bars" />}
-              {arrangement.map((s, i) => (
+              {shown.map((s, i) => (
                 <button
                   key={s.id}
                   ref={i === current ? selectedRef : undefined}
-                  className={`arr-section ${i === current ? 'selected' : ''}`}
-                  style={span(starts[i], s.length)}
-                  title={`“${s.name}”: bars ${starts[i] + 1}–${starts[i] + s.length}. Double-click to loop it.`}
+                  className={`arr-section ${i === current ? 'selected' : ''} ${draggingSection?.sectionId === s.id ? 'drag-source' : ''}`}
+                  style={span(shownStarts[i], s.length)}
+                  title={`“${s.name}”: bars ${shownStarts[i] + 1}–${shownStarts[i] + s.length}. Drag to move it, drag its right edge to change its length, double-click to loop it.`}
+                  onPointerDown={(e) => startDrag(e, { kind: 'section', sectionId: s.id, label: s.name || '(no name)' })}
                   onClick={() => select(i)}
                   onDoubleClick={() => onLoopSection(starts[i])}
                 >
                   <span className="arr-name">{s.name || '(no name)'}</span>
                   <small>{plural(s.length, 'bar')}</small>
+                  <span className="arr-resize" title="Drag to change the length" onPointerDown={(e) => startResize(e, s)} />
                 </button>
               ))}
             </div>
@@ -282,22 +494,28 @@ export function ArrangementView(props: Props): React.JSX.Element {
 
           {song.tracks.map((t, ti) => {
             const trackUses = ti === cursor.track ? uses : partUses(song, t)
+            const dropOk = draggingPart?.trackId === t.id
             return (
-              <div key={t.id} className={`arr-row ${ti === cursor.track ? 'selected' : ''}`} style={{ '--lane': `var(--lane-${ti % LANE_COLORS})` } as React.CSSProperties}>
+              <div key={t.id} className={`arr-row ${ti === cursor.track ? 'selected' : ''}`}>
                 <button className="arr-label" title={`Select “${t.name}”`} onClick={() => select(current, ti)}>
                   {t.name}
                 </button>
                 <div className="arr-lane">
-                  {arrangement.map((s, i) => {
+                  {shown.map((s, i) => {
                     const p = t.parts?.find((x) => x.id === s.parts[t.id])
                     const selected = i === current && ti === cursor.track
+                    const target = dropOk && drag?.target === s.id
                     return (
                       <button
                         key={s.id}
-                        className={`arr-cell ${p ? 'arr-part' : 'arr-silent'} ${selected ? 'selected' : ''}`}
-                        style={span(starts[i], s.length)}
+                        data-cell=""
+                        data-track={t.id}
+                        data-section={s.id}
+                        className={`arr-cell ${p ? 'arr-part' : 'arr-silent'} ${selected ? 'selected' : ''} ${dropOk ? 'drop-ok' : ''} ${target ? 'drop-target' : ''}`}
+                        style={{ ...span(shownStarts[i], s.length), ...(p && partColor(colorOf(p))) }}
                         title={`${t.name} in “${s.name}”: ${describe(s, p, p ? (trackUses.get(p.id) ?? []).filter((o) => o !== s) : [])}`}
                         aria-label={`${t.name} in ${s.name}: ${p ? p.name : 'silent'}`}
+                        onPointerDown={p ? (e) => startDrag(e, partItem(t, p)) : undefined}
                         onClick={() => select(i, ti)}
                         onDoubleClick={() => {
                           select(i, ti)
@@ -308,7 +526,7 @@ export function ArrangementView(props: Props): React.JSX.Element {
                           <>
                             {/* Where a shorter part starts again. */}
                             {Array.from({ length: Math.max(0, Math.ceil(s.length / p.bars.length) - 1) }, (_, k) => (
-                              <span key={k} className="arr-repeat" style={{ left: `${(((k + 1) * p.bars.length) / s.length) * 100}%` }} />
+                              <span key={k} className="arr-repeat" style={{ left: (k + 1) * p.bars.length * barPx - 2 }} />
                             ))}
                             <span className="arr-name">{p.name || '(no name)'}</span>
                             <small>{fillText(p, s)}</small>
@@ -324,8 +542,52 @@ export function ArrangementView(props: Props): React.JSX.Element {
           })}
           <div className="arr-playhead-layer" aria-hidden="true">
             <div ref={playheadRef} className="arr-playhead" />
+            {insertX !== null && <div className="arr-insert" style={{ left: insertX }} />}
           </div>
         </div>
+      </div>
+
+      <div className="arr-palette" role="group" aria-label="Parts">
+        <div className="arr-palette-head">
+          <strong>Parts</strong>
+          <span className="muted small">Click a part to play it in the selected section, or drag it onto a section of its track.</span>
+        </div>
+        {song.tracks.map((t, ti) => {
+          const trackUses = ti === cursor.track ? uses : partUses(song, t)
+          return (
+            <div key={t.id} className="arr-palette-row">
+              <span className="arr-palette-track" title={t.name}>
+                {t.name}
+              </span>
+              <div className="arr-chips">
+                {(t.parts ?? []).length === 0 && <span className="muted small">No parts yet: write notes in a section of this track.</span>}
+                {(t.parts ?? []).map((p) => {
+                  const count = trackUses.get(p.id)?.length ?? 0
+                  const selected = ti === cursor.track && p.id === part?.id
+                  return (
+                    <span key={p.id} className="arr-chip-wrap">
+                      <button
+                        className={`arr-chip ${count > 0 ? '' : 'unused'} ${selected ? 'selected' : ''}`}
+                        style={partColor(colorOf(p))}
+                        title={`“${p.name}” (${plural(p.bars.length, 'bar')}): ${count > 0 ? `plays in ${plural(count, 'section')}` : 'no section plays it'}. Click to play it in “${section.name}”, or drag it onto a section.`}
+                        onPointerDown={(e) => startDrag(e, partItem(t, p))}
+                        onClick={() => place(t, p)}
+                      >
+                        <span className="arr-name">{p.name || '(no name)'}</span>
+                        <small>{count > 0 ? `${count}×` : 'not used'}</small>
+                      </button>
+                      {count === 0 && (
+                        <button className="icon arr-chip-delete" title="Delete this part" aria-label={`Delete the part ${p.name}`} onClick={() => edit(deletePart(song, cursor, t.id, p.id))}>
+                          ×
+                        </button>
+                      )}
+                    </span>
+                  )
+                })}
+              </div>
+            </div>
+          )
+        })}
       </div>
 
       <div className="status-bar">
@@ -346,6 +608,12 @@ export function ArrangementView(props: Props): React.JSX.Element {
           ?
         </button>
       </div>
+
+      {drag?.moving && (
+        <div className={`arr-ghost ${drag.item.kind}`} style={{ left: drag.x + 14, top: drag.y + 10, ...(drag.item.kind === 'part' && partColor(drag.item.color)) }}>
+          {drag.item.label}
+        </div>
+      )}
     </div>
   )
 }

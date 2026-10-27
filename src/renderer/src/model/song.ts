@@ -78,6 +78,8 @@ export interface Part {
   id: string
   name: string
   bars: Bar[]
+  /** Color in the arrangement, an index into its part colors (see model/arrangement.ts). Older parts have none. */
+  color?: number
 }
 
 /** One section of the song form: how long it is, and which part each track plays in it. */
