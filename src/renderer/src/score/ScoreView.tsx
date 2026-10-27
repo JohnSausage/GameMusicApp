@@ -6,6 +6,7 @@ import { selectedRanges, type Cursor, type Selection } from '../model/edit'
 import type { Song } from '../model/song'
 import { beatAt, buildTimeline } from '../model/timing'
 import type { StaveMode } from '../project/layout'
+import { useTheme, type Theme } from '../theme'
 import { songToAlphaTab, type BeatRef, type ConvertedScore } from './toAlphaTab'
 
 /** What was clicked: the beat, and the tab string if the click was on the tab staff. */
@@ -61,6 +62,34 @@ function createApi(element: HTMLElement): alphaTab.AlphaTabApi {
     },
     player: { enablePlayer: false }
   })
+}
+
+type ScoreColor = 'staffLineColor' | 'barSeparatorColor' | 'barNumberColor' | 'mainGlyphColor' | 'secondaryGlyphColor' | 'scoreInfoColor'
+
+/** Ink of the score per theme as [r, g, b, alpha 0–255]; the paper is --score-bg. Light is alphaTab's default look. */
+const SCORE_COLORS: Record<Theme, Record<ScoreColor, [number, number, number, number]>> = {
+  light: {
+    staffLineColor: [165, 165, 165, 255],
+    barSeparatorColor: [34, 34, 17, 255],
+    barNumberColor: [200, 0, 0, 255],
+    mainGlyphColor: [0, 0, 0, 255],
+    secondaryGlyphColor: [0, 0, 0, 102],
+    scoreInfoColor: [0, 0, 0, 255]
+  },
+  dark: {
+    staffLineColor: [120, 113, 108, 255],
+    barSeparatorColor: [184, 178, 173, 255],
+    barNumberColor: [248, 113, 113, 255],
+    mainGlyphColor: [236, 233, 230, 255],
+    secondaryGlyphColor: [236, 233, 230, 115],
+    scoreInfoColor: [236, 233, 230, 255]
+  }
+}
+
+function setScoreColors(settings: alphaTab.Settings, theme: Theme): void {
+  for (const [name, [r, g, b, a]] of Object.entries(SCORE_COLORS[theme])) {
+    settings.display.resources[name as ScoreColor] = new alphaTab.model.Color(r, g, b, a)
+  }
 }
 
 /** Distance between tab lines in pixels. */
@@ -213,6 +242,9 @@ export function ScoreView({ song, staveMode, zoom = 1, positionRef, editCursor, 
   songRef.current = song
   const staveModeRef = useRef(staveMode)
   staveModeRef.current = staveMode
+  const theme = useTheme()
+  /** The theme whose colors alphaTab has. */
+  const colorsRef = useRef<Theme | null>(null)
 
   const timeline = useMemo(() => buildTimeline(song), [song])
 
@@ -238,8 +270,10 @@ export function ScoreView({ song, staveMode, zoom = 1, positionRef, editCursor, 
 
   useEffect(() => {
     const api = apiRef.current!
-    if (api.settings.display.scale !== zoom) {
+    if (api.settings.display.scale !== zoom || colorsRef.current !== theme) {
       api.settings.display.scale = zoom
+      setScoreColors(api.settings, theme)
+      colorsRef.current = theme
       api.updateSettings()
     }
     // The stave profile stays ScoreTab; which staves show is set per staff (tab only = tab, and a rhythm line for drums).
@@ -247,7 +281,7 @@ export function ScoreView({ song, staveMode, zoom = 1, positionRef, editCursor, 
     const converted = songToAlphaTab(song, api.settings, staveMode === 'tab')
     convertedRef.current = converted
     api.renderScore(converted.score, song.tracks.map((_, i) => i))
-  }, [song, staveMode, zoom])
+  }, [song, staveMode, zoom, theme])
 
   // Overlays are positioned every frame from alphaTab's layout, so they follow re-renders.
   useEffect(() => {

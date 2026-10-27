@@ -8,6 +8,7 @@ Compose game music on guitar: record or import a melody, get it as tab with nota
 ## Using the app
 
 - **Start page:** create a new project, open a `.gmsong` file, or pick one of your recent projects.
+- **Light and dark mode:** pick Light, Dark or System (follows the operating system) on the start page or under ☰ in the editor. In dark mode the score is drawn light on dark too.
 - **Projects** are saved as `.gmsong` files (Ctrl+S); new ones go to `~/Documents/GameMusicApp/` by default. The recent list is kept in the app's settings folder (`~/.config/GameMusicApp/` on Linux).
 - **Record / import:** in the tab editor, "● Record" in the top bar records your guitar (with a metronome count-in) or imports a WAV. Line up beat 1 on the waveform, let Basic Pitch transcribe it, check the result as tab and insert it into a track. Takes are saved in the project, so you can re-transcribe them later.
 - **Sounds:** click a guitar, bass or keys track's sound in the track list to open its sound window. Pick a category (8-bit synth presets, your own presets, or an instrument family such as Piano, Guitar, Strings or Synth lead) and click a sound: it plays a note, and the track uses it. Any of the 128 General MIDI sounds works on any of these tracks, e.g. a piano on a guitar track. Try the sound on the on-screen keys, the computer keyboard (A–K, Z/X = octave) or a MIDI keyboard. Drum tracks use the drum kit or the 8-bit kit.

@@ -8,6 +8,8 @@ export type MenuItem =
       shortcut?: string
       title?: string
       disabled?: boolean
+      /** One of a set of choices: shows a check mark when true. */
+      checked?: boolean
       onSelect: () => void
     }
   | 'separator'
@@ -71,7 +73,8 @@ export function Menu({ label, title, items, align = 'left', className = '', chev
             ) : (
               <button
                 key={item.label}
-                role="menuitem"
+                role={item.checked === undefined ? 'menuitem' : 'menuitemradio'}
+                aria-checked={item.checked}
                 title={item.title}
                 disabled={item.disabled}
                 onClick={() => {
@@ -79,7 +82,10 @@ export function Menu({ label, title, items, align = 'left', className = '', chev
                   item.onSelect()
                 }}
               >
-                <span>{item.label}</span>
+                <span>
+                  {item.checked !== undefined && <span className="menu-check">{item.checked ? '✓' : ''}</span>}
+                  {item.label}
+                </span>
                 {item.shortcut && <kbd>{item.shortcut}</kbd>}
               </button>
             )

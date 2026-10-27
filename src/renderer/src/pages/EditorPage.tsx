@@ -7,6 +7,7 @@ import { MidiPanel } from '../panels/MidiPanel'
 import { ShortcutsDialog } from '../panels/ShortcutsDialog'
 import { TabEditor } from '../panels/TabEditor'
 import type { Project } from '../project/useProject'
+import { setThemeChoice, THEME_CHOICES, useThemeChoice } from '../theme'
 
 type Page = 'editor' | 'midi'
 
@@ -26,6 +27,7 @@ interface Props {
 
 export function EditorPage({ project, getEngine, saveStatus, onSave, onHome }: Props): React.JSX.Element {
   const [page, setPage] = useState<Page>('editor')
+  const themeChoice = useThemeChoice()
   const [shortcuts, setShortcuts] = useState(false)
   const [transport, setTransport] = useState<HTMLElement | null>(null)
   const [actions, setActions] = useState<HTMLElement | null>(null)
@@ -96,6 +98,8 @@ export function EditorPage({ project, getEngine, saveStatus, onSave, onHome }: P
             'separator',
             { label: 'MIDI keyboard and audio latency', onSelect: () => setPage('midi') },
             { label: 'Keyboard shortcuts', shortcut: '?', onSelect: showShortcuts },
+            'separator',
+            ...THEME_CHOICES.map((t) => ({ label: `${t.label} mode`, title: t.title, checked: themeChoice === t.value, onSelect: () => setThemeChoice(t.value) })),
             'separator',
             { label: 'Start page', onSelect: onHome }
           ]}

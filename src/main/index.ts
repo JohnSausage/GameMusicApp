@@ -98,6 +98,7 @@ async function runSmokeTest(win: BrowserWindow): Promise<void> {
     const button = (text, root = document) => [...root.querySelectorAll('button')].find((b) => b.textContent.includes(text))
     await sleep(1500)
     const startPage = document.querySelector('.start-page') !== null
+    const theme = document.documentElement.dataset.theme ?? null
     const recent = [...document.querySelectorAll('.recent-item:not(:disabled)')]
     ;(recent[0] ?? button('demo song'))?.click()
     await sleep(3000)
@@ -176,6 +177,7 @@ async function runSmokeTest(win: BrowserWindow): Promise<void> {
     return {
       title: document.title,
       startPage,
+      theme,
       opened: recent.length > 0 ? 'recent project' : 'demo song',
       editor,
       scoreRenderMs,
@@ -192,7 +194,7 @@ async function runSmokeTest(win: BrowserWindow): Promise<void> {
   })()`)
   const transcribed = /^[1-9]\d* notes? in/.test(result.transcription ?? '')
   const passed =
-    errors.length === 0 && result.startPage && result.scoreRenderMs !== null && result.preloadBridge && result.drumHits > 0 && result.pianoRoll && result.soundWindow.categories >= 17 && result.playing && transcribed
+    errors.length === 0 && result.startPage && result.theme !== null && result.scoreRenderMs !== null && result.preloadBridge && result.drumHits > 0 && result.pianoRoll && result.soundWindow.categories >= 17 && result.playing && transcribed
   console.log('SMOKE_TEST_RESULT ' + JSON.stringify({ ...result, userData: app.getPath('userData'), errors }))
   app.exit(passed ? 0 : 1)
 }

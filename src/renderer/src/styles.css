@@ -1,3 +1,4 @@
+/* Light colors by default; theme.ts sets data-theme="dark" for dark mode (chosen, or the system's). */
 :root {
   --bg: #f5f5f4;
   --surface: #ffffff;
@@ -10,22 +11,27 @@
   --warning: #b45309;
   --cursor: rgba(37, 99, 235, 0.35);
   --selection: rgba(234, 179, 8, 0.35);
+  /* The score: paper and ink. */
+  --score-bg: #ffffff;
+  --score-text: #000000;
   color-scheme: light;
   font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
   font-size: 14px;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #1c1917;
-    --surface: #292524;
-    --text: #f5f5f4;
-    --muted: #a8a29e;
-    --border: #44403c;
-    --accent: #3b82f6;
-    --warning: #f59e0b;
-    color-scheme: dark;
-  }
+:root[data-theme='dark'] {
+  --bg: #1c1917;
+  --surface: #292524;
+  --text: #f5f5f4;
+  --muted: #a8a29e;
+  --border: #44403c;
+  --accent: #3b82f6;
+  --warning: #f59e0b;
+  --cursor: rgba(59, 130, 246, 0.4);
+  --selection: rgba(234, 179, 8, 0.3);
+  --score-bg: #24201e;
+  --score-text: #ece9e6;
+  color-scheme: dark;
 }
 
 * {
@@ -262,10 +268,10 @@ label.block input {
   background: var(--danger);
 }
 
-/* The score is always black on white, also in dark mode. */
+/* The score has its own paper color: white in light mode, dark in dark mode (see scoreColors()). */
 .score-scroll {
-  background: #fff;
-  color: #000;
+  background: var(--score-bg);
+  color: var(--score-text);
   border: 1px solid var(--border);
   border-radius: 8px;
   overflow: auto;
@@ -305,7 +311,8 @@ code {
 }
 
 .start-header {
-  display: block;
+  align-items: flex-start;
+  justify-content: space-between;
   padding: 0;
   background: none;
   border: none;
@@ -494,6 +501,12 @@ button.icon {
 
 .menu-list kbd {
   color: var(--muted);
+}
+
+.menu-check {
+  display: inline-block;
+  width: 1.2em;
+  color: var(--accent);
 }
 
 .menu-separator {
@@ -702,6 +715,12 @@ label.inline {
   white-space: nowrap;
 }
 
+:root[data-theme='dark'] .score-end-actions button {
+  background: #172554;
+  border-color: #1e40af;
+  color: #bfdbfe;
+}
+
 kbd {
   font-family: inherit;
   font-size: 11.5px;
@@ -863,7 +882,7 @@ kbd {
   font-family: alphaTab;
   font-size: 26px;
   line-height: 0;
-  color: #000;
+  color: var(--score-text);
 }
 
 /* Narrow windows: the track list goes above the score instead of beside it. */

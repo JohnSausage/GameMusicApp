@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { ThemeSwitch } from '../components/ThemeSwitch'
 import type { NewSongOptions } from '../model/edit'
 import type { TrackKind } from '../model/song'
 import type { RecentProject } from '../platform'
@@ -95,8 +96,11 @@ export function StartPage({ storage, error, onCreate, onOpen, onOpenDemo }: Prop
   return (
     <div className="start-page">
       <header className="start-header">
-        <h1>GameMusicApp</h1>
-        <p className="muted">Compose game music on guitar.</p>
+        <div>
+          <h1>GameMusicApp</h1>
+          <p className="muted">Compose game music on guitar.</p>
+        </div>
+        <ThemeSwitch />
       </header>
 
       <div className="toolbar">
