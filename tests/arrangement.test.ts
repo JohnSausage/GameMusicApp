@@ -5,9 +5,12 @@ import {
   copyCellPart,
   deletePart,
   deleteUnusedParts,
+  duplicatePart,
   duplicateSection,
   moveSection,
+  newPart,
   partColors,
+  partSong,
   partStarts,
   placeSection,
   removeSection,
@@ -15,6 +18,7 @@ import {
   renameSection,
   resizeSection,
   setCellPart,
+  setPartBars,
   setPartColor,
   syncArrangement,
   unusedParts,
@@ -363,6 +367,104 @@ describe('partStarts', () => {
       { track: 0, bar: 2, name: 'Chorus', uses: 1, sameName: true },
       { track: 0, bar: 4, name: 'Verse', uses: 2, sameName: false }
     ])
+  })
+})
+
+describe('editing a part on its own', () => {
+  const song = arrange(written())
+  const guitar = song.tracks[0]
+  const verse = { trackId: guitar.id, partId: partOf(song, 0)! }
+  /** An edit of the part song, put back into the song the way the editor does it. */
+  const editPart = (s: Song, ref: typeof verse, change: (part: Song) => EditResult | null): Song => {
+    const result = change(partSong(s, ref)!)
+    if (!result) throw new Error('the edit did nothing')
+    return syncArrangement(s, setPartBars(s, ref, result.song.tracks[0].bars))
+  }
+
+  it('shows the part as a song with one track and no sections', () => {
+    const muted = { ...song, tracks: song.tracks.map((t) => ({ ...t, mute: true })) }
+    const part = partSong(muted, verse)!
+    expect(part.tracks).toHaveLength(1)
+    expect(part.tracks[0].name).toBe(guitar.name)
+    expect(part.tracks[0].mute).toBe(false)
+    expect(frets(part)).toEqual([3, 5])
+    expect(part.sections).toEqual([])
+    expect(part.arrangement).toBeUndefined()
+    expect(part.tracks[0].parts).toBeUndefined()
+    // The same song and part give the same object, so the score isn't drawn again.
+    expect(partSong(muted, verse)).toBe(part)
+    expect(partSong(muted, { ...verse, partId: 'nope' })).toBeNull()
+  })
+
+  it('a note changed in the part changes every section that plays it', () => {
+    const after = editPart(song, verse, (part) => setFret(part, at(1), 9, WHOLE))
+    expect(frets(after)).toEqual([3, 9, 7, '-', 3, 9])
+    expect(after.tracks[0].parts!.find((p) => p.id === verse.partId)!.bars.length).toBe(2)
+    expect(after.tracks[1].bars).toEqual(song.tracks[1].bars)
+    expect(names(after)).toEqual(names(song))
+  })
+
+  it('a part made longer is cut off by its sections, a shorter one repeats', () => {
+    const longer = editPart(song, verse, (part) => setFret(addBars(part, at(0), 1).song, at(2), 1, WHOLE))
+    expect(longer.tracks[0].parts!.find((p) => p.id === verse.partId)!.bars.length).toBe(3)
+    expect(lengths(longer)).toEqual([2, 2, 2])
+    expect(frets(longer)).toEqual([3, 5, 7, '-', 3, 5])
+
+    const shorter = editPart(song, verse, (part) => deleteBar(part, at(1)))
+    expect(frets(shorter)).toEqual([3, 3, 7, '-', 3, 3])
+    expect(lengths(shorter)).toEqual([2, 2, 2])
+  })
+
+  it('makes a new empty part, played nowhere or in a section', () => {
+    const unplaced = newPart(song, at(0), guitar.id, 4)!.song
+    const part = unplaced.tracks[0].parts!.at(-1)!
+    expect(part.name).toBe('Part A')
+    expect(part.bars).toHaveLength(4)
+    expect(part.bars.every((bar) => bar.beats.every((beat) => beat.notes.length === 0))).toBe(true)
+    expect(part.color).toBeDefined()
+    expect(frets(unplaced)).toEqual(frets(song))
+    expect(unusedParts(unplaced).map((u) => u.part.name)).toEqual(['Part A'])
+    expect(partNames(newPart(unplaced, at(0), guitar.id, 2)!.song).at(-1)).toBe('Part B')
+
+    const bass = song.tracks[1]
+    const placed = newPart(song, at(0), bass.id, 2, song.arrangement![1].id)!.song
+    const bassPart = placed.tracks[1].parts!.at(-1)!
+    expect(partOf(placed, 1, 1)).toBe(bassPart.id)
+    expect(partOf(placed, 0, 1)).toBeUndefined()
+
+    expect(newPart(song, at(0), guitar.id, 0)).toBeNull()
+    expect(newPart(song, at(0), guitar.id, 2, 'nope')).toBeNull()
+    expect(newPart(song, at(0), 'nope', 2)).toBeNull()
+  })
+
+  it('duplicates a part as a variation: same notes and color, played nowhere yet', () => {
+    const copied = duplicatePart(song, at(0), guitar.id, verse.partId)!.song
+    const parts = copied.tracks[0].parts!
+    const original = parts.find((p) => p.id === verse.partId)!
+    const copy = parts[parts.indexOf(original) + 1]
+    expect(partNames(copied)).toEqual(['Verse', 'Verse 2', 'Chorus'])
+    expect(copy.bars).toEqual(original.bars)
+    expect(copy.color).toBe(partColors(song).get(verse.partId))
+    expect(frets(copied)).toEqual(frets(song))
+    expect(unusedParts(copied).map((u) => u.part.name)).toEqual(['Verse 2'])
+
+    // Changing the copy leaves the original as it was.
+    const changed = editPart(copied, { trackId: guitar.id, partId: copy.id }, (part) => setFret(part, at(0), 12, WHOLE))
+    expect(frets(changed)).toEqual(frets(song))
+    expect(changed.tracks[0].parts!.find((p) => p.id === copy.id)!.bars[0].beats[0].notes[0].fret).toBe(12)
+
+    // A copy of the copy is numbered on.
+    expect(partNames(duplicatePart(copied, at(0), guitar.id, copy.id)!.song)).toEqual(['Verse', 'Verse 2', 'Verse 3', 'Chorus'])
+    expect(duplicatePart(song, at(0), guitar.id, 'nope')).toBeNull()
+  })
+
+  it('notes written into a new part play where it is placed', () => {
+    const bass = song.tracks[1]
+    const withPart = newPart(song, at(0), bass.id, 2)!.song
+    const ref = { trackId: bass.id, partId: withPart.tracks[1].parts!.at(-1)!.id }
+    const written = editPart(withPart, ref, (part) => setFret(part, { track: 0, bar: 0, beat: 0, string: 1 }, 2, WHOLE))
+    const placed = apply(written, setCellPart(written, at(0), written.arrangement![2].id, bass.id, ref.partId))
+    expect(frets(placed, 1)).toEqual(['-', '-', '-', '-', 2, '-'])
   })
 })
 

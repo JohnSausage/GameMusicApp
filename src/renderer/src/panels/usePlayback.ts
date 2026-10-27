@@ -3,6 +3,8 @@ import type { AudioEngine, PlayOptions } from '../audio/engine'
 import type { Song } from '../model/song'
 import type { GetEngine } from '../App'
 
+export type Playback = ReturnType<typeof usePlayback>
+
 /** Play/stop a song and expose the playback position for the score cursor. */
 export function usePlayback(getEngine: GetEngine): {
   playing: boolean

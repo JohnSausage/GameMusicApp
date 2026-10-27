@@ -102,6 +102,12 @@ async function runSmokeTest(win: BrowserWindow): Promise<void> {
     const recent = [...document.querySelectorAll('.recent-item:not(:disabled)')]
     ;(recent[0] ?? button('demo song'))?.click()
     await sleep(3000)
+    // The project may have been saved with the Arrangement tab open.
+    const viewTab = (name) => [...document.querySelectorAll('.view-tab')].find((b) => b.textContent === name)
+    if (!viewTab('Score')?.classList.contains('current')) {
+      viewTab('Score')?.click()
+      await sleep(1500)
+    }
     const editor = document.querySelector('.status-bar .cursor-info')?.textContent ?? null
     const scoreRenderMs = document.querySelector('.score-scroll')?.dataset.renderMs ?? null
 
@@ -122,14 +128,29 @@ async function runSmokeTest(win: BrowserWindow): Promise<void> {
     const pianoRoll = document.querySelector('.piano-roll .roll-grid') !== null
 
     // The Arrangement tab: the section grid, and a section duplicated as a repeat.
-    const viewTab = (name) => [...document.querySelectorAll('.view-tab')].find((b) => b.textContent === name)
     viewTab('Arrangement')?.click()
     await sleep(500)
     const sectionsBefore = document.querySelectorAll('.arr-section').length
     const arrangementView = document.querySelector('.arrangement')
     if (arrangementView) button('Duplicate', arrangementView)?.click()
     await sleep(300)
-    const arrangement = { sections: sectionsBefore, afterDuplicate: document.querySelectorAll('.arr-section').length, cells: document.querySelectorAll('.arr-cell').length, paletteParts: document.querySelectorAll('.arr-chip').length }
+    const paletteParts = document.querySelectorAll('.arr-chip').length
+    // "+" in the palette: a new empty part, edited under the grid.
+    document.querySelector('.arr-chip-add')?.click()
+    await sleep(500)
+    const arrangement = {
+      sections: sectionsBefore,
+      afterDuplicate: document.querySelectorAll('.arr-section').length,
+      cells: document.querySelectorAll('.arr-cell').length,
+      paletteParts,
+      newPart: document.querySelectorAll('.arr-chip').length === paletteParts + 1,
+      partScore: document.querySelector('.arr-part-editor .score-scroll') !== null
+    }
+    // "Duplicate" over the part: a copy to build a variation on.
+    const partHead = document.querySelector('.arr-part-head')
+    if (partHead) button('Duplicate', partHead)?.click()
+    await sleep(500)
+    arrangement.duplicated = document.querySelectorAll('.arr-chip').length === paletteParts + 2
     viewTab('Score')?.click()
     await sleep(1500)
 
@@ -207,7 +228,7 @@ async function runSmokeTest(win: BrowserWindow): Promise<void> {
   })()`)
   const transcribed = /^[1-9]\d* notes? in/.test(result.transcription ?? '')
   const passed =
-    errors.length === 0 && result.startPage && result.theme !== null && result.scoreRenderMs !== null && result.preloadBridge && result.drumHits > 0 && result.pianoRoll && result.arrangement.cells > 0 && result.arrangement.paletteParts > 0 && result.arrangement.afterDuplicate === result.arrangement.sections + 1 && result.soundWindow.categories >= 17 && result.playing && transcribed
+    errors.length === 0 && result.startPage && result.theme !== null && result.scoreRenderMs !== null && result.preloadBridge && result.drumHits > 0 && result.pianoRoll && result.arrangement.cells > 0 && result.arrangement.paletteParts > 0 && result.arrangement.afterDuplicate === result.arrangement.sections + 1 && result.arrangement.newPart && result.arrangement.partScore && result.arrangement.duplicated && result.soundWindow.categories >= 17 && result.playing && transcribed
   console.log('SMOKE_TEST_RESULT ' + JSON.stringify({ ...result, userData: app.getPath('userData'), errors }))
   app.exit(passed ? 0 : 1)
 }

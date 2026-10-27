@@ -4,9 +4,11 @@ import {
   copyCellPart,
   deletePart,
   deleteUnusedParts,
+  duplicatePart,
   duplicateSection,
   MAX_SECTION_BARS,
   moveSection,
+  newPart,
   PART_COLORS,
   partColors,
   partUses,
@@ -20,7 +22,7 @@ import {
   setPartColor,
   unusedParts
 } from '../model/arrangement'
-import { startRow, type BarRange, type Cursor, type EditResult } from '../model/edit'
+import { startRow, type BarRange, type EditResult } from '../model/edit'
 import { barCount, type ArrangementSection, type Part, type Track } from '../model/song'
 import { barSeconds } from '../model/timing'
 import type { Project } from '../project/useProject'
@@ -42,12 +44,17 @@ interface Props {
   loop: BarRange | null
   message: string
   onMessage: (message: string) => void
-  onMoveCursor: (cursor: Cursor) => void
   onLoopSection: (start: number) => void
   onEditInScore: () => void
   /** Keys that work the same here and in the score (play, loop, …); true if handled. */
   onSharedKey: (event: React.KeyboardEvent) => boolean
   onShowShortcuts?: () => void
+  /** The score of the part being edited (project.part), shown under the grid. */
+  partEditor: React.ReactNode
+  /** The edited part is playing on its own. */
+  partPlaying: boolean
+  /** Plays the edited part on its own from its start, or stops. */
+  onPlayPart: () => void
 }
 
 /** Something being dragged: a part (from a cell or the palette) or a section (by its name). */
@@ -102,18 +109,25 @@ function swallowClick(): void {
   window.setTimeout(() => window.removeEventListener('click', swallow, { capture: true }), 0)
 }
 
+function isTyping(target: EventTarget | null): boolean {
+  return target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement
+}
+
 /**
  * The song form as a grid: sections from left to right, a lane per track, and
  * in each cell the part the track plays there, in the part's color. The cursor's
  * section and track are the selected cell, so playback starts there and "Edit in
  * score" goes there. Parts can be dragged onto other sections of their track,
  * sections dragged to another place, and their right edge dragged to resize them.
- * Under the grid, the palette lists every part of every track.
+ * Under the grid, the part of the selected cell (or one picked in the palette) is
+ * edited on its own; the palette under it lists every part of every track.
  */
 export function ArrangementView(props: Props): React.JSX.Element {
-  const { project, playing, positionRef, loop, message, onMessage, onMoveCursor, onLoopSection, onEditInScore, onSharedKey, onShowShortcuts } = props
+  const { project, playing, positionRef, loop, message, onMessage, onLoopSection, onEditInScore, onSharedKey, onShowShortcuts } = props
+  const { partEditor, partPlaying, onPlayPart } = props
   const { song, cursor } = project
-  const rootRef = useRef<HTMLDivElement>(null)
+  const gridRef = useRef<HTMLDivElement>(null)
+  const partRef = useRef<HTMLDivElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const laneRef = useRef<HTMLDivElement>(null)
   const playheadRef = useRef<HTMLDivElement>(null)
@@ -142,8 +156,12 @@ export function ArrangementView(props: Props): React.JSX.Element {
   const section = arrangement[current]
   const track = song.tracks[cursor.track]
   const uses = partUses(song, track)
-  const part = track.parts?.find((p) => p.id === section?.parts[track.id])
-  const elsewhere = part ? (uses.get(part.id) ?? []).filter((s) => s !== section) : []
+  const cellPartId = section?.parts[track.id]
+  // The part edited under the grid.
+  const editedRef = project.editedPart
+  const editedTrack = editedRef ? song.tracks.find((t) => t.id === editedRef.trackId) : undefined
+  const edited = editedTrack?.parts?.find((p) => p.id === editedRef?.partId)
+  const editedUses = edited && editedTrack ? (editedTrack === track ? uses : partUses(song, editedTrack)).get(edited.id) ?? [] : []
   const unused = unusedParts(song)
   const colors = partColors(song)
   const colorOf = (p: Part): number => colors.get(p.id) ?? 0
@@ -158,8 +176,20 @@ export function ArrangementView(props: Props): React.JSX.Element {
   live.current = { shown, shownStarts, barPx }
 
   useEffect(() => {
-    rootRef.current?.focus()
+    gridRef.current?.focus()
   }, [])
+
+  /**
+   * The part of the selected cell is edited under the grid. A silent cell keeps
+   * the part of its track being edited, so it can be placed there.
+   */
+  const followCell = (s: ArrangementSection | undefined, t: Track): void => {
+    const partId = s?.parts[t.id]
+    if (partId) project.editPart({ trackId: t.id, partId })
+    else if (project.editedPart?.trackId !== t.id) project.editPart(null)
+  }
+  // Also when the cell changes another way (the track list, undo, …).
+  useEffect(() => followCell(section, track), [current, track.id, cellPartId])
 
   useLayoutEffect(() => {
     const element = scrollRef.current
@@ -276,14 +306,16 @@ export function ArrangementView(props: Props): React.JSX.Element {
     const s = Math.max(0, Math.min(arrangement.length - 1, index))
     const t = Math.max(0, Math.min(song.tracks.length - 1, trackIndex))
     const sameKind = song.tracks[t].kind === track.kind
-    onMoveCursor({ track: t, bar: starts[s], beat: 0, string: startRow(song, t, starts[s], 0, sameKind ? cursor.string : null) })
-    rootRef.current?.focus()
+    project.setCursor({ track: t, bar: starts[s], beat: 0, string: startRow(song, t, starts[s], 0, sameKind ? cursor.string : null) })
+    followCell(arrangement[s], song.tracks[t])
+    gridRef.current?.focus()
   }
 
   /** A part plays in a section (the selected one by default), and that cell is selected. */
   const place = (t: Track, p: Part, sectionIndex = current): void => {
     edit(setCellPart(song, cursor, arrangement[sectionIndex].id, t.id, p.id))
     select(sectionIndex, song.tracks.indexOf(t))
+    project.editPart({ trackId: t.id, partId: p.id })
   }
 
   dropRef.current = ({ item, target, insertAt }: Drag): void => {
@@ -321,15 +353,37 @@ export function ArrangementView(props: Props): React.JSX.Element {
   const move = (delta: -1 | 1): void => void edit(moveSection(song, cursor, section.id, delta))
   const silence = (): void => void edit(setCellPart(song, cursor, section.id, track.id, null))
   const copyPart = (): void => {
-    if (!part) return
     const result = copyCellPart(song, cursor, section.id, track.id)
     const copy = result?.song.tracks[cursor.track].parts?.at(-1)
     if (edit(result) && copy) onMessage(`“${section.name}” now plays its own copy, “${copy.name}”: changes to it stay in this section.`)
   }
 
-  const onKeyDown = (event: React.KeyboardEvent<HTMLDivElement>): void => {
-    const target = event.target
-    if (target instanceof HTMLInputElement || target instanceof HTMLSelectElement || target instanceof HTMLTextAreaElement) return
+  /** A new empty part for a track, as long as the selected section; with `here`, the selected section plays it. */
+  const addPart = (t: Track, here = false): void => {
+    const result = newPart(song, cursor, t.id, section.length, here ? section.id : undefined)
+    const created = result?.song.tracks.find((x) => x.id === t.id)?.parts?.at(-1)
+    if (!edit(result) || !created) return
+    project.editPart({ trackId: t.id, partId: created.id })
+    onMessage(
+      here
+        ? `“${section.name}” now plays the new part “${created.name}”: write its notes below.`
+        : `New part “${created.name}” for ${t.name}: write its notes below, then drag it onto a section.`
+    )
+  }
+
+  /** A copy of the edited part to build a variation on; it is edited from then on. */
+  const duplicateEdited = (): void => {
+    if (!edited || !editedTrack) return
+    const result = duplicatePart(song, cursor, editedTrack.id, edited.id)
+    const copy = result?.song.tracks.find((t) => t.id === editedTrack.id)?.parts?.find((p) => !editedTrack.parts?.some((o) => o.id === p.id))
+    if (!edit(result) || !copy) return
+    project.editPart({ trackId: editedTrack.id, partId: copy.id })
+    onMessage(`“${copy.name}” is a copy of “${edited.name}”: change it below, then drag it onto a section or use “Place in”.`)
+  }
+
+  /** Grid keys: they work while the grid has the focus. */
+  const onGridKeyDown = (event: React.KeyboardEvent<HTMLDivElement>): void => {
+    if (isTyping(event.target)) return
     const ctrl = event.ctrlKey || event.metaKey
     const key = event.key
     let handled = true
@@ -344,23 +398,40 @@ export function ArrangementView(props: Props): React.JSX.Element {
     else if (ctrl && key.toLowerCase() === 'd') duplicate()
     else if (ctrl && (key === 'Delete' || key === 'Backspace')) remove()
     else if (key === 'Delete' || key === 'Backspace') silence()
-    else if (key === 'Enter') onEditInScore()
-    else handled = onSharedKey(event)
+    else if (key === 'Enter') partEditor ? partRef.current?.querySelector<HTMLElement>('.editor-main')?.focus() : onEditInScore()
+    else handled = false
     if (handled) event.preventDefault()
   }
 
-  const describe = (s: ArrangementSection, p: Part | undefined, others: ArrangementSection[]): string => {
-    if (!p) return 'Silent here. Pick a part above, drag one here, or double-click to write notes in the score.'
-    const also = others.length > 0 ? `; also plays in ${others.map((o) => `“${o.name}”`).join(', ')}` : ''
-    return `“${p.name}”: ${fillText(p, s)}${also}. Drag it onto another section to play it there too; double-click to edit it in the score.`
+  /** Keys everywhere else: the shared ones (play, loop, …). The part editor handles its own. */
+  const onKeyDown = (event: React.KeyboardEvent<HTMLDivElement>): void => {
+    if (event.defaultPrevented || isTyping(event.target)) return
+    onSharedKey(event)
   }
+
+  /** Esc in the part editor (with nothing selected there) goes back to the grid. */
+  const onPartKeyDown = (event: React.KeyboardEvent<HTMLDivElement>): void => {
+    if (event.key !== 'Escape' || event.defaultPrevented || isTyping(event.target)) return
+    event.preventDefault()
+    gridRef.current?.focus()
+  }
+
+  const describe = (s: ArrangementSection, p: Part | undefined, others: ArrangementSection[]): string => {
+    if (!p) return 'Silent here. Drag a part here, or make a new one below; double-click to write notes in the score.'
+    const also = others.length > 0 ? `; also plays in ${others.map((o) => `“${o.name}”`).join(', ')}` : ''
+    return `“${p.name}”: ${fillText(p, s)}${also}. It's edited below; drag it onto another section to play it there too, double-click to see it in the score.`
+  }
+  const sectionNames = (sections: ArrangementSection[]): string => sections.map((s) => `“${s.name}”`).join(', ')
 
   const draggingPart = drag?.moving && drag.item.kind === 'part' ? drag.item : null
   const draggingSection = drag?.moving && drag.item.kind === 'section' ? drag.item : null
   const insertX = draggingSection && drag?.insertAt !== null && drag?.insertAt !== undefined ? (drag.insertAt < shown.length ? shownStarts[drag.insertAt] : total) * barPx : null
 
+  const placeHere = edited && editedTrack && section.parts[editedTrack.id] !== edited.id
+  const cellPlaysEdited = edited && editedTrack === track && cellPartId === edited.id
+
   return (
-    <div ref={rootRef} className={`arrangement ${drag?.moving || resize ? 'dragging' : ''}`} tabIndex={0} onKeyDown={onKeyDown}>
+    <div className={`arrangement ${drag?.moving || resize ? 'dragging' : ''}`} onKeyDown={onKeyDown}>
       <div className="toolbar edit-toolbar arrangement-toolbar" role="group" aria-label="Section">
         <strong className="toolbar-title">Section</strong>
         <input
@@ -399,158 +470,185 @@ export function ArrangementView(props: Props): React.JSX.Element {
           Loop it
         </button>
         <span className="spacer" />
+        <button title="Show the selected section in the score, with all tracks (Enter or double-click a cell)" onClick={onEditInScore}>
+          Show in score
+        </button>
         <button title="Add 4 empty bars as a new section at the end" onClick={() => edit(addSection(song, cursor))}>
           + Section
         </button>
       </div>
 
-      <div className="toolbar edit-toolbar arrangement-toolbar" role="group" aria-label="Part">
-        <strong className="toolbar-title" title={`What “${track.name}” plays in “${section.name}”`}>
-          {track.name}
-        </strong>
-        <select
-          className="arr-part-select"
-          aria-label="Part"
-          title="The part this track plays in this section, or nothing"
-          value={part?.id ?? ''}
-          onChange={(e) => edit(setCellPart(song, cursor, section.id, track.id, e.target.value || null))}
-        >
-          {(track.parts ?? []).map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.name || '(no name)'}
-              {uses.has(p.id) ? '' : ' (not used)'}
-            </option>
-          ))}
-          <option value="">Silent</option>
-        </select>
-        {part && (
-          <>
-            <input
-              className="arr-part-name"
-              value={part.name}
-              aria-label="Part name"
-              title="Name of the part, in every section that plays it"
-              onChange={(e) => edit(renamePart(song, cursor, track.id, part.id, e.target.value), undefined, `part-name:${part.id}`)}
-            />
-            <div className="arr-swatches" role="group" aria-label="Part color">
-              {Array.from({ length: PART_COLORS }, (_, color) => (
-                <button
-                  key={color}
-                  className={`arr-swatch ${color === colorOf(part) ? 'current' : ''}`}
-                  style={partColor(color)}
-                  aria-label={`Color ${color + 1}`}
-                  aria-pressed={color === colorOf(part)}
-                  title="Color of the part, in every section that plays it"
-                  onClick={() => edit(setPartColor(song, cursor, track.id, part.id, color))}
-                />
-              ))}
-            </div>
-            <button
-              title={elsewhere.length > 0 ? 'Give this section its own copy of the part, to change it here without changing the other sections' : 'Make a copy of the part for this section (it plays nowhere else yet)'}
-              onClick={copyPart}
-            >
-              Own copy
-            </button>
-          </>
-        )}
-        <button title="Write and change the notes in the score (Enter, or double-click a cell)" onClick={onEditInScore}>
-          Edit in score
-        </button>
-        <span className="muted small arr-part-info">{part ? (elsewhere.length > 0 ? `Also plays in ${elsewhere.map((s) => `“${s.name}”`).join(', ')}` : 'Plays only here') : 'Silent in this section'}</span>
-      </div>
-
-      <div ref={scrollRef} className="arrangement-scroll">
-        <div
-          className="arrangement-grid"
-          style={{ '--arr-label': `${LABEL_PX}px`, '--arr-end': `${END_PX}px`, width: LABEL_PX + END_PX + total * barPx } as React.CSSProperties}
-        >
-          <div className="arr-row arr-ruler">
-            <div className="arr-label">Song</div>
-            <div ref={laneRef} className="arr-lane">
-              {loop && <div className="arr-loop" style={span(loop.start, loop.end - loop.start)} title="Loop playback repeats these bars" />}
-              {shown.map((s, i) => (
-                <button
-                  key={s.id}
-                  ref={i === current ? selectedRef : undefined}
-                  className={`arr-section ${i === current ? 'selected' : ''} ${draggingSection?.sectionId === s.id ? 'drag-source' : ''}`}
-                  style={span(shownStarts[i], s.length)}
-                  title={`“${s.name}”: bars ${shownStarts[i] + 1}–${shownStarts[i] + s.length}. Drag to move it, drag its right edge to change its length, double-click to loop it.`}
-                  onPointerDown={(e) => startDrag(e, { kind: 'section', sectionId: s.id, label: s.name || '(no name)' })}
-                  onClick={() => select(i)}
-                  onDoubleClick={() => onLoopSection(starts[i])}
-                >
-                  <span className="arr-name">{s.name || '(no name)'}</span>
-                  <small>{plural(s.length, 'bar')}</small>
-                  <span className="arr-resize" title="Drag to change the length" onPointerDown={(e) => startResize(e, s)} />
-                </button>
-              ))}
-            </div>
-            <div className="arr-end">
-              <button className="arr-add" title="Add 4 empty bars as a new section at the end" aria-label="Add a section" onClick={() => edit(addSection(song, cursor))}>
-                +
-              </button>
-            </div>
-          </div>
-
-          {song.tracks.map((t, ti) => {
-            const trackUses = ti === cursor.track ? uses : partUses(song, t)
-            const dropOk = draggingPart?.trackId === t.id
-            return (
-              <div key={t.id} className={`arr-row ${ti === cursor.track ? 'selected' : ''}`}>
-                <button className="arr-label" title={`Select “${t.name}”`} onClick={() => select(current, ti)}>
-                  {t.name}
-                </button>
-                <div className="arr-lane">
-                  {shown.map((s, i) => {
-                    const p = t.parts?.find((x) => x.id === s.parts[t.id])
-                    const selected = i === current && ti === cursor.track
-                    const target = dropOk && drag?.target === s.id
-                    return (
-                      <button
-                        key={s.id}
-                        data-cell=""
-                        data-track={t.id}
-                        data-section={s.id}
-                        className={`arr-cell ${p ? 'arr-part' : 'arr-silent'} ${selected ? 'selected' : ''} ${dropOk ? 'drop-ok' : ''} ${target ? 'drop-target' : ''}`}
-                        style={{ ...span(shownStarts[i], s.length), ...(p && partColor(colorOf(p))) }}
-                        title={`${t.name} in “${s.name}”: ${describe(s, p, p ? (trackUses.get(p.id) ?? []).filter((o) => o !== s) : [])}`}
-                        aria-label={`${t.name} in ${s.name}: ${p ? p.name : 'silent'}`}
-                        onPointerDown={p ? (e) => startDrag(e, partItem(t, p)) : undefined}
-                        onClick={() => select(i, ti)}
-                        onDoubleClick={() => {
-                          select(i, ti)
-                          onEditInScore()
-                        }}
-                      >
-                        {p && (
-                          <>
-                            {/* Where a shorter part starts again. */}
-                            {Array.from({ length: Math.max(0, Math.ceil(s.length / p.bars.length) - 1) }, (_, k) => (
-                              <span key={k} className="arr-repeat" style={{ left: (k + 1) * p.bars.length * barPx - 2 }} />
-                            ))}
-                            <span className="arr-name">{p.name || '(no name)'}</span>
-                            <small>{fillText(p, s)}</small>
-                          </>
-                        )}
-                      </button>
-                    )
-                  })}
-                </div>
-                <div className="arr-end" />
+      <div ref={gridRef} className="arrangement-grid-area" tabIndex={0} onKeyDown={onGridKeyDown}>
+        <div ref={scrollRef} className="arrangement-scroll">
+          <div
+            className="arrangement-grid"
+            style={{ '--arr-label': `${LABEL_PX}px`, '--arr-end': `${END_PX}px`, width: LABEL_PX + END_PX + total * barPx } as React.CSSProperties}
+          >
+            <div className="arr-row arr-ruler">
+              <div className="arr-label">Song</div>
+              <div ref={laneRef} className="arr-lane">
+                {loop && <div className="arr-loop" style={span(loop.start, loop.end - loop.start)} title="Loop playback repeats these bars" />}
+                {shown.map((s, i) => (
+                  <button
+                    key={s.id}
+                    ref={i === current ? selectedRef : undefined}
+                    className={`arr-section ${i === current ? 'selected' : ''} ${draggingSection?.sectionId === s.id ? 'drag-source' : ''}`}
+                    style={span(shownStarts[i], s.length)}
+                    title={`“${s.name}”: bars ${shownStarts[i] + 1}–${shownStarts[i] + s.length}. Drag to move it, drag its right edge to change its length, double-click to loop it.`}
+                    onPointerDown={(e) => startDrag(e, { kind: 'section', sectionId: s.id, label: s.name || '(no name)' })}
+                    onClick={() => select(i)}
+                    onDoubleClick={() => onLoopSection(starts[i])}
+                  >
+                    <span className="arr-name">{s.name || '(no name)'}</span>
+                    <small>{plural(s.length, 'bar')}</small>
+                    <span className="arr-resize" title="Drag to change the length" onPointerDown={(e) => startResize(e, s)} />
+                  </button>
+                ))}
               </div>
-            )
-          })}
-          <div className="arr-playhead-layer" aria-hidden="true">
-            <div ref={playheadRef} className="arr-playhead" />
-            {insertX !== null && <div className="arr-insert" style={{ left: insertX }} />}
+              <div className="arr-end">
+                <button className="arr-add" title="Add 4 empty bars as a new section at the end" aria-label="Add a section" onClick={() => edit(addSection(song, cursor))}>
+                  +
+                </button>
+              </div>
+            </div>
+
+            {song.tracks.map((t, ti) => {
+              const trackUses = ti === cursor.track ? uses : partUses(song, t)
+              const dropOk = draggingPart?.trackId === t.id
+              return (
+                <div key={t.id} className={`arr-row ${ti === cursor.track ? 'selected' : ''}`}>
+                  <button className="arr-label" title={`Select “${t.name}”`} onClick={() => select(current, ti)}>
+                    {t.name}
+                  </button>
+                  <div className="arr-lane">
+                    {shown.map((s, i) => {
+                      const p = t.parts?.find((x) => x.id === s.parts[t.id])
+                      const selected = i === current && ti === cursor.track
+                      const target = dropOk && drag?.target === s.id
+                      const editing = p !== undefined && p === edited
+                      return (
+                        <button
+                          key={s.id}
+                          data-cell=""
+                          data-track={t.id}
+                          data-section={s.id}
+                          className={`arr-cell ${p ? 'arr-part' : 'arr-silent'} ${selected ? 'selected' : ''} ${editing ? 'editing' : ''} ${dropOk ? 'drop-ok' : ''} ${target ? 'drop-target' : ''}`}
+                          style={{ ...span(shownStarts[i], s.length), ...(p && partColor(colorOf(p))) }}
+                          title={`${t.name} in “${s.name}”: ${describe(s, p, p ? (trackUses.get(p.id) ?? []).filter((o) => o !== s) : [])}`}
+                          aria-label={`${t.name} in ${s.name}: ${p ? p.name : 'silent'}`}
+                          onPointerDown={p ? (e) => startDrag(e, partItem(t, p)) : undefined}
+                          onClick={() => select(i, ti)}
+                          onDoubleClick={() => {
+                            select(i, ti)
+                            onEditInScore()
+                          }}
+                        >
+                          {p && (
+                            <>
+                              {/* Where a shorter part starts again. */}
+                              {Array.from({ length: Math.max(0, Math.ceil(s.length / p.bars.length) - 1) }, (_, k) => (
+                                <span key={k} className="arr-repeat" style={{ left: (k + 1) * p.bars.length * barPx - 2 }} />
+                              ))}
+                              <span className="arr-name">{p.name || '(no name)'}</span>
+                              <small>{fillText(p, s)}</small>
+                            </>
+                          )}
+                        </button>
+                      )
+                    })}
+                  </div>
+                  <div className="arr-end" />
+                </div>
+              )
+            })}
+            <div className="arr-playhead-layer" aria-hidden="true">
+              <div ref={playheadRef} className="arr-playhead" />
+              {insertX !== null && <div className="arr-insert" style={{ left: insertX }} />}
+            </div>
           </div>
         </div>
+      </div>
+
+      <div ref={partRef} className="arr-part-editor" onKeyDown={onPartKeyDown}>
+        {edited && editedTrack ? (
+          <>
+            <div className="toolbar edit-toolbar arrangement-toolbar arr-part-head" role="group" aria-label="Part" style={partColor(colorOf(edited))}>
+              <strong className="toolbar-title" title={`The part edited here belongs to “${editedTrack.name}”`}>
+                {editedTrack.name}
+              </strong>
+              <input
+                className="arr-part-name"
+                value={edited.name}
+                aria-label="Part name"
+                title="Name of the part, in every section that plays it"
+                onChange={(e) => edit(renamePart(song, cursor, editedTrack.id, edited.id, e.target.value), undefined, `part-name:${edited.id}`)}
+              />
+              <div className="arr-swatches" role="group" aria-label="Part color">
+                {Array.from({ length: PART_COLORS }, (_, color) => (
+                  <button
+                    key={color}
+                    className={`arr-swatch ${color === colorOf(edited) ? 'current' : ''}`}
+                    style={partColor(color)}
+                    aria-label={`Color ${color + 1}`}
+                    aria-pressed={color === colorOf(edited)}
+                    title="Color of the part, in every section that plays it"
+                    onClick={() => edit(setPartColor(song, cursor, editedTrack.id, edited.id, color))}
+                  />
+                ))}
+              </div>
+              <button title="A copy of this part to build a variation on: same notes and color, played in no section yet. The copy is edited here." onClick={duplicateEdited}>
+                Duplicate
+              </button>
+              <button
+                className={partPlaying ? 'active' : ''}
+                title={partPlaying ? 'Stop (Space)' : 'Play this part on its own, from its start (Space in the part plays from its cursor)'}
+                onClick={onPlayPart}
+              >
+                {partPlaying ? '■ Stop' : '▶ Play part'}
+              </button>
+              {placeHere && (
+                <button
+                  title={`Play this part in “${section.name}”${section.parts[editedTrack.id] ? `, instead of what ${editedTrack.name} plays there now` : ''} (or drag it from the palette)`}
+                  onClick={() => place(editedTrack, edited)}
+                >
+                  Place in “{section.name}”
+                </button>
+              )}
+              {cellPlaysEdited && editedUses.length > 1 && (
+                <button title={`Give “${section.name}” its own copy of the part, to change it there without changing ${sectionNames(editedUses.filter((s) => s !== section))}`} onClick={copyPart}>
+                  Own copy for “{section.name}”
+                </button>
+              )}
+              {cellPlaysEdited && (
+                <button title={`${editedTrack.name} plays nothing in “${section.name}” (Del in the grid); the part stays in the palette`} onClick={silence}>
+                  Silence in “{section.name}”
+                </button>
+              )}
+              <span className="muted small arr-part-info" title={editedUses.length > 0 ? `Plays in ${sectionNames(editedUses)}` : undefined}>
+                {plural(edited.bars.length, 'bar')} · {editedUses.length > 0 ? `plays in ${sectionNames(editedUses)}` : 'no section plays it yet'}
+              </span>
+            </div>
+            {partEditor}
+          </>
+        ) : (
+          <div className="arr-part-empty">
+            <p>
+              <strong>{track.name}</strong> is silent in “{section.name}”.
+            </p>
+            <div className="toolbar">
+              <button title={`A new empty part of ${plural(section.length, 'bar')}, played in “${section.name}”`} onClick={() => addPart(track, true)}>
+                + New part here
+              </button>
+              <span className="muted small">or drag a part from the palette onto the section, or click one there to edit it.</span>
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="arr-palette" role="group" aria-label="Parts">
         <div className="arr-palette-head">
           <strong>Parts</strong>
-          <span className="muted small">Click a part to play it in the selected section, or drag it onto a section of its track.</span>
+          <span className="muted small">Click a part to edit it above, drag it onto a section of its track to play it there; + makes a new one.</span>
         </div>
         {song.tracks.map((t, ti) => {
           const trackUses = ti === cursor.track ? uses : partUses(song, t)
@@ -560,18 +658,16 @@ export function ArrangementView(props: Props): React.JSX.Element {
                 {t.name}
               </span>
               <div className="arr-chips">
-                {(t.parts ?? []).length === 0 && <span className="muted small">No parts yet: write notes in a section of this track.</span>}
                 {(t.parts ?? []).map((p) => {
                   const count = trackUses.get(p.id)?.length ?? 0
-                  const selected = ti === cursor.track && p.id === part?.id
                   return (
                     <span key={p.id} className="arr-chip-wrap">
                       <button
-                        className={`arr-chip ${count > 0 ? '' : 'unused'} ${selected ? 'selected' : ''}`}
+                        className={`arr-chip ${count > 0 ? '' : 'unused'} ${p === edited ? 'selected' : ''}`}
                         style={partColor(colorOf(p))}
-                        title={`“${p.name}” (${plural(p.bars.length, 'bar')}): ${count > 0 ? `plays in ${plural(count, 'section')}` : 'no section plays it'}. Click to play it in “${section.name}”, or drag it onto a section.`}
+                        title={`“${p.name}” (${plural(p.bars.length, 'bar')}): ${count > 0 ? `plays in ${plural(count, 'section')}` : 'no section plays it'}. Click to edit it, or drag it onto a section.`}
                         onPointerDown={(e) => startDrag(e, partItem(t, p))}
-                        onClick={() => place(t, p)}
+                        onClick={() => project.editPart({ trackId: t.id, partId: p.id })}
                       >
                         <span className="arr-name">{p.name || '(no name)'}</span>
                         <small>{count > 0 ? `${count}×` : 'not used'}</small>
@@ -584,6 +680,14 @@ export function ArrangementView(props: Props): React.JSX.Element {
                     </span>
                   )
                 })}
+                <button
+                  className="arr-chip-add"
+                  title={`A new empty part for ${t.name}, ${plural(section.length, 'bar')} long like “${section.name}”: write it above, then drag it onto a section`}
+                  aria-label={`New part for ${t.name}`}
+                  onClick={() => addPart(t)}
+                >
+                  +
+                </button>
               </div>
             </div>
           )

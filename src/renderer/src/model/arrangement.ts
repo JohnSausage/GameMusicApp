@@ -299,6 +299,31 @@ export function copyCellPart(song: Song, cursor: Cursor, sectionId: string, trac
   })
 }
 
+/** "Theme" → "Theme 2", "Theme 2" → "Theme 3": the next number after the name that no part of the track has. */
+function copyName(track: Track, name: string): string {
+  const taken = new Set((track.parts ?? []).map((p) => p.name))
+  const numbered = /^(.*\S) (\d+)$/.exec(name)
+  const base = numbered ? numbered[1] : name || 'Part'
+  let n = numbered ? Number(numbered[2]) + 1 : 2
+  while (taken.has(`${base} ${n}`)) n++
+  return `${base} ${n}`
+}
+
+/**
+ * A copy of a part to build a variation on: same notes and color, right after
+ * the original in the track's parts. No section plays it yet.
+ */
+export function duplicatePart(song: Song, cursor: Cursor, trackId: string, partId: string): EditResult | null {
+  return arrangementEdit(song, cursor, (draft) => {
+    const track = draft.tracks.find((t) => t.id === trackId)
+    const index = track?.parts?.findIndex((p) => p.id === partId) ?? -1
+    if (!track?.parts || index < 0) return false
+    const part = track.parts[index]
+    const copy: Part = { id: newId(), name: copyName(track, part.name), bars: structuredClone(part.bars), color: partColors(draft).get(part.id) }
+    track.parts.splice(index + 1, 0, copy)
+  })
+}
+
 export function renamePart(song: Song, cursor: Cursor, trackId: string, partId: string, name: string): EditResult | null {
   return arrangementEdit(song, cursor, (draft) => {
     const part = draft.tracks.find((t) => t.id === trackId)?.parts?.find((p) => p.id === partId)
@@ -393,6 +418,68 @@ export function deletePart(song: Song, cursor: Cursor, trackId: string, partId: 
     const track = draft.tracks.find((t) => t.id === trackId)
     if (!track?.parts?.some((p) => p.id === partId) || partUses(draft, track).has(partId)) return false
     track.parts = track.parts.filter((p) => p.id !== partId)
+  })
+}
+
+/** A part of a track, e.g. the one edited on its own. */
+export interface PartRef {
+  trackId: string
+  partId: string
+}
+
+const partSongs = new WeakMap<Song, Map<string, Song>>()
+
+/**
+ * A part as a song of its own: just its track, playing the part's bars, with no
+ * sections and no title. The editor works on it like on any song, and
+ * setPartBars() puts the edited bars back. The same song and part give the same
+ * object, so the score isn't drawn again for nothing.
+ */
+export function partSong(song: Song, ref: PartRef): Song | null {
+  const key = `${ref.trackId}/${ref.partId}`
+  const cached = partSongs.get(song)?.get(key)
+  if (cached) return cached
+  const track = song.tracks.find((t) => t.id === ref.trackId)
+  const part = track?.parts?.find((p) => p.id === ref.partId)
+  if (!track || !part) return null
+  const { parts: _, ...rest } = track
+  // Heard on its own, whatever the mix says.
+  const result: Song = { ...song, title: '', tracks: [{ ...rest, bars: part.bars, mute: false, solo: false }], sections: [], arrangement: undefined }
+  if (!partSongs.has(song)) partSongs.set(song, new Map())
+  partSongs.get(song)!.set(key, result)
+  return result
+}
+
+/** The song with a part's bars replaced by `bars` (edited on their own), and written out again. */
+export function setPartBars(song: Song, ref: PartRef, bars: Bar[]): Song {
+  const tracks = song.tracks.map((track) =>
+    track.id === ref.trackId ? { ...track, parts: track.parts?.map((p) => (p.id === ref.partId ? { ...p, bars } : p)) } : track
+  )
+  return writeOut({ ...song, tracks })
+}
+
+/** "Part A", "Part B"…: the first letter no part of the track is named after. */
+function newPartName(track: Track): string {
+  const taken = new Set((track.parts ?? []).map((p) => p.name))
+  for (let i = 0; i < 26; i++) {
+    const name = `Part ${String.fromCharCode('A'.charCodeAt(0) + i)}`
+    if (!taken.has(name)) return name
+  }
+  return partName(track, 'Part')
+}
+
+/**
+ * A new empty part for a track, `length` bars long. With `sectionId` it plays in
+ * that section; otherwise no section plays it yet. The new part is the track's last.
+ */
+export function newPart(song: Song, cursor: Cursor, trackId: string, length: number, sectionId?: string): EditResult | null {
+  if (!Number.isInteger(length) || length < 1 || length > MAX_SECTION_BARS) return null
+  return arrangementEdit(song, cursor, (draft, sections) => {
+    const track = draft.tracks.find((t) => t.id === trackId)
+    const section = sections.find((s) => s.id === sectionId)
+    if (!track || (sectionId && !section)) return false
+    const part = addPart(draft, track, newPartName(track), Array.from({ length }, () => emptyBar(draft)))
+    if (section) section.parts[track.id] = part.id
   })
 }
 

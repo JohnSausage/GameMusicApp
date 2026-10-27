@@ -65,7 +65,9 @@ const GROUPS: { title: string; rows: Row[] }[] = [
       [['Ctrl+D'], 'Duplicate the section (a repeat with the same parts)'],
       [['Ctrl+Del'], 'Delete the section'],
       [['Del'], 'Make the track silent in this section'],
-      [['Enter', 'Double-click'], 'Edit the part in the score'],
+      [['Enter'], 'Edit the selected part under the grid'],
+      [['Esc'], 'In the part under the grid: back to the grid'],
+      [['Double-click'], 'Show the section in the score, with all tracks'],
       [['Drag a part'], 'Onto a section of its track (from the grid or the palette): play it there too'],
       [['Drag a section'], 'By its name: move it; by its right edge: change its length'],
       [['Esc'], 'Cancel a drag']

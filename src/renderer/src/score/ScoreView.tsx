@@ -287,6 +287,8 @@ export function ScoreView({ song, staveMode, zoom = 1, positionRef, editCursor, 
   useEffect(() => {
     let frame = 0
     const tick = (): void => {
+      // The score went away (its elements are detached before this loop is cancelled).
+      if (!hostRef.current) return
       const api = apiRef.current
       const converted = convertedRef.current
       if (api?.boundsLookup && converted) {
