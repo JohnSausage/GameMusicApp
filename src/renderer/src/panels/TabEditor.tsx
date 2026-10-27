@@ -78,10 +78,11 @@ import { barSeconds, buildTimeline, secondsPerQuarter } from '../model/timing'
 import { saveFile } from '../platform'
 import { readPref, writePref } from '../prefs'
 import type { HeaderSlots } from '../pages/EditorPage'
-import { ZOOM_STEPS } from '../project/layout'
+import { ZOOM_STEPS, type MainView } from '../project/layout'
 import type { ApplyOptions, Project } from '../project/useProject'
 import { ScoreView, type ScoreTarget } from '../score/ScoreView'
 import { noteName } from '../transcription/notes'
+import { ArrangementView } from './ArrangementView'
 import { DrumGrid } from './DrumGrid'
 import { ExportDialog } from './ExportDialog'
 import { InstrumentEditor } from './InstrumentEditor'
@@ -332,7 +333,7 @@ function TrackList({ project, onSelect, onEditSound, onMessage }: TrackListProps
 
 export function TabEditor({ project, getEngine, headerSlots, onShowShortcuts }: Props): React.JSX.Element {
   const { song, cursor } = project
-  const { staves, zoom, drumGridMinimized, pianoRollMinimized } = project.layout
+  const { view, staves, zoom, drumGridMinimized, pianoRollMinimized } = project.layout
   const [entryDuration, setEntryDuration] = useState<Duration>({ value: 4, dotted: false })
   const [message, setMessage] = useState('')
   /** Copied beats, and whether they came from a drum track (they only paste into the same kind). */
@@ -382,7 +383,7 @@ export function TabEditor({ project, getEngine, headerSlots, onShowShortcuts }: 
 
   useEffect(() => {
     editorRef.current?.focus()
-  }, [])
+  }, [view])
 
   useEffect(() => {
     if (drums) setGridTrackId(track.id)
@@ -401,7 +402,7 @@ export function TabEditor({ project, getEngine, headerSlots, onShowShortcuts }: 
     }
     element.addEventListener('wheel', onWheel, { passive: false })
     return () => element.removeEventListener('wheel', onWheel)
-  }, [])
+  }, [view])
 
   // Volume, mute and solo changes are heard right away while playing.
   useEffect(() => {
@@ -696,8 +697,26 @@ export function TabEditor({ project, getEngine, headerSlots, onShowShortcuts }: 
   const addBar = (): void => edit(addBars(song, cursor, 1))
   const addSection = (): void => edit(addBars(song, cursor, 4, nextSectionName(song)))
 
+  /** Score or arrangement; playback goes on. */
+  const showView = (next: MainView): void => project.setLayout({ view: next })
+
+  /** Keys that work the same in the score and the arrangement; true if handled. */
+  const sharedKey = (event: React.KeyboardEvent): boolean => {
+    const ctrl = event.ctrlKey || event.metaKey
+    const key = event.key
+    if (ctrl && key === 'Tab') showView(view === 'score' ? 'arrangement' : 'score')
+    else if (key === ' ' && recording) stopRecording()
+    else if (key === ' ') playing ? stop() : playFromCursor()
+    else if (key.toLowerCase() === 'l' && !ctrl) toggleLoop()
+    else if (key.toLowerCase() === 'm' && !ctrl) toggleMetronome()
+    else if (key === '?') onShowShortcuts?.()
+    else return false
+    event.preventDefault()
+    return true
+  }
+
   const onKeyDown = (event: React.KeyboardEvent<HTMLDivElement>): void => {
-    if (isTyping(event.target)) return
+    if (isTyping(event.target) || sharedKey(event)) return
     const ctrl = event.ctrlKey || event.metaKey
     const key = event.key
     let handled = true
@@ -729,14 +748,9 @@ export function TabEditor({ project, getEngine, headerSlots, onShowShortcuts }: 
     else if (key === '-') stepLength('shorter')
     else if (key === '.') toggleDots()
     else if (key.toLowerCase() === 'r' && !ctrl) selection ? removeSelection(false) : edit(clearBeat(song, cursor))
-    else if (key === ' ' && recording) stopRecording()
-    else if (key === ' ') playing ? stop() : playFromCursor()
     else if (key.toLowerCase() === 't' && !ctrl && !drums) tie()
     else if (key.toLowerCase() === 'h' && !ctrl && fretted) legato('hammer')
     else if (key.toLowerCase() === 's' && !ctrl && fretted) legato('slide')
-    else if (key.toLowerCase() === 'l' && !ctrl) toggleLoop()
-    else if (key.toLowerCase() === 'm' && !ctrl) toggleMetronome()
-    else if (key === '?') onShowShortcuts?.()
     else if (key === 'Insert') edit(insertBarBefore(song, cursor))
     else if (ctrl && key.toLowerCase() === 'a') selectAll()
     else if (ctrl && key.toLowerCase() === 'c') copy()
@@ -898,183 +912,215 @@ export function TabEditor({ project, getEngine, headerSlots, onShowShortcuts }: 
           headerSlots.actions
         )}
 
-      <div ref={editorRef} className="editor-main" tabIndex={0} onKeyDown={onKeyDown}>
-        <div className="toolbar edit-toolbar">
-          <div className="segmented lengths" role="group" aria-label="Note length">
-            {NOTE_VALUES.map((value) => (
-              <button
-                key={value}
-                className={beat.value === value ? 'active' : ''}
-                title={`${VALUE_LABELS[value].long} (+ / − change the length)`}
-                onClick={() => chooseDuration({ value, dotted: false })}
-              >
-                {VALUE_LABELS[value].short}
-              </button>
-            ))}
-          </div>
-          <div className="segmented">
-            <button className={beat.dotted ? 'active' : ''} title="Dotted (.); works on all selected beats" onClick={toggleDots}>
-              Dotted
+      <div className="editor-area">
+        <div className="view-tabs" role="tablist" aria-label="Main view">
+          {(['score', 'arrangement'] as const).map((v) => (
+            <button
+              key={v}
+              role="tab"
+              aria-selected={view === v}
+              className={`view-tab ${view === v ? 'current' : ''}`}
+              title={v === 'score' ? 'The notes, bar by bar (Ctrl+Tab switches)' : 'The song’s sections, and the part each track plays in them (Ctrl+Tab switches)'}
+              onClick={() => showView(v)}
+            >
+              {v === 'score' ? 'Score' : 'Arrangement'}
             </button>
-            <button title="Make this beat a rest (R)" onClick={() => edit(clearBeat(song, cursor))}>
-              Rest
-            </button>
-          </div>
-          {!drums && (
-            <div className="segmented" role="group" aria-label="Techniques">
+          ))}
+        </div>
+        {view === 'arrangement' ? (
+          <ArrangementView
+            project={project}
+            playing={playing}
+            positionRef={positionRef}
+            loop={loop ? loopRange : null}
+            message={message}
+            onMessage={setMessage}
+            onMoveCursor={(next) => moveCursor(next)}
+            onLoopSection={(start) => chooseLoop(`section:${start}`)}
+            onEditInScore={() => showView('score')}
+            onSharedKey={sharedKey}
+            onShowShortcuts={onShowShortcuts}
+          />
+        ) : (
+          <div ref={editorRef} className="editor-main" tabIndex={0} onKeyDown={onKeyDown}>
+            <div className="toolbar edit-toolbar">
+              <div className="segmented lengths" role="group" aria-label="Note length">
+                {NOTE_VALUES.map((value) => (
+                  <button
+                    key={value}
+                    className={beat.value === value ? 'active' : ''}
+                    title={`${VALUE_LABELS[value].long} (+ / − change the length)`}
+                    onClick={() => chooseDuration({ value, dotted: false })}
+                  >
+                    {VALUE_LABELS[value].short}
+                  </button>
+                ))}
+              </div>
+              <div className="segmented">
+                <button className={beat.dotted ? 'active' : ''} title="Dotted (.); works on all selected beats" onClick={toggleDots}>
+                  Dotted
+                </button>
+                <button title="Make this beat a rest (R)" onClick={() => edit(clearBeat(song, cursor))}>
+                  Rest
+                </button>
+              </div>
+              {!drums && (
+                <div className="segmented" role="group" aria-label="Techniques">
+                  <button
+                    className={noteOnString?.tie ? 'active' : ''}
+                    aria-pressed={!!noteOnString?.tie}
+                    title="Hold (T): the note before keeps sounding through this beat, also across a bar line (a tie)"
+                    onClick={tie}
+                  >
+                    Hold
+                  </button>
+                  {fretted && (
+                    <>
+                      <button
+                        className={noteOnString?.hammer ? 'active' : ''}
+                        aria-pressed={!!noteOnString?.hammer}
+                        title="Hammer-on / pull-off (H) from this note into the next note on this string"
+                        onClick={() => legato('hammer')}
+                      >
+                        H/P
+                      </button>
+                      <button
+                        className={noteOnString?.slide ? 'active' : ''}
+                        aria-pressed={!!noteOnString?.slide}
+                        title="Slide (S) from this note into the next note on this string"
+                        onClick={() => legato('slide')}
+                      >
+                        Slide
+                      </button>
+                    </>
+                  )}
+                </div>
+              )}
               <button
-                className={noteOnString?.tie ? 'active' : ''}
-                aria-pressed={!!noteOnString?.tie}
-                title="Hold (T): the note before keeps sounding through this beat, also across a bar line (a tie)"
-                onClick={tie}
+                className={stepInput ? 'active' : ''}
+                aria-pressed={stepInput}
+                title={`Step input: keys played on the MIDI keyboard are entered at the cursor with the chosen length (chords: press keys together). ${midiDevices?.length ? `Keyboard: ${midiDevices.join(', ')}` : 'No MIDI keyboard connected.'}`}
+                onClick={toggleStepInput}
               >
-                Hold
+                Step input
               </button>
-              {fretted && (
-                <>
-                  <button
-                    className={noteOnString?.hammer ? 'active' : ''}
-                    aria-pressed={!!noteOnString?.hammer}
-                    title="Hammer-on / pull-off (H) from this note into the next note on this string"
-                    onClick={() => legato('hammer')}
-                  >
-                    H/P
-                  </button>
-                  <button
-                    className={noteOnString?.slide ? 'active' : ''}
-                    aria-pressed={!!noteOnString?.slide}
-                    title="Slide (S) from this note into the next note on this string"
-                    onClick={() => legato('slide')}
-                  >
-                    Slide
-                  </button>
-                </>
+              <span className="divider" />
+              <Menu
+                label="Edit"
+                title="Edit"
+                items={[
+                  { label: selection ? 'Copy selection' : 'Copy bar', shortcut: 'Ctrl+C', onSelect: () => copy() },
+                  { label: selection ? 'Cut selection' : 'Cut bar', shortcut: 'Ctrl+X', onSelect: () => copy(true) },
+                  { label: 'Paste', shortcut: 'Ctrl+V', title: 'At the cursor or the start of the selection, overwriting what’s there', onSelect: paste },
+                  'separator',
+                  { label: 'Delete beat', shortcut: 'Shift+Del', title: 'The rest of the bar moves up', onSelect: removeBeat },
+                  { label: 'Select whole track', shortcut: 'Ctrl+A', onSelect: selectAll }
+                ]}
+              />
+              <Menu
+                label="Bar"
+                title="Bar"
+                items={[
+                  { label: 'Insert bar before', shortcut: 'Insert', onSelect: () => edit(insertBarBefore(song, cursor)) },
+                  { label: 'Duplicate bar', shortcut: 'Ctrl+D', onSelect: () => edit(duplicateBar(song, cursor)) },
+                  { label: 'Clear bar in this track', onSelect: () => edit(clearBar(song, cursor)) },
+                  { label: 'Delete bar in all tracks', shortcut: 'Ctrl+Del', onSelect: () => edit(deleteBar(song, cursor), 'A song needs at least one bar.') },
+                  'separator',
+                  section === null
+                    ? { label: 'Start a section here', onSelect: () => edit(setSection(song, cursor, cursor.bar, nextSectionName(song))) }
+                    : { label: `Remove section “${section}”`, onSelect: () => edit(setSection(song, cursor, cursor.bar, null)) },
+                  { label: 'Add a bar at the end', onSelect: addBar },
+                  { label: 'Add a section at the end', title: '4 empty bars with a new section name', onSelect: addSection }
+                ]}
+              />
+              {section !== null && (
+                <label className="section-name" title="Name of the section that starts at this bar">
+                  Section
+                  <input
+                    value={section}
+                    onChange={(e) => project.apply(setSection(song, cursor, cursor.bar, e.target.value), { mergeKey: `section:${cursor.bar}` })}
+                  />
+                </label>
               )}
             </div>
-          )}
-          <button
-            className={stepInput ? 'active' : ''}
-            aria-pressed={stepInput}
-            title={`Step input: keys played on the MIDI keyboard are entered at the cursor with the chosen length (chords: press keys together). ${midiDevices?.length ? `Keyboard: ${midiDevices.join(', ')}` : 'No MIDI keyboard connected.'}`}
-            onClick={toggleStepInput}
-          >
-            Step input
-          </button>
-          <span className="divider" />
-          <Menu
-            label="Edit"
-            title="Edit"
-            items={[
-              { label: selection ? 'Copy selection' : 'Copy bar', shortcut: 'Ctrl+C', onSelect: () => copy() },
-              { label: selection ? 'Cut selection' : 'Cut bar', shortcut: 'Ctrl+X', onSelect: () => copy(true) },
-              { label: 'Paste', shortcut: 'Ctrl+V', title: 'At the cursor or the start of the selection, overwriting what’s there', onSelect: paste },
-              'separator',
-              { label: 'Delete beat', shortcut: 'Shift+Del', title: 'The rest of the bar moves up', onSelect: removeBeat },
-              { label: 'Select whole track', shortcut: 'Ctrl+A', onSelect: selectAll }
-            ]}
-          />
-          <Menu
-            label="Bar"
-            title="Bar"
-            items={[
-              { label: 'Insert bar before', shortcut: 'Insert', onSelect: () => edit(insertBarBefore(song, cursor)) },
-              { label: 'Duplicate bar', shortcut: 'Ctrl+D', onSelect: () => edit(duplicateBar(song, cursor)) },
-              { label: 'Clear bar in this track', onSelect: () => edit(clearBar(song, cursor)) },
-              { label: 'Delete bar in all tracks', shortcut: 'Ctrl+Del', onSelect: () => edit(deleteBar(song, cursor), 'A song needs at least one bar.') },
-              'separator',
-              section === null
-                ? { label: 'Start a section here', onSelect: () => edit(setSection(song, cursor, cursor.bar, nextSectionName(song))) }
-                : { label: `Remove section “${section}”`, onSelect: () => edit(setSection(song, cursor, cursor.bar, null)) },
-              { label: 'Add a bar at the end', onSelect: addBar },
-              { label: 'Add a section at the end', title: '4 empty bars with a new section name', onSelect: addSection }
-            ]}
-          />
-          {section !== null && (
-            <label className="section-name" title="Name of the section that starts at this bar">
-              Section
-              <input
-                value={section}
-                onChange={(e) => project.apply(setSection(song, cursor, cursor.bar, e.target.value), { mergeKey: `section:${cursor.bar}` })}
+
+            <ScoreView
+              song={song}
+              staveMode={staves}
+              zoom={zoom}
+              positionRef={positionRef}
+              editCursor={cursor}
+              selection={selection}
+              onSelectArea={onSelectArea}
+              onScoreClick={onScoreClick}
+              endActions={
+                <>
+                  <button onClick={addBar} title="Add an empty bar at the end">+ Bar</button>
+                  <button onClick={addSection} title="Add 4 empty bars as a new named section">+ Section</button>
+                </>
+              }
+            />
+
+            {keys ? (
+              <PianoRoll
+                project={project}
+                trackIndex={cursor.track}
+                collapsed={pianoRollMinimized}
+                onToggleCollapsed={() => project.setLayout((layout) => ({ pianoRollMinimized: !layout.pianoRollMinimized }))}
+                positionRef={positionRef}
+                onEdit={edit}
+                onAudition={(pitch, velocity) => void audition(pitch, velocity)}
+                recording={recording}
+                onRecord={(gridTicks) => void startRecording(gridTicks)}
+                onStopRecording={stopRecording}
               />
-            </label>
-          )}
-        </div>
+            ) : gridTrack !== null && (
+              <DrumGrid
+                project={project}
+                trackIndex={gridTrack}
+                collapsed={drumGridMinimized}
+                onToggleCollapsed={() => project.setLayout((layout) => ({ drumGridMinimized: !layout.drumGridMinimized }))}
+                onSelectTrack={(index) => (drums ? moveCursor(switchTrack(song, cursor, index)) : setGridTrackId(song.tracks[index].id))}
+                positionRef={positionRef}
+                onEdit={edit}
+                onAudition={(note, velocity) => void audition(note, velocity, song.tracks[gridTrack])}
+              />
+            )}
 
-        <ScoreView
-          song={song}
-          staveMode={staves}
-          zoom={zoom}
-          positionRef={positionRef}
-          editCursor={cursor}
-          selection={selection}
-          onSelectArea={onSelectArea}
-          onScoreClick={onScoreClick}
-          endActions={
-            <>
-              <button onClick={addBar} title="Add an empty bar at the end">+ Bar</button>
-              <button onClick={addSection} title="Add 4 empty bars as a new named section">+ Section</button>
-            </>
-          }
-        />
-
-        {keys ? (
-          <PianoRoll
-            project={project}
-            trackIndex={cursor.track}
-            collapsed={pianoRollMinimized}
-            onToggleCollapsed={() => project.setLayout((layout) => ({ pianoRollMinimized: !layout.pianoRollMinimized }))}
-            positionRef={positionRef}
-            onEdit={edit}
-            onAudition={(pitch, velocity) => void audition(pitch, velocity)}
-            recording={recording}
-            onRecord={(gridTicks) => void startRecording(gridTicks)}
-            onStopRecording={stopRecording}
-          />
-        ) : gridTrack !== null && (
-          <DrumGrid
-            project={project}
-            trackIndex={gridTrack}
-            collapsed={drumGridMinimized}
-            onToggleCollapsed={() => project.setLayout((layout) => ({ drumGridMinimized: !layout.drumGridMinimized }))}
-            onSelectTrack={(index) => (drums ? moveCursor(switchTrack(song, cursor, index)) : setGridTrackId(song.tracks[index].id))}
-            positionRef={positionRef}
-            onEdit={edit}
-            onAudition={(note, velocity) => void audition(note, velocity, song.tracks[gridTrack])}
-          />
+            <div className="status-bar">
+              <span className="cursor-info">{describeCursor()}</span>
+              {message && <span className="status">{message}</span>}
+              <span className="spacer" />
+              {midiDevices && midiDevices.length > 0 && (
+                <span className="muted small" title="Connected MIDI keyboards">
+                  MIDI: {midiDevices.join(', ')}
+                </span>
+              )}
+              <div className="segmented" role="group" aria-label="View">
+                <button className={staves === 'notation+tab' ? 'active' : ''} title="Notation above the tab" onClick={() => project.setLayout({ staves: 'notation+tab' })}>
+                  Notation + tab
+                </button>
+                <button className={staves === 'tab' ? 'active' : ''} title="Only the tab (drums as a rhythm line)" onClick={() => project.setLayout({ staves: 'tab' })}>
+                  Tab only
+                </button>
+              </div>
+              <div className="segmented" role="group" aria-label="Zoom">
+                <button title="Zoom out (Ctrl+−, Ctrl+wheel)" aria-label="Zoom out" disabled={zoom <= ZOOM_STEPS[0]} onClick={() => changeZoom((z) => stepZoom(z, -1))}>
+                  −
+                </button>
+                <button title="Back to 100 % (Ctrl+0)" className="zoom-level" onClick={() => changeZoom(() => 1)}>
+                  {Math.round(zoom * 100)} %
+                </button>
+                <button title="Zoom in (Ctrl++, Ctrl+wheel)" aria-label="Zoom in" disabled={zoom >= ZOOM_STEPS.at(-1)!} onClick={() => changeZoom((z) => stepZoom(z, 1))}>
+                  +
+                </button>
+              </div>
+              <button className="icon-button help-button" title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts" onClick={onShowShortcuts}>
+                ?
+              </button>
+            </div>
+          </div>
         )}
-
-        <div className="status-bar">
-          <span className="cursor-info">{describeCursor()}</span>
-          {message && <span className="status">{message}</span>}
-          <span className="spacer" />
-          {midiDevices && midiDevices.length > 0 && (
-            <span className="muted small" title="Connected MIDI keyboards">
-              MIDI: {midiDevices.join(', ')}
-            </span>
-          )}
-          <div className="segmented" role="group" aria-label="View">
-            <button className={staves === 'notation+tab' ? 'active' : ''} title="Notation above the tab" onClick={() => project.setLayout({ staves: 'notation+tab' })}>
-              Notation + tab
-            </button>
-            <button className={staves === 'tab' ? 'active' : ''} title="Only the tab (drums as a rhythm line)" onClick={() => project.setLayout({ staves: 'tab' })}>
-              Tab only
-            </button>
-          </div>
-          <div className="segmented" role="group" aria-label="Zoom">
-            <button title="Zoom out (Ctrl+−, Ctrl+wheel)" aria-label="Zoom out" disabled={zoom <= ZOOM_STEPS[0]} onClick={() => changeZoom((z) => stepZoom(z, -1))}>
-              −
-            </button>
-            <button title="Back to 100 % (Ctrl+0)" className="zoom-level" onClick={() => changeZoom(() => 1)}>
-              {Math.round(zoom * 100)} %
-            </button>
-            <button title="Zoom in (Ctrl++, Ctrl+wheel)" aria-label="Zoom in" disabled={zoom >= ZOOM_STEPS.at(-1)!} onClick={() => changeZoom((z) => stepZoom(z, 1))}>
-              +
-            </button>
-          </div>
-          <button className="icon-button help-button" title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts" onClick={onShowShortcuts}>
-            ?
-          </button>
-        </div>
       </div>
 
       {soundEditor !== null && song.tracks[soundEditor] && (song.tracks[soundEditor].kind !== 'drums' || song.tracks[soundEditor].instrument.kind === 'synthkit') && (

@@ -1,5 +1,21 @@
 import { describe, expect, it } from 'vitest'
-import { arrange, partStarts, syncArrangement, writeOut } from '../src/renderer/src/model/arrangement'
+import {
+  addSection,
+  arrange,
+  copyCellPart,
+  deleteUnusedParts,
+  duplicateSection,
+  moveSection,
+  partStarts,
+  removeSection,
+  renamePart,
+  renameSection,
+  resizeSection,
+  setCellPart,
+  syncArrangement,
+  unusedParts,
+  writeOut
+} from '../src/renderer/src/model/arrangement'
 import { addBars, addTrack, createSong, deleteBar, deleteTrack, edit, insertBarBefore, setFret, setSection, type Cursor, type EditResult } from '../src/renderer/src/model/edit'
 import type { Song } from '../src/renderer/src/model/song'
 import { parseProject, ProjectFileError, serializeProject } from '../src/renderer/src/project/projectFile'
@@ -154,9 +170,9 @@ describe('syncArrangement', () => {
     expect(names(song)).toEqual(['Verse', 'Verse 2'])
     expect(lengths(song)).toEqual([4, 2])
     expect(frets(song)).toEqual([3, 5, 7, '-', 3, 5])
-    // The chorus part isn't played any more; the verse part stays as the second verse plays it.
-    expect(partNames(song)).not.toContain('Chorus')
+    // The verse part stays as the second verse plays it; the chorus part is kept, but no section plays it.
     expect(partOf(song, 1)).toBe(partOf(before, 0))
+    expect(unusedParts(song).map((u) => u.part.name)).toEqual(['Chorus'])
   })
 
   it('renaming a section keeps it', () => {
@@ -194,11 +210,91 @@ describe('syncArrangement', () => {
   it('new tracks start silent, and a deleted track leaves the arrangement', () => {
     const before = arrange(written())
     const added = apply(before, addTrack(before, at(0), 'keys'))
-    expect(added.tracks[2].parts).toEqual([])
+    expect(added.tracks[2].parts ?? []).toEqual([])
     expect(added.arrangement!.every((s) => s.parts[added.tracks[2].id] === undefined)).toBe(true)
     const deleted = apply(before, deleteTrack(before, at(0), 0))
     expect(deleted.arrangement!.every((s) => Object.keys(s.parts).length === 0)).toBe(true)
     expect(names(deleted)).toEqual(['Verse', 'Chorus', 'Verse 2'])
+  })
+})
+
+describe('arrangement edits', () => {
+  const sectionId = (song: Song, i: number): string => song.arrangement![i].id
+
+  it('picks the part a track plays in a section, or none', () => {
+    const before = arrange(written())
+    const guitar = before.tracks[0].id
+    const silent = apply(before, setCellPart(before, at(0), sectionId(before, 0), guitar, null))
+    expect(frets(silent)).toEqual(['-', '-', 7, '-', 3, 5])
+    const chorus = apply(silent, setCellPart(silent, at(0), sectionId(silent, 0), guitar, partOf(silent, 1)!))
+    expect(frets(chorus)).toEqual([7, '-', 7, '-', 3, 5])
+    expect(setCellPart(chorus, at(0), sectionId(chorus, 0), guitar, 'missing')).toBeNull()
+  })
+
+  it('gives a section its own copy of a part, so changes stay there', () => {
+    const before = arrange(written())
+    const copied = apply(before, copyCellPart(before, at(0), sectionId(before, 2), before.tracks[0].id))
+    expect(partNames(copied)).toEqual(['Verse', 'Chorus', 'Verse 2'])
+    expect(partOf(copied, 2)).not.toBe(partOf(copied, 0))
+    const song = apply(copied, setFret(copied, at(5), 9, WHOLE))
+    expect(frets(song)).toEqual([3, 5, 7, '-', 3, 9])
+  })
+
+  it('renames parts and sections', () => {
+    const before = arrange(written())
+    const song = apply(before, renamePart(before, at(0), before.tracks[0].id, partOf(before, 0)!, 'Theme A'))
+    expect(partStarts(song).map((s) => s.name)).toEqual(['Theme A', 'Chorus', 'Theme A'])
+    const renamed = apply(song, renameSection(song, at(0), sectionId(song, 1), 'Refrain'))
+    expect(renamed.sections.map((s) => s.name)).toEqual(['Verse', 'Refrain', 'Verse 2'])
+  })
+
+  it('a longer section repeats its parts, a shorter one cuts them off, and the parts stay the same', () => {
+    const before = arrange(written())
+    const longer = apply(before, resizeSection(before, at(0), sectionId(before, 1), 5))
+    expect(frets(longer)).toEqual([3, 5, 7, '-', 7, '-', 7, 3, 5])
+    expect(longer.tracks[0].parts![1].bars).toHaveLength(2)
+    const shorter = apply(longer, resizeSection(longer, at(0), sectionId(longer, 0), 1))
+    expect(frets(shorter)).toEqual([3, 7, '-', 7, '-', 7, 3, 5])
+    // The verse part keeps its second bar, which the second verse still plays.
+    expect(shorter.tracks[0].parts![0].bars).toHaveLength(2)
+    expect(resizeSection(shorter, at(0), sectionId(shorter, 0), 0)).toBeNull()
+  })
+
+  it('adds an empty section at the end, with the cursor on it', () => {
+    const before = arrange(written())
+    const result = addSection(before, at(0))!
+    const song = apply(before, result)
+    expect(names(song)).toEqual(['Verse', 'Chorus', 'Verse 2', 'Section D'])
+    expect(frets(song)).toEqual([3, 5, 7, '-', 3, 5, '-', '-', '-', '-'])
+    expect(result.cursor.bar).toBe(6)
+  })
+
+  it('duplicates a section as a repeat that plays the same parts', () => {
+    const before = arrange(written())
+    const result = duplicateSection(before, at(0), sectionId(before, 1))!
+    const song = apply(before, result)
+    expect(names(song)).toEqual(['Verse', 'Chorus', 'Chorus', 'Verse 2'])
+    expect(result.cursor.bar).toBe(4)
+    const edited = apply(song, setFret(song, at(4), 12, WHOLE))
+    expect(frets(edited)).toEqual([3, 5, 12, '-', 12, '-', 3, 5])
+  })
+
+  it('moves and removes sections; removed parts stay until deleted', () => {
+    const before = arrange(written())
+    const moved = apply(before, moveSection(before, at(0), sectionId(before, 2), -1))
+    expect(names(moved)).toEqual(['Verse', 'Verse 2', 'Chorus'])
+    expect(moveSection(moved, at(0), sectionId(moved, 0), -1)).toBeNull()
+
+    const removed = apply(moved, removeSection(moved, at(0), sectionId(moved, 2)))
+    expect(names(removed)).toEqual(['Verse', 'Verse 2'])
+    expect(frets(removed)).toEqual([3, 5, 3, 5])
+    expect(unusedParts(removed).map((u) => u.part.name)).toEqual(['Chorus'])
+    const cleaned = apply(removed, deleteUnusedParts(removed, at(0)))
+    expect(partNames(cleaned)).toEqual(['Verse'])
+    expect(deleteUnusedParts(cleaned, at(0))).toBeNull()
+
+    const one = apply(cleaned, removeSection(cleaned, at(0), sectionId(cleaned, 1)))
+    expect(removeSection(one, at(0), sectionId(one, 0))).toBeNull()
   })
 })
 

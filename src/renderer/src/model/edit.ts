@@ -237,9 +237,14 @@ function shiftSections(song: Song, fromBar: number, by: number): void {
   for (const section of song.sections) if (section.bar >= fromBar) section.bar += by
 }
 
+/** "Section A", "Section B"…: the letter after the number of sections, or the next one not taken. */
 export function nextSectionName(song: Song): string {
-  const letter = String.fromCharCode('A'.charCodeAt(0) + (song.sections.length % 26))
-  return `Section ${letter}`
+  const taken = new Set(song.sections.map((s) => s.name))
+  for (let i = 0; i < 26; i++) {
+    const name = `Section ${String.fromCharCode('A'.charCodeAt(0) + ((song.sections.length + i) % 26))}`
+    if (!taken.has(name)) return name
+  }
+  return `Section ${song.sections.length + 1}`
 }
 
 /**

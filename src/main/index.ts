@@ -121,6 +121,18 @@ async function runSmokeTest(win: BrowserWindow): Promise<void> {
     await sleep(500)
     const pianoRoll = document.querySelector('.piano-roll .roll-grid') !== null
 
+    // The Arrangement tab: the section grid, and a section duplicated as a repeat.
+    const viewTab = (name) => [...document.querySelectorAll('.view-tab')].find((b) => b.textContent === name)
+    viewTab('Arrangement')?.click()
+    await sleep(500)
+    const sectionsBefore = document.querySelectorAll('.arr-section').length
+    const arrangementView = document.querySelector('.arrangement')
+    if (arrangementView) button('Duplicate', arrangementView)?.click()
+    await sleep(300)
+    const arrangement = { sections: sectionsBefore, afterDuplicate: document.querySelectorAll('.arr-section').length, cells: document.querySelectorAll('.arr-cell').length }
+    viewTab('Score')?.click()
+    await sleep(1500)
+
     // The sound window of the first track: sound categories, and its sounds as tiles.
     document.querySelector('.track-card .sound-button')?.click()
     await sleep(300)
@@ -183,6 +195,7 @@ async function runSmokeTest(win: BrowserWindow): Promise<void> {
       scoreRenderMs,
       drumHits,
       pianoRoll,
+      arrangement,
       soundWindow,
       retroSounds,
       playing,
@@ -194,7 +207,7 @@ async function runSmokeTest(win: BrowserWindow): Promise<void> {
   })()`)
   const transcribed = /^[1-9]\d* notes? in/.test(result.transcription ?? '')
   const passed =
-    errors.length === 0 && result.startPage && result.theme !== null && result.scoreRenderMs !== null && result.preloadBridge && result.drumHits > 0 && result.pianoRoll && result.soundWindow.categories >= 17 && result.playing && transcribed
+    errors.length === 0 && result.startPage && result.theme !== null && result.scoreRenderMs !== null && result.preloadBridge && result.drumHits > 0 && result.pianoRoll && result.arrangement.cells > 0 && result.arrangement.afterDuplicate === result.arrangement.sections + 1 && result.soundWindow.categories >= 17 && result.playing && transcribed
   console.log('SMOKE_TEST_RESULT ' + JSON.stringify({ ...result, userData: app.getPath('userData'), errors }))
   app.exit(passed ? 0 : 1)
 }

@@ -14,6 +14,13 @@
   /* The score: paper and ink. */
   --score-bg: #ffffff;
   --score-text: #000000;
+  /* Track lanes in the arrangement. */
+  --lane-0: #7c3aed;
+  --lane-1: #0d9488;
+  --lane-2: #ea580c;
+  --lane-3: #2563eb;
+  --lane-4: #db2777;
+  --lane-5: #65a30d;
   color-scheme: light;
   font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
   font-size: 14px;
@@ -31,6 +38,12 @@
   --selection: rgba(234, 179, 8, 0.3);
   --score-bg: #24201e;
   --score-text: #ece9e6;
+  --lane-0: #a78bfa;
+  --lane-1: #2dd4bf;
+  --lane-2: #fb923c;
+  --lane-3: #60a5fa;
+  --lane-4: #f472b6;
+  --lane-5: #a3e635;
   color-scheme: dark;
 }
 
@@ -275,6 +288,8 @@ label.block input {
   border: 1px solid var(--border);
   border-radius: 8px;
   overflow: auto;
+  /* The score is laid out for the width inside; it stays the same with or without a scrollbar. */
+  scrollbar-gutter: stable;
   max-height: calc(100vh - 230px);
 }
 
@@ -793,6 +808,290 @@ kbd {
   border-radius: 50%;
   min-width: 26px;
   height: 26px;
+}
+
+/* ---------------------------------------------------------------- score / arrangement tabs */
+
+.editor-area {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.editor-area > .editor-main,
+.editor-area > .arrangement {
+  flex: 1;
+}
+
+.view-tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 8px;
+  flex-shrink: 0;
+}
+
+.view-tab {
+  border: none;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  margin-bottom: -1px;
+  padding: 6px 16px;
+  background: none;
+  color: var(--muted);
+}
+
+.view-tab:hover:not(:disabled) {
+  border-color: transparent;
+  color: var(--text);
+}
+
+.view-tab.current,
+.view-tab.current:hover:not(:disabled) {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+  font-weight: 600;
+}
+
+/* ---------------------------------------------------------------- arrangement (section grid) */
+
+.arrangement {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  outline: none;
+}
+
+.arrangement-toolbar {
+  gap: 6px;
+  margin-bottom: 6px;
+  flex-wrap: wrap;
+}
+
+.toolbar-title {
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.arr-section-name,
+.arr-part-name {
+  width: 150px;
+}
+
+.arr-part-select {
+  max-width: 200px;
+}
+
+.inline-field {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.inline-field input[type='number'] {
+  width: 68px;
+}
+
+.arr-part-info {
+  flex: 1 1 120px;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.arrangement-scroll {
+  flex: 1;
+  min-height: 160px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.arrangement:focus-visible .arrangement-scroll {
+  border-color: var(--accent);
+}
+
+.arrangement-grid {
+  --arr-label: 120px;
+  --arr-end: 48px;
+  position: relative;
+  padding: 6px 0 10px;
+}
+
+.arr-row {
+  display: grid;
+  grid-template-columns: var(--arr-label) minmax(0, 1fr) var(--arr-end);
+  height: 54px;
+}
+
+.arr-ruler {
+  height: 50px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 4px;
+}
+
+.arr-label {
+  position: sticky;
+  left: 0;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  border: none;
+  border-radius: 0;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 13px;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+button.arr-label {
+  display: block;
+  line-height: 54px;
+}
+
+button.arr-label:hover:not(:disabled) {
+  color: var(--text);
+}
+
+.arr-row.selected .arr-label {
+  color: var(--text);
+  font-weight: 600;
+  box-shadow: inset 3px 0 0 var(--lane);
+}
+
+.arr-lane {
+  position: relative;
+  min-width: 0;
+}
+
+.arr-section,
+.arr-cell {
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: flex-start;
+  min-width: 0;
+  padding: 3px 8px;
+  border-radius: 6px;
+  overflow: hidden;
+  text-align: left;
+  line-height: 1.25;
+}
+
+.arr-section {
+  bottom: 9px;
+  background: var(--bg);
+}
+
+.arr-part {
+  background: color-mix(in srgb, var(--lane) 16%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--lane) 55%, var(--surface));
+}
+
+.arr-silent {
+  background: none;
+  border: 1px dashed var(--border);
+}
+
+.arr-section:hover:not(:disabled),
+.arr-cell:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+.arr-section.selected,
+.arr-cell.selected {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  z-index: 1;
+}
+
+.arr-name {
+  max-width: 100%;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* A line where a shorter part starts again. */
+.arr-repeat {
+  position: absolute;
+  top: 5px;
+  bottom: 5px;
+  border-left: 1px dashed color-mix(in srgb, var(--lane) 70%, var(--surface));
+}
+
+.arr-cell .arr-name,
+.arr-cell small {
+  position: relative;
+}
+
+.arr-section small,
+.arr-cell small {
+  max-width: 100%;
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The looped bars: a bar under the section names. */
+.arr-loop {
+  position: absolute;
+  bottom: 2px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+
+.arr-end {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.arr-add {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border-radius: 50%;
+  font-size: 18px;
+  line-height: 1;
+}
+
+.arr-playhead-layer {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: var(--arr-label);
+  right: var(--arr-end);
+  pointer-events: none;
+  z-index: 3;
+}
+
+.arr-playhead {
+  display: none;
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--accent);
 }
 
 /* ---------------------------------------------------------------- record / import dialog */

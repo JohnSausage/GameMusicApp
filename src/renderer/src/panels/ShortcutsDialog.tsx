@@ -52,7 +52,20 @@ const GROUPS: { title: string; rows: Row[] }[] = [
       [['Space'], 'Play from the cursor / stop'],
       [['L'], 'Loop on / off'],
       [['M'], 'Metronome on / off'],
+      [['Ctrl+Tab'], 'Switch between Score and Arrangement'],
       [['Ctrl++', 'Ctrl+−', 'Ctrl+0'], 'Zoom in, out, back to 100 % (also Ctrl+wheel)']
+    ]
+  },
+  {
+    title: 'Arrangement',
+    rows: [
+      [['←', '→'], 'Previous / next section'],
+      [['↑', '↓'], 'Track above / below'],
+      [['Alt+←', 'Alt+→'], 'Move the section earlier / later'],
+      [['Ctrl+D'], 'Duplicate the section (a repeat with the same parts)'],
+      [['Ctrl+Del'], 'Delete the section'],
+      [['Del'], 'Make the track silent in this section'],
+      [['Enter', 'Double-click'], 'Edit the part in the score']
     ]
   },
   {
