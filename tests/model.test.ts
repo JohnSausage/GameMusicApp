@@ -1,5 +1,9 @@
+import { Midi } from '@tonejs/midi'
 import { describe, expect, it } from 'vitest'
-import { createDemoSong, notePitch } from '../src/renderer/src/model/song'
+import { songToMidi } from '../src/renderer/src/audio/midiExport'
+import { updateTrack } from '../src/renderer/src/model/edit'
+import { createDemoSong, GM_FAMILIES, gmSoundName, notePitch, soundName } from '../src/renderer/src/model/song'
+import { FACTORY_PRESETS } from '../src/renderer/src/model/synth'
 import { beatAt, buildTimeline } from '../src/renderer/src/model/timing'
 
 describe('buildTimeline', () => {
@@ -36,5 +40,21 @@ describe('notePitch', () => {
     const guitar = createDemoSong().tracks[0]
     expect(notePitch(guitar, { string: 1, fret: 0, velocity: 100 })).toBe(64)
     expect(notePitch(guitar, { string: 6, fret: 3, velocity: 100 })).toBe(43)
+  })
+})
+
+describe('General MIDI sounds', () => {
+  it('names all 128, in their families of eight', () => {
+    const names = GM_FAMILIES.flatMap((f) => f.sounds)
+    expect(GM_FAMILIES.every((f) => f.sounds.length === 8)).toBe(true)
+    expect(new Set(names).size).toBe(128)
+    expect([0, 25, 33, 80, 127].map(gmSoundName)).toEqual(['Grand piano', 'Steel-string guitar', 'Finger bass', 'Square lead', 'Gunshot'])
+    expect(soundName({ kind: 'soundfont', program: 4 })).toBe('Electric piano 1')
+    expect(soundName({ kind: 'synth', patch: FACTORY_PRESETS[4] })).toBe(`8-bit: ${FACTORY_PRESETS[4].name}`)
+  })
+
+  it('can play a guitar track with a piano sound', () => {
+    const song = updateTrack(createDemoSong(), { track: 0, bar: 0, beat: 0, string: 1 }, 0, { instrument: { kind: 'soundfont', program: 4 } }).song
+    expect(new Midi(songToMidi(song)).tracks[0].instrument.number).toBe(4)
   })
 })

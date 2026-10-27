@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom'
 import type { GetEngine } from '../App'
 import { secondsPerClick } from '../audio/analysis'
 import { songToMidi } from '../audio/midiExport'
-import { ExportIcon, LoopIcon, MetronomeIcon, PencilIcon, PlayIcon, RecordIcon, StopIcon } from '../components/icons'
+import { ChevronDownIcon, ExportIcon, LoopIcon, MetronomeIcon, PencilIcon, PlayIcon, RecordIcon, StopIcon } from '../components/icons'
 import { Menu } from '../components/Menu'
 import {
   addBars,
@@ -57,30 +57,30 @@ import {
   defaultInstrument,
   DRUM_PIECES,
   isFretted,
-  KEYS_PROGRAMS,
   rowPitch,
   MASTER_DEFAULTS,
+  soundName,
   MAX_FRET,
   NOTE_VALUES,
   notePitch,
   type Beat,
   type Instrument,
   type NoteValue,
-  type Track,
-  trackKind
+  type Track
 } from '../model/song'
 import { MidiKeyboard, type MidiNoteMessage } from '../midi/midiInput'
 import { quantizeNotes, writeRoll, type TimedNote } from '../model/keys'
 import { importMidi } from '../model/midiImport'
 import { stepAdvance, stepEnter } from '../model/stepEntry'
-import { CRUSH_RATES, eightBitKit, FACTORY_PRESETS, formatSampleRate } from '../model/synth'
+import { CRUSH_RATES, eightBitKit, formatSampleRate } from '../model/synth'
 import { legatoTarget, toggleLegato, toggleTie, type Legato } from '../model/techniques'
 import { barSeconds, buildTimeline, secondsPerQuarter } from '../model/timing'
 import { saveFile } from '../platform'
 import { readPref, writePref } from '../prefs'
 import type { HeaderSlots } from '../pages/EditorPage'
+import { ZOOM_STEPS } from '../project/layout'
 import type { ApplyOptions, Project } from '../project/useProject'
-import { ScoreView, type ScoreTarget, type StaveMode } from '../score/ScoreView'
+import { ScoreView, type ScoreTarget } from '../score/ScoreView'
 import { noteName } from '../transcription/notes'
 import { DrumGrid } from './DrumGrid'
 import { ExportDialog } from './ExportDialog'
@@ -103,8 +103,6 @@ const TWO_DIGIT_MS = 1000
 
 const cursorKey = (c: Cursor): string => `${c.track}/${c.bar}/${c.beat}/${c.string}`
 
-const GRID_COLLAPSED_KEY = 'drumGridCollapsed'
-const ROLL_COLLAPSED_KEY = 'pianoRollCollapsed'
 const STEP_INPUT_KEY = 'midiStepInput'
 /** Empty bars added while recording, so you can play on past the end of the song. */
 const RECORD_EXTRA_BARS = 8
@@ -121,10 +119,6 @@ interface MidiRecording {
   /** Playback has started (after the count-in). */
   started: boolean
 }
-const ZOOM_KEY = 'scoreZoom'
-/** Zoom levels of the score (VIEW-10). */
-const ZOOM_STEPS = [0.5, 0.6, 0.75, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2]
-
 /** The next zoom level up (+1) or down (-1) from `zoom`. */
 function stepZoom(zoom: number, direction: 1 | -1): number {
   const index = ZOOM_STEPS.findIndex((z) => z >= zoom - 0.001)
@@ -146,13 +140,6 @@ interface Props {
   onShowShortcuts?: () => void
 }
 
-function soundValue(track: Track): string {
-  if (track.instrument.kind === 'soundfont') return track.kind === 'keys' ? `gm:${track.instrument.program}` : 'soundfont'
-  if (track.instrument.kind === 'synthkit') return 'synthkit'
-  return 'synth:current'
-}
-
-const SOUNDFONT_LABELS = { guitar: 'Guitar (SoundFont)', bass: 'Bass (SoundFont)', drums: 'Drum kit (SoundFont)', keys: 'Piano (SoundFont)' }
 
 interface TrackListProps {
   project: Project
@@ -167,17 +154,10 @@ function TrackList({ project, onSelect, onEditSound, onMessage }: TrackListProps
   const master = { ...MASTER_DEFAULTS, ...song.master }
   const audible = audibleTracks(song)
 
-  const setSound = (index: number, track: Track, value: string): void => {
-    if (value === 'synth:current' || value === soundValue(track)) return
-    const instrument: Instrument =
-      value === 'soundfont'
-        ? defaultInstrument(trackKind(track))
-        : value.startsWith('gm:')
-          ? { kind: 'soundfont', program: Number(value.slice(3)) }
-          : value === 'synthkit'
-          ? { kind: 'synthkit', pieces: eightBitKit() }
-          : { kind: 'synth', patch: { ...FACTORY_PRESETS[Number(value.slice(7))] } }
-    project.apply(updateTrack(song, cursor, index, { instrument }))
+  /** Drum tracks switch between the SoundFont kit and the 8-bit kit; other tracks pick their sound in the sound window. */
+  const setDrumKit = (index: number, value: string): void => {
+    const instrument: Instrument = value === 'synthkit' ? { kind: 'synthkit', pieces: eightBitKit() } : defaultInstrument('drums')
+    if (instrument.kind !== song.tracks[index].instrument.kind) project.apply(updateTrack(song, cursor, index, { instrument }))
   }
   /** Adds the tracks of a MIDI file (EXP-08). */
   const importMidiFile = async (file: File): Promise<void> => {
@@ -254,43 +234,38 @@ function TrackList({ project, onSelect, onEditSound, onMessage }: TrackListProps
             </button>
           </div>
           <div className="track-card-row">
-            <select value={soundValue(track)} aria-label="Sound" onChange={(e) => setSound(index, track, e.target.value)}>
-              {track.kind === 'keys' ? (
-                <optgroup label="SoundFont">
-                  {KEYS_PROGRAMS.map((p) => (
-                    <option key={p.program} value={`gm:${p.program}`}>{p.name}</option>
-                  ))}
-                  {track.instrument.kind === 'soundfont' && !KEYS_PROGRAMS.some((p) => track.instrument.kind === 'soundfont' && p.program === track.instrument.program) && (
-                    <option value={`gm:${track.instrument.program}`}>General MIDI sound {track.instrument.program + 1}</option>
-                  )}
-                </optgroup>
-              ) : (
-                <option value="soundfont">{SOUNDFONT_LABELS[trackKind(track)]}</option>
-              )}
-              {track.kind === 'drums' ? (
-                <option value="synthkit">8-bit drum kit (synth)</option>
-              ) : (
-                <>
-                  {track.instrument.kind === 'synth' && <option value="synth:current">Synth: {track.instrument.patch.name}</option>}
-                  <optgroup label="Synth presets">
-                    {FACTORY_PRESETS.map((p, i) => (
-                      <option key={p.name} value={`preset:${i}`}>{p.name}</option>
-                    ))}
-                  </optgroup>
-                </>
-              )}
-            </select>
-            {track.instrument.kind !== 'soundfont' && (
+            {track.kind === 'drums' ? (
+              <>
+                <select className="track-sound" value={track.instrument.kind} aria-label="Drum kit" onChange={(e) => setDrumKit(index, e.target.value)}>
+                  <option value="soundfont">Drum kit (SoundFont)</option>
+                  <option value="synthkit">8-bit drum kit (synth)</option>
+                </select>
+                {track.instrument.kind === 'synthkit' && (
+                  <button
+                    className="icon-button"
+                    title="Edit sound…"
+                    aria-label={`Edit the sound of ${track.name}`}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      onEditSound(index)
+                    }}
+                  >
+                    <PencilIcon size={16} />
+                  </button>
+                )}
+              </>
+            ) : (
               <button
-                className="icon-button"
-                title="Edit sound…"
-                aria-label={`Edit the sound of ${track.name}`}
+                className="track-sound sound-button"
+                title="Choose the sound of this track, try it and shape 8-bit sounds"
+                aria-label={`Sound of ${track.name}: ${soundName(track.instrument)}`}
                 onClick={(e) => {
                   e.stopPropagation()
                   onEditSound(index)
                 }}
               >
-                <PencilIcon size={16} />
+                <span className="sound-button-name">{soundName(track.instrument)}</span>
+                <ChevronDownIcon size={14} />
               </button>
             )}
           </div>
@@ -357,7 +332,7 @@ function TrackList({ project, onSelect, onEditSound, onMessage }: TrackListProps
 
 export function TabEditor({ project, getEngine, headerSlots, onShowShortcuts }: Props): React.JSX.Element {
   const { song, cursor } = project
-  const [staveMode, setStaveMode] = useState<StaveMode>('notation+tab')
+  const { staves, zoom, drumGridMinimized, pianoRollMinimized } = project.layout
   const [entryDuration, setEntryDuration] = useState<Duration>({ value: 4, dotted: false })
   const [message, setMessage] = useState('')
   /** Copied beats, and whether they came from a drum track (they only paste into the same kind). */
@@ -369,12 +344,9 @@ export function TabEditor({ project, getEngine, headerSlots, onShowShortcuts }: 
   const [loop, setLoop] = useState(false)
   const [loopChoice, setLoopChoice] = useState<LoopChoice>({ kind: 'song' })
   const [metronome, setMetronome] = useState(false)
-  const [zoom, setZoom] = useState(() => readPref(ZOOM_KEY, 1))
   const [soundEditor, setSoundEditor] = useState<number | null>(null)
-  const [gridCollapsed, setGridCollapsed] = useState(() => readPref(GRID_COLLAPSED_KEY, false))
   /** The drum track the grid showed last, so it stays when the cursor moves to another track. */
   const [gridTrackId, setGridTrackId] = useState<string | null>(null)
-  const [rollCollapsed, setRollCollapsed] = useState(() => readPref(ROLL_COLLAPSED_KEY, false))
   /** MIDI keyboards found (null: MIDI not available or not connected yet). */
   const [midiDevices, setMidiDevices] = useState<string[] | null>(null)
   const [stepInput, setStepInput] = useState(() => readPref(STEP_INPUT_KEY, false))
@@ -416,20 +388,7 @@ export function TabEditor({ project, getEngine, headerSlots, onShowShortcuts }: 
     if (drums) setGridTrackId(track.id)
   }, [drums, track.id])
 
-  const toggleGrid = (): void => {
-    setGridCollapsed((collapsed) => {
-      writePref(GRID_COLLAPSED_KEY, !collapsed)
-      return !collapsed
-    })
-  }
-
-  const changeZoom = (next: (zoom: number) => number): void => {
-    setZoom((zoom) => {
-      const value = next(zoom)
-      writePref(ZOOM_KEY, value)
-      return value
-    })
-  }
+  const changeZoom = (next: (zoom: number) => number): void => project.setLayout((layout) => ({ zoom: next(layout.zoom) }))
 
   // Ctrl + mouse wheel over the editor zooms the score.
   useEffect(() => {
@@ -1043,7 +1002,7 @@ export function TabEditor({ project, getEngine, headerSlots, onShowShortcuts }: 
 
         <ScoreView
           song={song}
-          staveMode={staveMode}
+          staveMode={staves}
           zoom={zoom}
           positionRef={positionRef}
           editCursor={cursor}
@@ -1062,13 +1021,8 @@ export function TabEditor({ project, getEngine, headerSlots, onShowShortcuts }: 
           <PianoRoll
             project={project}
             trackIndex={cursor.track}
-            collapsed={rollCollapsed}
-            onToggleCollapsed={() =>
-              setRollCollapsed((collapsed) => {
-                writePref(ROLL_COLLAPSED_KEY, !collapsed)
-                return !collapsed
-              })
-            }
+            collapsed={pianoRollMinimized}
+            onToggleCollapsed={() => project.setLayout((layout) => ({ pianoRollMinimized: !layout.pianoRollMinimized }))}
             positionRef={positionRef}
             onEdit={edit}
             onAudition={(pitch, velocity) => void audition(pitch, velocity)}
@@ -1080,8 +1034,8 @@ export function TabEditor({ project, getEngine, headerSlots, onShowShortcuts }: 
           <DrumGrid
             project={project}
             trackIndex={gridTrack}
-            collapsed={gridCollapsed}
-            onToggleCollapsed={toggleGrid}
+            collapsed={drumGridMinimized}
+            onToggleCollapsed={() => project.setLayout((layout) => ({ drumGridMinimized: !layout.drumGridMinimized }))}
             onSelectTrack={(index) => (drums ? moveCursor(switchTrack(song, cursor, index)) : setGridTrackId(song.tracks[index].id))}
             positionRef={positionRef}
             onEdit={edit}
@@ -1099,10 +1053,10 @@ export function TabEditor({ project, getEngine, headerSlots, onShowShortcuts }: 
             </span>
           )}
           <div className="segmented" role="group" aria-label="View">
-            <button className={staveMode === 'notation+tab' ? 'active' : ''} title="Notation above the tab" onClick={() => setStaveMode('notation+tab')}>
+            <button className={staves === 'notation+tab' ? 'active' : ''} title="Notation above the tab" onClick={() => project.setLayout({ staves: 'notation+tab' })}>
               Notation + tab
             </button>
-            <button className={staveMode === 'tab' ? 'active' : ''} title="Only the tab (drums as a rhythm line)" onClick={() => setStaveMode('tab')}>
+            <button className={staves === 'tab' ? 'active' : ''} title="Only the tab (drums as a rhythm line)" onClick={() => project.setLayout({ staves: 'tab' })}>
               Tab only
             </button>
           </div>
@@ -1123,7 +1077,7 @@ export function TabEditor({ project, getEngine, headerSlots, onShowShortcuts }: 
         </div>
       </div>
 
-      {soundEditor !== null && song.tracks[soundEditor] && song.tracks[soundEditor].instrument.kind !== 'soundfont' && (
+      {soundEditor !== null && song.tracks[soundEditor] && (song.tracks[soundEditor].kind !== 'drums' || song.tracks[soundEditor].instrument.kind === 'synthkit') && (
         <InstrumentEditor
           project={project}
           trackIndex={soundEditor}

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { GetEngine } from '../App'
 import { COMPUTER_KEYS, MidiKeyboard } from '../midi/midiInput'
 import { updateTrack } from '../model/edit'
-import { DRUM_PIECES, isBassTrack, type Instrument } from '../model/song'
+import { DRUM_PIECES, isBassTrack, soundName, type Instrument } from '../model/song'
 import {
   CRUSH_RATES,
   DEFAULT_PATCH,
@@ -20,6 +20,7 @@ import { saveFile } from '../platform'
 import { createPresetStore, parsePreset, PRESET_EXTENSION, serializePreset, type UserPreset } from '../project/presets'
 import type { Project } from '../project/useProject'
 import { noteName } from '../transcription/notes'
+import { SoundBrowser } from './SoundBrowser'
 import { usePlayback } from './usePlayback'
 
 interface Props {
@@ -119,6 +120,9 @@ const BLACK_KEYS = new Set([1, 3, 6, 8, 10])
 const KIT_KEYS = 'asdfghjkl'
 const PIECE_PITCH: [number, number] = [24, 108]
 
+/** How long the note plays that previews a sound picked in the browser. */
+const PREVIEW_MS = 700
+
 const pieceName = (sound: DrumSound): string => DRUM_PIECES.find((d) => d.note === sound.note)?.name ?? `Drum ${sound.note}`
 
 /** Two octaves of clickable piano keys. */
@@ -154,13 +158,17 @@ function Keyboard({ base, pressed, onDown, onUp }: { base: number; pressed: Set<
 }
 
 /**
- * Edit a track's synth sound with live preview (REQUIREMENTS.md SYN-02…SYN-13, NFR-44).
- * For a synth drum kit (SYN-20) it edits one kit piece at a time, picked with the pads.
+ * The sound of a track, with live preview (REQUIREMENTS.md SYN-02…SYN-13, NFR-44).
+ * Guitar, bass and keys tracks pick a sound in the browser; an 8-bit sound also
+ * shows the synth to shape it. For a synth drum kit (SYN-20) it edits one kit
+ * piece at a time, picked with the pads.
  */
 export function InstrumentEditor({ project, trackIndex, getEngine, onClose }: Props): React.JSX.Element {
   const { song, cursor } = project
   const track = song.tracks[trackIndex]
+  const drumTrack = track.kind === 'drums'
   const kit = track.instrument.kind === 'synthkit' ? track.instrument.pieces : null
+  const synth = track.instrument.kind === 'synth'
   const [pieceIndex, setPieceIndex] = useState(() => Math.max(0, kit?.findIndex((p) => p.note === 38) ?? 0))
   const piece = kit?.[pieceIndex] ?? null
   const patch = track.instrument.kind === 'synth' ? track.instrument.patch : (piece?.patch ?? DEFAULT_PATCH)
@@ -200,6 +208,22 @@ export function InstrumentEditor({ project, trackIndex, getEngine, onClose }: Pr
   }
   const set = <K extends keyof SynthPatch>(field: K, value: SynthPatch[K]): void =>
     setPatch({ ...patch, [field]: value }, `patch:${track.id}:${kit ? `${pieceIndex}:` : ''}${field}`)
+
+  /** A sound picked in the browser: browsing undoes as one step, and each sound plays a note. */
+  const choose = (next: Instrument): void => {
+    const mergeKey = `sound:${track.id}`
+    if (next.kind === 'synth') {
+      setPatch(next.patch, mergeKey)
+      setSaveName(next.patch.name)
+    } else {
+      project.apply(updateTrack(song, cursor, trackIndex, { instrument: next }), { mergeKey })
+    }
+    const pitch = base + 12
+    void getEngine().then((engine) => {
+      engine.liveNoteOn(next, pitch, 100)
+      window.setTimeout(() => engine.liveNoteOff(next, pitch), PREVIEW_MS)
+    })
+  }
 
   const resetPiece = (): void => {
     const original = piece && eightBitKit().find((p) => p.note === piece.note)
@@ -315,11 +339,39 @@ export function InstrumentEditor({ project, trackIndex, getEngine, onClose }: Pr
   }
   const buildStart = (): number => (60 / song.tempo) * 4 * (song.timeSignature[0] / song.timeSignature[1]) * cursor.bar
 
+  const previewBar = (
+    <div className="toolbar preview-bar">
+      <span className="muted small">
+        {kit ? 'Try it: click the pads above, use A–L on your computer keyboard, or' : 'Try it: click the keys, use A–K on your computer keyboard (Z/X = octave), or'}
+      </span>
+      <button onClick={() => void connectMidi()}>{midiDevices ? `MIDI: ${midiDevices.join(', ') || 'no device'}` : 'Connect MIDI keyboard'}</button>
+      <span className="spacer" />
+      {playback.playing ? <button onClick={playback.stop}>■ Stop</button> : <button onClick={playSong} title="Play the song from the cursor's bar">▶ Play song</button>}
+    </div>
+  )
+
   return (
     <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div className="modal instrument-editor" role="dialog" aria-modal="true" aria-label={`Sound of ${track.name}`}>
         <button className="icon modal-close" aria-label="Close" title="Close (Esc)" onClick={onClose}>×</button>
-        <h2>Sound of {track.name}{kit && <span className="muted"> · 8-bit drum kit</span>}</h2>
+        <h2>
+          Sound of {track.name}
+          <span className="muted"> · {soundName(track.instrument)}</span>
+        </h2>
+
+        {!drumTrack && (
+          <>
+            <SoundBrowser
+              instrument={track.instrument}
+              userPresets={userPresets}
+              onChoose={choose}
+              onDeletePreset={(preset) => void deletePreset(preset)}
+              onImportPreset={(file) => void importPreset(file)}
+            />
+            {previewBar}
+            <Keyboard base={base} pressed={pressed} onDown={(p) => noteOn(p)} onUp={noteOff} />
+          </>
+        )}
 
         {kit && piece && (
           <div className="kit-editor">
@@ -361,162 +413,167 @@ export function InstrumentEditor({ project, trackIndex, getEngine, onClose }: Pr
           </div>
         )}
 
-        <div className="toolbar preset-bar">
-          <select value="" onChange={(e) => loadPreset(e.target.value)} aria-label="Load a preset">
-            <option value="">Load a preset…</option>
-            <optgroup label="Built-in">
-              {FACTORY_PRESETS.map((p, i) => (
-                <option key={p.name} value={`factory:${i}`}>{p.name}</option>
-              ))}
-            </optgroup>
-            {userPresets.length > 0 && (
-              <optgroup label="My presets">
-                {userPresets.map((p) => (
-                  <option key={p.id} value={`user:${p.id}`}>{p.patch.name}</option>
-                ))}
-              </optgroup>
+        {(synth || kit) && (
+          <div className="synth-editor">
+            {synth && (
+              <h3 className="synth-editor-title">
+                8-bit synth <span className="muted small">Shape the sound; you hear every change right away.</span>
+              </h3>
             )}
-          </select>
-          <input value={saveName} onChange={(e) => setSaveName(e.target.value)} aria-label="Preset name" title="Name for saving this sound" />
-          <button onClick={() => void savePreset()} title="Keep this sound in your presets, for any project">Save to my presets</button>
-          <button onClick={() => void exportPreset()} title={`Save as a .${PRESET_EXTENSION} file, e.g. to send to a friend`}>Export…</button>
-          <label className="file-button" title={`Load a .${PRESET_EXTENSION} file`}>
-            Import…
-            <input type="file" accept={`.${PRESET_EXTENSION},application/json`} onChange={(e) => e.target.files?.[0] && void importPreset(e.target.files[0])} />
-          </label>
-        </div>
-        {userPresets.length > 0 && (
-          <div className="preset-chips">
-            <span className="muted small">My presets:</span>
-            {userPresets.map((p) => (
-              <span key={p.id} className="chip">
-                <button className="link" onClick={() => loadPreset(`user:${p.id}`)}>{p.patch.name}</button>
-                <button className="icon" title="Delete preset" aria-label={`Delete ${p.patch.name}`} onClick={() => void deletePreset(p)}>×</button>
-              </span>
-            ))}
+            <div className="toolbar preset-bar">
+              {kit && (
+                <select value="" onChange={(e) => loadPreset(e.target.value)} aria-label="Load a preset">
+                  <option value="">Load a preset…</option>
+                  <optgroup label="Built-in">
+                    {FACTORY_PRESETS.map((p, i) => (
+                      <option key={p.name} value={`factory:${i}`}>{p.name}</option>
+                    ))}
+                  </optgroup>
+                  {userPresets.length > 0 && (
+                    <optgroup label="My presets">
+                      {userPresets.map((p) => (
+                        <option key={p.id} value={`user:${p.id}`}>{p.patch.name}</option>
+                      ))}
+                    </optgroup>
+                  )}
+                </select>
+              )}
+              <input value={saveName} onChange={(e) => setSaveName(e.target.value)} aria-label="Preset name" title="Name for saving this sound" />
+              <button onClick={() => void savePreset()} title="Keep this sound in your presets, for any project">Save to my presets</button>
+              <button onClick={() => void exportPreset()} title={`Save as a .${PRESET_EXTENSION} file, e.g. to send to a friend`}>Export…</button>
+              {kit && (
+                <label className="file-button" title={`Load a .${PRESET_EXTENSION} file`}>
+                  Import…
+                  <input type="file" accept={`.${PRESET_EXTENSION},application/json`} onChange={(e) => e.target.files?.[0] && void importPreset(e.target.files[0])} />
+                </label>
+              )}
+            </div>
+            {kit && userPresets.length > 0 && (
+              <div className="preset-chips">
+                <span className="muted small">My presets:</span>
+                {userPresets.map((p) => (
+                  <span key={p.id} className="chip">
+                    <button className="link" onClick={() => loadPreset(`user:${p.id}`)}>{p.patch.name}</button>
+                    <button className="icon" title="Delete preset" aria-label={`Delete ${p.patch.name}`} onClick={() => void deletePreset(p)}>×</button>
+                  </span>
+                ))}
+              </div>
+            )}
+
+            <div className="synth-sections">
+              <section className="card">
+                <h3>Oscillator</h3>
+                <div className="segmented waveform-buttons">
+                  {WAVEFORMS.map((w) => (
+                    <button key={w.value} className={patch.waveform === w.value ? 'active' : ''} title={w.tip} onClick={() => set('waveform', w.value)}>
+                      {w.label}
+                    </button>
+                  ))}
+                </div>
+                {patch.waveform === 'pulse' && (
+                  <>
+                    <Slider label="Pulse width" field="duty" value={patch.duty} format={(v) => `${Math.round(v * 1000) / 10} %`} onChange={(v) => set('duty', v)}
+                      tip="Width of the pulse: 50 % is a hollow square, 25 % and 12.5 % are thinner and brighter." />
+                    <div className="toolbar compact">
+                      {[0.125, 0.25, 0.5].map((d) => (
+                        <button key={d} className={Math.abs(patch.duty - d) < 0.001 ? 'active' : ''} onClick={() => set('duty', d)}>{d * 100} %</button>
+                      ))}
+                    </div>
+                  </>
+                )}
+                <Slider label="Octave" field="octave" step={1} value={patch.octave} format={(v) => (v > 0 ? `+${v}` : `${v}`)} onChange={(v) => set('octave', v)}
+                  tip="Plays the instrument up to 3 octaves higher or lower than the written notes." />
+                <Slider label="Fine tune" field="fine" step={1} value={patch.fine} format={(v) => `${v > 0 ? '+' : ''}${v} cents`} onChange={(v) => set('fine', v)}
+                  tip="Detunes slightly; 100 cents are one semitone." />
+                <Slider label="Volume" field="volume" value={patch.volume} format={percent} onChange={(v) => set('volume', v)} tip="Loudness of this instrument." />
+              </section>
+
+              <section className="card">
+                <h3>Envelope</h3>
+                <EnvelopeGraph patch={patch} />
+                <Slider label="Attack" field="attack" value={patch.attack} format={seconds} onChange={(v) => set('attack', v)} tip="How long the note takes to fade in." />
+                <Slider label="Decay" field="decay" value={patch.decay} format={seconds} onChange={(v) => set('decay', v)} tip="How long it then takes to fall to the sustain level." />
+                <Slider label="Sustain" field="sustain" value={patch.sustain} format={percent} onChange={(v) => set('sustain', v)}
+                  tip="Volume while the note is held. 0 makes short plucks and hits." />
+                <Slider label="Release" field="release" value={patch.release} format={seconds} onChange={(v) => set('release', v)} tip="How long the note fades out after it ends." />
+                <Slider label="Velocity" field="velocity" value={patch.velocity} format={percent} onChange={(v) => set('velocity', v)}
+                  tip="How much harder playing (MIDI velocity) makes the note louder." />
+              </section>
+
+              <section className="card">
+                <h3>Pitch</h3>
+                <Slider label="Pitch sweep" field="pitchEnvAmount" step={1} value={patch.pitchEnvAmount} format={(v) => `${v > 0 ? '+' : ''}${v} semitones`}
+                  onChange={(v) => set('pitchEnvAmount', v)} tip="Starts each note this far higher (or lower) and slides to the real pitch: lasers, zaps and drum hits." />
+                <Slider label="Sweep time" field="pitchEnvTime" value={patch.pitchEnvTime} format={seconds} onChange={(v) => set('pitchEnvTime', v)}
+                  tip="How long the pitch sweep takes." />
+                <label className="checkbox" title="Only one note at a time, like a real 8-bit channel. A new note glides from the previous one.">
+                  <input type="checkbox" checked={patch.mono} onChange={(e) => set('mono', e.target.checked)} />
+                  Mono (one note at a time)
+                </label>
+                <Slider label="Glide" field="glide" value={patch.glide} format={seconds} onChange={(v) => set('glide', v)}
+                  tip="Time to slide from one note to the next. Works in mono mode, or between separate notes." />
+              </section>
+
+              <section className="card">
+                <h3>Wobble (LFO)</h3>
+                <label>
+                  Wobbles
+                  <select value={patch.lfoTarget} onChange={(e) => set('lfoTarget', e.target.value as LfoTarget)} title="What the slow wobble changes.">
+                    {LFO_TARGETS.map((t) => (
+                      <option key={t.value} value={t.value}>{t.label}</option>
+                    ))}
+                  </select>
+                </label>
+                {patch.lfoTarget !== 'off' && (
+                  <>
+                    <Slider label="Speed" field="lfoRate" value={patch.lfoRate} format={(v) => `${v.toFixed(1)} Hz`} onChange={(v) => set('lfoRate', v)} tip="Wobbles per second." />
+                    <Slider label="Depth" field="lfoDepth" value={patch.lfoDepth} format={percent} onChange={(v) => set('lfoDepth', v)} tip="How strong the wobble is." />
+                    <Slider label="Delay" field="lfoDelay" value={patch.lfoDelay} format={seconds} onChange={(v) => set('lfoDelay', v)}
+                      tip="Wait this long before the wobble starts. Delayed vibrato is a classic for chip leads." />
+                  </>
+                )}
+              </section>
+
+              <section className="card">
+                <h3>Filter</h3>
+                <label>
+                  Type
+                  <select value={patch.filterType} onChange={(e) => set('filterType', e.target.value as FilterType)} title="Removes high (low-pass) or low (high-pass) frequencies.">
+                    {FILTERS.map((f) => (
+                      <option key={f.value} value={f.value}>{f.label}</option>
+                    ))}
+                  </select>
+                </label>
+                {patch.filterType !== 'off' && (
+                  <>
+                    <Slider label="Cutoff" field="cutoff" log value={patch.cutoff} format={(v) => (v >= 1000 ? `${(v / 1000).toFixed(1)} kHz` : `${v} Hz`)}
+                      onChange={(v) => set('cutoff', v)} tip="Where the filter starts cutting." />
+                    <Slider label="Resonance" field="resonance" value={patch.resonance} format={(v) => v.toFixed(1)} onChange={(v) => set('resonance', v)}
+                      tip="Boosts the sound right at the cutoff. High values whistle." />
+                    <Slider label="Envelope" field="filterEnv" value={patch.filterEnv} format={(v) => `${v > 0 ? '+' : ''}${v.toFixed(1)} oct`} onChange={(v) => set('filterEnv', v)}
+                      tip="How far the note's envelope opens the filter. Positive values give plucky “bwow” sounds." />
+                  </>
+                )}
+              </section>
+
+              <section className="card">
+                <h3>Lo-fi</h3>
+                <Slider label="Bit depth" field="crushBits" step={1} value={patch.crushBits} format={(v) => (v >= 16 ? 'off' : `${v} bit`)} onChange={(v) => set('crushBits', v)}
+                  tip="Fewer bits make the sound grittier, like old consoles. 16 = off." />
+                <label title="A lower sample rate adds a crunchy, aliased sound.">
+                  Sample rate
+                  <select value={patch.crushRate} onChange={(e) => set('crushRate', Number(e.target.value))}>
+                    {CRUSH_RATES.map((r) => (
+                      <option key={r} value={r}>{formatSampleRate(r)}</option>
+                    ))}
+                  </select>
+                </label>
+              </section>
+            </div>
           </div>
         )}
 
-        <div className="synth-sections">
-          <section className="card">
-            <h3>Oscillator</h3>
-            <div className="segmented waveform-buttons">
-              {WAVEFORMS.map((w) => (
-                <button key={w.value} className={patch.waveform === w.value ? 'active' : ''} title={w.tip} onClick={() => set('waveform', w.value)}>
-                  {w.label}
-                </button>
-              ))}
-            </div>
-            {patch.waveform === 'pulse' && (
-              <>
-                <Slider label="Pulse width" field="duty" value={patch.duty} format={(v) => `${Math.round(v * 1000) / 10} %`} onChange={(v) => set('duty', v)}
-                  tip="Width of the pulse: 50 % is a hollow square, 25 % and 12.5 % are thinner and brighter." />
-                <div className="toolbar compact">
-                  {[0.125, 0.25, 0.5].map((d) => (
-                    <button key={d} className={Math.abs(patch.duty - d) < 0.001 ? 'active' : ''} onClick={() => set('duty', d)}>{d * 100} %</button>
-                  ))}
-                </div>
-              </>
-            )}
-            <Slider label="Octave" field="octave" step={1} value={patch.octave} format={(v) => (v > 0 ? `+${v}` : `${v}`)} onChange={(v) => set('octave', v)}
-              tip="Plays the instrument up to 3 octaves higher or lower than the written notes." />
-            <Slider label="Fine tune" field="fine" step={1} value={patch.fine} format={(v) => `${v > 0 ? '+' : ''}${v} cents`} onChange={(v) => set('fine', v)}
-              tip="Detunes slightly; 100 cents are one semitone." />
-            <Slider label="Volume" field="volume" value={patch.volume} format={percent} onChange={(v) => set('volume', v)} tip="Loudness of this instrument." />
-          </section>
-
-          <section className="card">
-            <h3>Envelope</h3>
-            <EnvelopeGraph patch={patch} />
-            <Slider label="Attack" field="attack" value={patch.attack} format={seconds} onChange={(v) => set('attack', v)} tip="How long the note takes to fade in." />
-            <Slider label="Decay" field="decay" value={patch.decay} format={seconds} onChange={(v) => set('decay', v)} tip="How long it then takes to fall to the sustain level." />
-            <Slider label="Sustain" field="sustain" value={patch.sustain} format={percent} onChange={(v) => set('sustain', v)}
-              tip="Volume while the note is held. 0 makes short plucks and hits." />
-            <Slider label="Release" field="release" value={patch.release} format={seconds} onChange={(v) => set('release', v)} tip="How long the note fades out after it ends." />
-            <Slider label="Velocity" field="velocity" value={patch.velocity} format={percent} onChange={(v) => set('velocity', v)}
-              tip="How much harder playing (MIDI velocity) makes the note louder." />
-          </section>
-
-          <section className="card">
-            <h3>Pitch</h3>
-            <Slider label="Pitch sweep" field="pitchEnvAmount" step={1} value={patch.pitchEnvAmount} format={(v) => `${v > 0 ? '+' : ''}${v} semitones`}
-              onChange={(v) => set('pitchEnvAmount', v)} tip="Starts each note this far higher (or lower) and slides to the real pitch: lasers, zaps and drum hits." />
-            <Slider label="Sweep time" field="pitchEnvTime" value={patch.pitchEnvTime} format={seconds} onChange={(v) => set('pitchEnvTime', v)}
-              tip="How long the pitch sweep takes." />
-            <label className="checkbox" title="Only one note at a time, like a real 8-bit channel. A new note glides from the previous one.">
-              <input type="checkbox" checked={patch.mono} onChange={(e) => set('mono', e.target.checked)} />
-              Mono (one note at a time)
-            </label>
-            <Slider label="Glide" field="glide" value={patch.glide} format={seconds} onChange={(v) => set('glide', v)}
-              tip="Time to slide from one note to the next. Works in mono mode, or between separate notes." />
-          </section>
-
-          <section className="card">
-            <h3>Wobble (LFO)</h3>
-            <label>
-              Wobbles
-              <select value={patch.lfoTarget} onChange={(e) => set('lfoTarget', e.target.value as LfoTarget)} title="What the slow wobble changes.">
-                {LFO_TARGETS.map((t) => (
-                  <option key={t.value} value={t.value}>{t.label}</option>
-                ))}
-              </select>
-            </label>
-            {patch.lfoTarget !== 'off' && (
-              <>
-                <Slider label="Speed" field="lfoRate" value={patch.lfoRate} format={(v) => `${v.toFixed(1)} Hz`} onChange={(v) => set('lfoRate', v)} tip="Wobbles per second." />
-                <Slider label="Depth" field="lfoDepth" value={patch.lfoDepth} format={percent} onChange={(v) => set('lfoDepth', v)} tip="How strong the wobble is." />
-                <Slider label="Delay" field="lfoDelay" value={patch.lfoDelay} format={seconds} onChange={(v) => set('lfoDelay', v)}
-                  tip="Wait this long before the wobble starts. Delayed vibrato is a classic for chip leads." />
-              </>
-            )}
-          </section>
-
-          <section className="card">
-            <h3>Filter</h3>
-            <label>
-              Type
-              <select value={patch.filterType} onChange={(e) => set('filterType', e.target.value as FilterType)} title="Removes high (low-pass) or low (high-pass) frequencies.">
-                {FILTERS.map((f) => (
-                  <option key={f.value} value={f.value}>{f.label}</option>
-                ))}
-              </select>
-            </label>
-            {patch.filterType !== 'off' && (
-              <>
-                <Slider label="Cutoff" field="cutoff" log value={patch.cutoff} format={(v) => (v >= 1000 ? `${(v / 1000).toFixed(1)} kHz` : `${v} Hz`)}
-                  onChange={(v) => set('cutoff', v)} tip="Where the filter starts cutting." />
-                <Slider label="Resonance" field="resonance" value={patch.resonance} format={(v) => v.toFixed(1)} onChange={(v) => set('resonance', v)}
-                  tip="Boosts the sound right at the cutoff. High values whistle." />
-                <Slider label="Envelope" field="filterEnv" value={patch.filterEnv} format={(v) => `${v > 0 ? '+' : ''}${v.toFixed(1)} oct`} onChange={(v) => set('filterEnv', v)}
-                  tip="How far the note's envelope opens the filter. Positive values give plucky “bwow” sounds." />
-              </>
-            )}
-          </section>
-
-          <section className="card">
-            <h3>Lo-fi</h3>
-            <Slider label="Bit depth" field="crushBits" step={1} value={patch.crushBits} format={(v) => (v >= 16 ? 'off' : `${v} bit`)} onChange={(v) => set('crushBits', v)}
-              tip="Fewer bits make the sound grittier, like old consoles. 16 = off." />
-            <label title="A lower sample rate adds a crunchy, aliased sound.">
-              Sample rate
-              <select value={patch.crushRate} onChange={(e) => set('crushRate', Number(e.target.value))}>
-                {CRUSH_RATES.map((r) => (
-                  <option key={r} value={r}>{formatSampleRate(r)}</option>
-                ))}
-              </select>
-            </label>
-          </section>
-        </div>
-
-        <div className="toolbar preview-bar">
-          <span className="muted small">
-            {kit ? 'Try it: click the pads above, use A–L on your computer keyboard, or' : 'Try it: click the keys, use A–K on your computer keyboard (Z/X = octave), or'}
-          </span>
-          <button onClick={() => void connectMidi()}>{midiDevices ? `MIDI: ${midiDevices.join(', ') || 'no device'}` : 'Connect MIDI keyboard'}</button>
-          <span className="spacer" />
-          {playback.playing ? <button onClick={playback.stop}>■ Stop</button> : <button onClick={playSong} title="Play the song from the cursor's bar">▶ Play song</button>}
-        </div>
-        {!kit && <Keyboard base={base} pressed={pressed} onDown={(p) => noteOn(p)} onUp={noteOff} />}
+        {kit && previewBar}
         {message && <p className="status">{message}</p>}
       </div>
     </div>

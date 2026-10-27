@@ -138,15 +138,43 @@ export const KEYS_TUNING = Array.from({ length: 88 }, (_, i) => 108 - i)
 export const keyRow = (pitch: number): number => 109 - pitch
 export const rowPitch = (row: number): number => 109 - row
 
-/** General MIDI sounds offered for keys tracks. */
-export const KEYS_PROGRAMS: { program: number; name: string }[] = [
-  { program: 0, name: 'Piano' },
-  { program: 4, name: 'Electric piano' },
-  { program: 16, name: 'Organ' },
-  { program: 48, name: 'Strings' },
-  { program: 80, name: 'Square lead' },
-  { program: 89, name: 'Warm pad' }
+/**
+ * The 128 General MIDI sounds in their families of eight (program = family
+ * index × 8 + position). Any of them can play a guitar, bass or keys track.
+ */
+export const GM_FAMILIES: { name: string; sounds: string[] }[] = [
+  { name: 'Piano', sounds: ['Grand piano', 'Bright piano', 'Electric grand', 'Honky-tonk piano', 'Electric piano 1', 'Electric piano 2', 'Harpsichord', 'Clavinet'] },
+  { name: 'Chromatic percussion', sounds: ['Celesta', 'Glockenspiel', 'Music box', 'Vibraphone', 'Marimba', 'Xylophone', 'Tubular bells', 'Dulcimer'] },
+  { name: 'Organ', sounds: ['Drawbar organ', 'Percussive organ', 'Rock organ', 'Church organ', 'Reed organ', 'Accordion', 'Harmonica', 'Tango accordion'] },
+  {
+    name: 'Guitar',
+    sounds: ['Nylon guitar', 'Steel-string guitar', 'Jazz guitar', 'Clean electric guitar', 'Muted electric guitar', 'Overdriven guitar', 'Distortion guitar', 'Guitar harmonics']
+  },
+  { name: 'Bass', sounds: ['Acoustic bass', 'Finger bass', 'Pick bass', 'Fretless bass', 'Slap bass 1', 'Slap bass 2', 'Synth bass 1', 'Synth bass 2'] },
+  { name: 'Strings', sounds: ['Violin', 'Viola', 'Cello', 'Contrabass', 'Tremolo strings', 'Pizzicato strings', 'Harp', 'Timpani'] },
+  { name: 'Ensemble', sounds: ['String ensemble 1', 'String ensemble 2', 'Synth strings 1', 'Synth strings 2', 'Choir aahs', 'Voice oohs', 'Synth choir', 'Orchestra hit'] },
+  { name: 'Brass', sounds: ['Trumpet', 'Trombone', 'Tuba', 'Muted trumpet', 'French horn', 'Brass section', 'Synth brass 1', 'Synth brass 2'] },
+  { name: 'Reed', sounds: ['Soprano sax', 'Alto sax', 'Tenor sax', 'Baritone sax', 'Oboe', 'English horn', 'Bassoon', 'Clarinet'] },
+  { name: 'Pipe', sounds: ['Piccolo', 'Flute', 'Recorder', 'Pan flute', 'Blown bottle', 'Shakuhachi', 'Whistle', 'Ocarina'] },
+  { name: 'Synth lead', sounds: ['Square lead', 'Saw lead', 'Calliope lead', 'Chiff lead', 'Charang lead', 'Voice lead', 'Fifths lead', 'Bass + lead'] },
+  { name: 'Synth pad', sounds: ['New age pad', 'Warm pad', 'Polysynth pad', 'Choir pad', 'Bowed pad', 'Metallic pad', 'Halo pad', 'Sweep pad'] },
+  { name: 'Synth effects', sounds: ['Rain', 'Soundtrack', 'Crystal', 'Atmosphere', 'Brightness', 'Goblins', 'Echoes', 'Sci-fi'] },
+  { name: 'Ethnic', sounds: ['Sitar', 'Banjo', 'Shamisen', 'Koto', 'Kalimba', 'Bagpipe', 'Fiddle', 'Shanai'] },
+  { name: 'Percussive', sounds: ['Tinkle bell', 'Agogo', 'Steel drums', 'Woodblock', 'Taiko drum', 'Melodic tom', 'Synth drum', 'Reverse cymbal'] },
+  { name: 'Sound effects', sounds: ['Guitar fret noise', 'Breath noise', 'Seashore', 'Bird tweet', 'Telephone ring', 'Helicopter', 'Applause', 'Gunshot'] }
 ]
+
+/** Name of a General MIDI sound, e.g. 0 → "Grand piano". */
+export function gmSoundName(program: number): string {
+  return GM_FAMILIES[Math.floor(program / 8)]?.sounds[program % 8] ?? `General MIDI sound ${program + 1}`
+}
+
+/** Name of a track's sound on a guitar, bass or keys track, e.g. "Grand piano" or "8-bit: Pulse bass". */
+export function soundName(instrument: Instrument): string {
+  if (instrument.kind === 'soundfont') return gmSoundName(instrument.program)
+  if (instrument.kind === 'synth') return `8-bit: ${instrument.patch.name}`
+  return '8-bit drum kit'
+}
 
 export const GUITAR_STANDARD = [64, 59, 55, 50, 45, 40]
 export const BASS_STANDARD = [43, 38, 33, 28]

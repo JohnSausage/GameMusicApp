@@ -120,10 +120,17 @@ async function runSmokeTest(win: BrowserWindow): Promise<void> {
     await sleep(500)
     const pianoRoll = document.querySelector('.piano-roll .roll-grid') !== null
 
+    // The sound window of the first track: sound categories, and its sounds as tiles.
+    document.querySelector('.track-card .sound-button')?.click()
+    await sleep(300)
+    const soundWindow = { categories: document.querySelectorAll('.sound-category').length, sounds: document.querySelectorAll('.sound-tile').length }
+    document.querySelector('.instrument-editor .modal-close')?.click()
+    await sleep(200)
+
     // Retro sounds + a second of looped playback: loads the chip synth worklet and SoundFont synth.
     button('Make it retro')?.click()
     await sleep(300)
-    const retroSounds = [...document.querySelectorAll('.track-card select')].map((s) => s.selectedOptions[0]?.textContent)
+    const retroSounds = [...document.querySelectorAll('.track-card .track-sound')].map((s) => (s.tagName === 'SELECT' ? s.selectedOptions[0]?.textContent : s.textContent))
     // Play with loop and metronome on, then switch them off again.
     const header = document.querySelector('.editor-header')
     const toggleLoopAndMetronome = () => ['Loop', 'Metronome'].forEach((name) => header?.querySelector('button[aria-label="' + name + '"]')?.click())
@@ -174,6 +181,7 @@ async function runSmokeTest(win: BrowserWindow): Promise<void> {
       scoreRenderMs,
       drumHits,
       pianoRoll,
+      soundWindow,
       retroSounds,
       playing,
       transcription,
@@ -184,7 +192,7 @@ async function runSmokeTest(win: BrowserWindow): Promise<void> {
   })()`)
   const transcribed = /^[1-9]\d* notes? in/.test(result.transcription ?? '')
   const passed =
-    errors.length === 0 && result.startPage && result.scoreRenderMs !== null && result.preloadBridge && result.drumHits > 0 && result.pianoRoll && result.playing && transcribed
+    errors.length === 0 && result.startPage && result.scoreRenderMs !== null && result.preloadBridge && result.drumHits > 0 && result.pianoRoll && result.soundWindow.categories >= 17 && result.playing && transcribed
   console.log('SMOKE_TEST_RESULT ' + JSON.stringify({ ...result, userData: app.getPath('userData'), errors }))
   app.exit(passed ? 0 : 1)
 }

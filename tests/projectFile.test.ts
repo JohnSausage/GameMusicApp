@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { decodeWav16, encodeWav16 } from '../src/renderer/src/audio/wav'
 import { addBars, createSong } from '../src/renderer/src/model/edit'
 import { createDemoSong, type Song, type TakeInfo } from '../src/renderer/src/model/song'
+import type { Layout } from '../src/renderer/src/project/layout'
 import { FORMAT_VERSION, parseProject, ProjectFileError, serializeProject, suggestedFileName } from '../src/renderer/src/project/projectFile'
 
 const zipJson = (json: unknown): Uint8Array => zipSync({ 'song.json': strToU8(JSON.stringify(json)) })
@@ -45,6 +46,20 @@ describe('project file', () => {
     expect(loaded.song.takes.map((t) => t.id)).toEqual(['a'])
   })
 
+  it('keeps the editor layout, and fixes settings it does not know', () => {
+    const song = createDemoSong()
+    const layout: Layout = { staves: 'tab', zoom: 1.25, drumGridMinimized: true, pianoRollMinimized: false }
+    expect(parseProject(serializeProject(song, new Map(), layout)).layout).toEqual(layout)
+    expect(parseProject(serializeProject(song)).layout).toBeUndefined() // files saved before layouts: the app uses the last one
+    const odd = { staves: 'sideways', zoom: 9, drumGridMinimized: 'yes', pianoRollMinimized: true }
+    expect(parseProject(zipJson({ app: 'GameMusicApp', formatVersion: FORMAT_VERSION, song, layout: odd })).layout).toEqual({
+      staves: 'notation+tab',
+      zoom: 2,
+      drumGridMinimized: false,
+      pianoRollMinimized: true
+    })
+  })
+
   it('opens version 1 files (no sections, no takes)', () => {
     const { sections: _s, takes: _t, ...song } = createSong({ title: 'Old', tempo: 90, timeSignature: [3, 4], firstTrack: 'bass' })
     const loaded = parseProject(zipJson({ app: 'GameMusicApp', formatVersion: 1, song }))
@@ -73,6 +88,10 @@ describe('project file', () => {
 
     const badTake = { ...createDemoSong(), takes: [{ ...take('x'), id: '../evil' }] }
     expect(() => parseProject(zipJson({ app: 'GameMusicApp', formatVersion: 2, song: badTake }))).toThrow('a take has no valid id or name')
+
+    const badSound = createDemoSong()
+    badSound.tracks[0].instrument = { kind: 'soundfont', program: 128 }
+    expect(() => parseProject(zipJson({ app: 'GameMusicApp', formatVersion: 3, song: badSound }))).toThrow('track 1 has no valid instrument')
   })
 
   it('suggests a safe file name from the title', () => {

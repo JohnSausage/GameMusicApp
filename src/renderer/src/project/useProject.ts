@@ -1,6 +1,7 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { clampCursor, type Cursor, type EditResult } from '../model/edit'
 import type { ProjectAudio, Song } from '../model/song'
+import { lastLayout, rememberLayout, sameLayout, type Layout } from './layout'
 
 const MAX_UNDO = 200
 
@@ -15,6 +16,9 @@ interface ProjectState extends Snapshot {
   audio: ProjectAudio
   /** The song as last saved or opened; differs from `song` when there are unsaved changes. */
   savedSong: Song | null
+  /** Saved with the project, but not part of undo: changing the view isn't an edit. */
+  layout: Layout
+  savedLayout: Layout
   past: Snapshot[]
   future: Snapshot[]
   /** Consecutive edits with the same key (typing a title, two-digit frets) undo as one step. */
@@ -30,6 +34,7 @@ export interface Project {
   cursor: Cursor
   path: string | null
   audio: ProjectAudio
+  layout: Layout
   dirty: boolean
   canUndo: boolean
   canRedo: boolean
@@ -41,9 +46,11 @@ export interface Project {
    */
   update: (change: (song: Song, cursor: Cursor) => EditResult | null, options?: ApplyOptions) => void
   setCursor: (cursor: Cursor) => void
+  /** Changes the layout (from the newest one when given a function). */
+  setLayout: (change: Partial<Layout> | ((layout: Layout) => Partial<Layout>)) => void
   undo: () => void
   redo: () => void
-  markSaved: (path: string, song: Song) => void
+  markSaved: (path: string, song: Song, layout: Layout) => void
   addTakeAudio: (id: string, samples: Float32Array) => void
 }
 
@@ -52,16 +59,22 @@ const START_CURSOR: Cursor = { track: 0, bar: 0, beat: 0, string: 1 }
 /** Holds the open project with undo/redo (EDIT-05). */
 export function useProject(): {
   project: Project | null
-  openProject: (song: Song, path: string | null, saved: boolean, audio?: ProjectAudio) => void
+  /** Without a layout (new projects, older files) the project gets the one used last. */
+  openProject: (song: Song, path: string | null, saved: boolean, audio?: ProjectAudio, layout?: Layout) => void
   closeProject: () => void
 } {
   const [state, setState] = useState<ProjectState | null>(null)
 
-  const openProject = useCallback((song: Song, path: string | null, saved: boolean, audio: ProjectAudio = new Map()) => {
-    setState({ song, cursor: START_CURSOR, path, audio, savedSong: saved ? song : null, past: [], future: [], lastMergeKey: null })
+  const openProject = useCallback((song: Song, path: string | null, saved: boolean, audio: ProjectAudio = new Map(), layout: Layout = lastLayout()) => {
+    setState({ song, cursor: START_CURSOR, path, audio, savedSong: saved ? song : null, layout, savedLayout: layout, past: [], future: [], lastMergeKey: null })
   }, [])
 
   const closeProject = useCallback(() => setState(null), [])
+
+  const layout = state?.layout
+  useEffect(() => {
+    if (layout) rememberLayout(layout)
+  }, [layout])
 
   if (!state) return { project: null, openProject, closeProject }
 
@@ -89,12 +102,14 @@ export function useProject(): {
     cursor: state.cursor,
     path: state.path,
     audio: state.audio,
-    dirty: state.song !== state.savedSong,
+    layout: state.layout,
+    dirty: state.song !== state.savedSong || !sameLayout(state.layout, state.savedLayout),
     canUndo: state.past.length > 0,
     canRedo: state.future.length > 0,
     apply,
     update,
     setCursor: (cursor) => setState((s) => (s ? { ...s, cursor: clampCursor(s.song, cursor), lastMergeKey: null } : s)),
+    setLayout: (change) => setState((s) => (s ? { ...s, layout: { ...s.layout, ...(typeof change === 'function' ? change(s.layout) : change) } } : s)),
     undo: () =>
       setState((s) => {
         const previous = s?.past.at(-1)
@@ -107,7 +122,7 @@ export function useProject(): {
         if (!s || !next) return s
         return { ...s, ...next, past: [...s.past, { song: s.song, cursor: s.cursor }], future: s.future.slice(1), lastMergeKey: null }
       }),
-    markSaved: (path, song) => setState((s) => (s ? { ...s, path, savedSong: song } : s)),
+    markSaved: (path, song, layout) => setState((s) => (s ? { ...s, path, savedSong: song, savedLayout: layout } : s)),
     addTakeAudio: (id, samples) => setState((s) => (s ? { ...s, audio: new Map(s.audio).set(id, samples) } : s))
   }
   return { project, openProject, closeProject }

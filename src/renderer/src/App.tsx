@@ -40,9 +40,9 @@ export function App(): React.JSX.Element {
     try {
       const opened = await storage.open(path)
       if (!opened) return
-      const { song, audio } = parseProject(opened.data)
+      const { song, audio, layout } = parseProject(opened.data)
       await storage.recordRecent(opened.path, song.title)
-      openProject(song, opened.path, true, audio)
+      openProject(song, opened.path, true, audio, layout)
     } catch (error) {
       setStartError(error instanceof ProjectFileError ? error.message : `Could not open the project: ${errorText(error)}`)
     }
@@ -52,11 +52,11 @@ export function App(): React.JSX.Element {
 
   const save = async (saveAs: boolean): Promise<void> => {
     if (!project) return
-    const song = project.song
+    const { song, layout } = project
     try {
-      const path = await storage.save(serializeProject(song, project.audio), suggestedFileName(song.title), saveAs ? undefined : (project.path ?? undefined))
+      const path = await storage.save(serializeProject(song, project.audio, layout), suggestedFileName(song.title), saveAs ? undefined : (project.path ?? undefined))
       if (!path) return
-      project.markSaved(path, song)
+      project.markSaved(path, song, layout)
       await storage.recordRecent(path, song.title)
       setSaveStatus(`Saved ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`)
     } catch (error) {

@@ -633,6 +633,7 @@ label.inline {
 
 .track-card.silent .track-name,
 .track-card.silent select,
+.track-card.silent .sound-button,
 .track-card.silent .volume {
   opacity: 0.5;
 }
@@ -641,6 +642,22 @@ label.inline {
 .track-name {
   flex: 1;
   min-width: 0;
+}
+
+.sound-button {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  text-align: left;
+}
+
+.sound-button-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .track-card .volume {
@@ -882,6 +899,124 @@ kbd {
 
 .instrument-editor {
   width: min(1100px, 100%);
+}
+
+/* Sound window: categories, then the sounds of one as tiles; the synth below for 8-bit sounds. */
+.sound-browser {
+  display: grid;
+  gap: 12px;
+}
+
+.sound-categories {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 8px 12px;
+}
+
+.sound-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.sound-group-label {
+  padding-top: 7px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.sound-category {
+  padding: 4px 11px;
+  border-radius: 999px;
+  font-size: 13px;
+}
+
+.sound-category.current:not(.active) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.sound-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  gap: 8px;
+}
+
+.sound-tile {
+  width: 100%;
+  min-height: 52px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 2px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  text-align: left;
+}
+
+.sound-tile small {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.sound-tile.active small {
+  color: inherit;
+  opacity: 0.8;
+}
+
+.sound-tile-wrap {
+  position: relative;
+}
+
+.sound-tile-delete {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  padding: 0 5px;
+  border: none;
+  background: none;
+  color: var(--muted);
+}
+
+.sound-tile-wrap.active .sound-tile-delete {
+  color: var(--accent-text);
+}
+
+.sound-tiles .import-tile {
+  align-items: flex-start;
+  flex-direction: column;
+  border-style: dashed;
+  color: var(--muted);
+}
+
+.synth-editor {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+  animation: synth-editor-in 200ms ease-out;
+}
+
+.synth-editor-title {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin: 0 0 8px;
+}
+
+@keyframes synth-editor-in {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }
 
 .preset-bar input {

@@ -5,9 +5,8 @@ import { useEffect, useMemo, useRef, type RefObject } from 'react'
 import { selectedRanges, type Cursor, type Selection } from '../model/edit'
 import type { Song } from '../model/song'
 import { beatAt, buildTimeline } from '../model/timing'
+import type { StaveMode } from '../project/layout'
 import { songToAlphaTab, type BeatRef, type ConvertedScore } from './toAlphaTab'
-
-export type StaveMode = 'notation+tab' | 'tab'
 
 /** What was clicked: the beat, and the tab string if the click was on the tab staff. */
 export interface ScoreTarget extends BeatRef {

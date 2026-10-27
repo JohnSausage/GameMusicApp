@@ -4,6 +4,7 @@ import { strFromU8, strToU8, unzipSync, zipSync, type Zippable } from 'fflate'
 import { decodeWav16, encodeWav16 } from '../audio/wav'
 import { MASTER_DEFAULTS, NOTE_VALUES, type Instrument, type MasterSettings, type ProjectAudio, type Song, type TakeInfo } from '../model/song'
 import { normalizePatch, PATCH_LIMITS } from '../model/synth'
+import { checkLayout, type Layout } from './layout'
 
 export const PROJECT_EXTENSION = 'gmsong'
 /** 1: song only. 2: adds takes (song.takes + audio files). 3: full synth patches, master effects, retro originals. */
@@ -14,11 +15,15 @@ interface ProjectJson {
   formatVersion: number
   savedAt: string
   song: Song
+  /** How the editor was laid out (Tab only, zoom, …). Not in files saved before it was added. */
+  layout?: Layout
 }
 
 export interface ProjectData {
   song: Song
   audio: Map<string, Float32Array>
+  /** Undefined when the file has no layout. */
+  layout?: Layout
 }
 
 export class ProjectFileError extends Error {}
@@ -26,9 +31,9 @@ export class ProjectFileError extends Error {}
 const takeFile = (id: string): string => `audio/${id}.wav`
 
 /** Takes without audio are left out, so the file never refers to missing audio. */
-export function serializeProject(song: Song, audio: ProjectAudio = new Map()): Uint8Array {
+export function serializeProject(song: Song, audio: ProjectAudio = new Map(), layout?: Layout): Uint8Array {
   const takes = song.takes.filter((t) => audio.has(t.id))
-  const json: ProjectJson = { app: 'GameMusicApp', formatVersion: FORMAT_VERSION, savedAt: new Date().toISOString(), song: { ...song, takes } }
+  const json: ProjectJson = { app: 'GameMusicApp', formatVersion: FORMAT_VERSION, savedAt: new Date().toISOString(), song: { ...song, takes }, ...(layout && { layout }) }
   const files: Zippable = { 'song.json': strToU8(JSON.stringify(json, null, 2)) }
   for (const take of takes) files[takeFile(take.id)] = [encodeWav16([audio.get(take.id)!], take.sampleRate), { level: 1 }]
   return zipSync(files)
@@ -69,7 +74,7 @@ export function parseProject(data: Uint8Array): ProjectData {
     }
   }
   // A take whose audio file is missing can't be played or transcribed, so it is dropped.
-  return { song: { ...song, takes: song.takes.filter((t) => audio.has(t.id)) }, audio }
+  return { song: { ...song, takes: song.takes.filter((t) => audio.has(t.id)) }, audio, ...(json.layout !== undefined && { layout: checkLayout(json.layout) }) }
 }
 
 function fail(detail: string): never {
@@ -92,7 +97,7 @@ function checkTakes(value: unknown): TakeInfo[] {
 
 function checkInstrument(value: unknown, where: string): Instrument {
   const instrument = value as Instrument
-  if (instrument?.kind === 'soundfont' && isInt(instrument.program)) return instrument
+  if (instrument?.kind === 'soundfont' && isInt(instrument.program) && instrument.program >= 0 && instrument.program <= 127) return instrument
   // Synth patches from older files only had a few settings; the rest get defaults.
   if (instrument?.kind === 'synth') return { kind: 'synth', patch: normalizePatch(instrument.patch) }
   if (instrument?.kind === 'synthkit' && Array.isArray(instrument.pieces)) {
