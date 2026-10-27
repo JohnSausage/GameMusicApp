@@ -649,12 +649,22 @@ label.inline {
   align-items: center;
 }
 
-/* Mute / solo */
+/* Show in the score / mute / solo */
 .track-card .icon.mute,
 .track-card .icon.solo {
   font-size: 12px;
   font-weight: 700;
   padding: 4px 7px;
+}
+
+.track-card .icon.show {
+  display: inline-flex;
+  padding: 3px 5px;
+}
+
+.track-card .icon.show.off {
+  color: var(--muted);
+  border-style: dashed;
 }
 
 .track-card .icon.mute.active {

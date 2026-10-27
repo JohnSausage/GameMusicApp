@@ -111,6 +111,16 @@ async function runSmokeTest(win: BrowserWindow): Promise<void> {
     const editor = document.querySelector('.status-bar .cursor-info')?.textContent ?? null
     const scoreRenderMs = document.querySelector('.score-scroll')?.dataset.renderMs ?? null
 
+    // The eye on the first track card leaves it out of the score, and shows it again.
+    const eye = () => document.querySelector('.track-card .icon.show')
+    const staves = () => document.querySelector('.score-scroll')?.dataset.renderMs
+    eye()?.click()
+    await sleep(1000)
+    const hiddenTrack = { hidden: eye()?.getAttribute('aria-pressed') === 'false', rendered: staves() !== undefined }
+    eye()?.click()
+    await sleep(1000)
+    hiddenTrack.shownAgain = eye()?.getAttribute('aria-pressed') === 'true'
+
     // A drum track with a starter pattern from the drum grid.
     button('+ Drums')?.click()
     await sleep(500)
@@ -216,6 +226,7 @@ async function runSmokeTest(win: BrowserWindow): Promise<void> {
       scoreRenderMs,
       drumHits,
       pianoRoll,
+      hiddenTrack,
       arrangement,
       soundWindow,
       retroSounds,
@@ -228,7 +239,7 @@ async function runSmokeTest(win: BrowserWindow): Promise<void> {
   })()`)
   const transcribed = /^[1-9]\d* notes? in/.test(result.transcription ?? '')
   const passed =
-    errors.length === 0 && result.startPage && result.theme !== null && result.scoreRenderMs !== null && result.preloadBridge && result.drumHits > 0 && result.pianoRoll && result.arrangement.cells > 0 && result.arrangement.paletteParts > 0 && result.arrangement.afterDuplicate === result.arrangement.sections + 1 && result.arrangement.newPart && result.arrangement.partScore && result.arrangement.duplicated && result.soundWindow.categories >= 17 && result.playing && transcribed
+    errors.length === 0 && result.startPage && result.theme !== null && result.scoreRenderMs !== null && result.preloadBridge && result.drumHits > 0 && result.pianoRoll && result.hiddenTrack.hidden && result.hiddenTrack.shownAgain && result.arrangement.cells > 0 && result.arrangement.paletteParts > 0 && result.arrangement.afterDuplicate === result.arrangement.sections + 1 && result.arrangement.newPart && result.arrangement.partScore && result.arrangement.duplicated && result.soundWindow.categories >= 17 && result.playing && transcribed
   console.log('SMOKE_TEST_RESULT ' + JSON.stringify({ ...result, userData: app.getPath('userData'), errors }))
   app.exit(passed ? 0 : 1)
 }

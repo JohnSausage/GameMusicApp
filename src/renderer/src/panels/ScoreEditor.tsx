@@ -16,7 +16,6 @@ import {
   moveBar,
   moveBeat,
   moveString,
-  moveTrack,
   nextSectionName,
   pasteBeats,
   sectionAt,
@@ -45,7 +44,7 @@ import { legatoTarget, toggleLegato, toggleTie, type Legato } from '../model/tec
 import { barSeconds, buildTimeline, secondsPerQuarter } from '../model/timing'
 import { secondsPerClick } from '../audio/analysis'
 import { readPref, writePref } from '../prefs'
-import { ZOOM_STEPS } from '../project/layout'
+import { showTrack, shownTracks, ZOOM_STEPS } from '../project/layout'
 import type { ApplyOptions, Project } from '../project/useProject'
 import { ScoreView, type ScoreTarget } from '../score/ScoreView'
 import { noteName } from '../transcription/notes'
@@ -162,6 +161,9 @@ export function ScoreEditor(props: Props): React.JSX.Element {
   const drums = track.kind === 'drums'
   const keys = track.kind === 'keys'
   const fretted = isFretted(track)
+  // A part on its own is always shown; in the song, tracks can be left out of the score.
+  const shown = part ? song.tracks.map((_, i) => i) : shownTracks(song, project.layout)
+  const shownKey = shown.join(',')
   const drumTracks = song.tracks.flatMap((t, i) => (t.kind === 'drums' ? [i] : []))
   // The drum grid shows the drum track at the cursor, else the one shown last, else the first one.
   const gridTrack = drums ? cursor.track : (drumTracks.find((i) => song.tracks[i].id === gridTrackId) ?? drumTracks[0] ?? null)
@@ -183,6 +185,14 @@ export function ScoreEditor(props: Props): React.JSX.Element {
   useEffect(() => {
     if (drums) setGridTrackId(track.id)
   }, [drums, track.id])
+
+  // The cursor stays on the tracks shown: the nearest one when its track is left out.
+  useEffect(() => {
+    if (shown.includes(cursor.track)) return
+    const nearest = shown.reduce((best, i) => (Math.abs(i - cursor.track) < Math.abs(best - cursor.track) ? i : best))
+    setAnchor(null)
+    project.setCursor(switchTrack(song, cursor, nearest))
+  }, [shownKey, cursor.track])
 
   useEffect(() => {
     onSelectedBars?.(selectedStart === undefined || selectedEnd === undefined ? null : { start: selectedStart, end: selectedEnd + 1 })
@@ -353,6 +363,12 @@ export function ScoreEditor(props: Props): React.JSX.Element {
     if (!playing && recordingRef.current?.started) stopRecording()
   }, [playing])
 
+  /** The cursor to the next track shown above (-1) or below (1). */
+  const nextTrack = (delta: 1 | -1): Cursor => {
+    const next = delta > 0 ? shown.find((i) => i > cursor.track) : shown.findLast((i) => i < cursor.track)
+    return next === undefined ? cursor : switchTrack(song, cursor, next)
+  }
+
   /** Moves the cursor; with `extend` (Shift) the selection grows from where it started. */
   const moveCursor = (next: Cursor, extend = false): void => {
     if (extend && next.track === cursor.track) setAnchor((a) => (a && a.track === cursor.track ? a : { track: cursor.track, pos: { bar: cursor.bar, beat: cursor.beat } }))
@@ -479,8 +495,8 @@ export function ScoreEditor(props: Props): React.JSX.Element {
       enterDigit(Number(key))
     } else if (key === 'ArrowRight') moveCursor(ctrl ? moveBar(song, cursor, 1) : moveBeat(song, cursor, 1), shift)
     else if (key === 'ArrowLeft') moveCursor(ctrl ? moveBar(song, cursor, -1) : moveBeat(song, cursor, -1), shift)
-    else if (key === 'ArrowUp') ctrl ? moveCursor(moveTrack(song, cursor, -1)) : project.setCursor(moveString(song, cursor, -1))
-    else if (key === 'ArrowDown') ctrl ? moveCursor(moveTrack(song, cursor, 1)) : project.setCursor(moveString(song, cursor, 1))
+    else if (key === 'ArrowUp') ctrl ? moveCursor(nextTrack(-1)) : project.setCursor(moveString(song, cursor, -1))
+    else if (key === 'ArrowDown') ctrl ? moveCursor(nextTrack(1)) : project.setCursor(moveString(song, cursor, 1))
     else if (key === 'Escape' && selection) setAnchor(null)
     else if ((key === 'Delete' || key === 'Backspace') && ctrl) {
       setAnchor(null)
@@ -673,6 +689,7 @@ export function ScoreEditor(props: Props): React.JSX.Element {
       <ScoreView
         song={song}
         staveMode={staves}
+        tracks={part ? undefined : shown}
         zoom={zoom}
         positionRef={positionRef}
         editCursor={cursor}
@@ -710,7 +727,14 @@ export function ScoreEditor(props: Props): React.JSX.Element {
           trackIndex={gridTrack}
           collapsed={drumGridMinimized}
           onToggleCollapsed={() => project.setLayout((layout) => ({ drumGridMinimized: !layout.drumGridMinimized }))}
-          onSelectTrack={(index) => (drums ? moveCursor(switchTrack(song, cursor, index)) : setGridTrackId(song.tracks[index].id))}
+          onSelectTrack={(index) => {
+            if (!drums) setGridTrackId(song.tracks[index].id)
+            else {
+              // Picked to work on in the score: it shows again if it was left out.
+              if (!shown.includes(index)) project.setLayout((layout) => showTrack(song, layout, song.tracks[index].id, true))
+              moveCursor(switchTrack(song, cursor, index))
+            }
+          }}
           positionRef={positionRef}
           onEdit={edit}
           onAudition={(note, velocity) => void audition(note, velocity, song.tracks[gridTrack])}

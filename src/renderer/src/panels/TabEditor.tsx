@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { GetEngine } from '../App'
 import { songToMidi } from '../audio/midiExport'
-import { ChevronDownIcon, ExportIcon, LoopIcon, MetronomeIcon, PencilIcon, PlayIcon, RecordIcon, StopIcon } from '../components/icons'
+import { ChevronDownIcon, ExportIcon, EyeIcon, EyeOffIcon, LoopIcon, MetronomeIcon, PencilIcon, PlayIcon, RecordIcon, StopIcon } from '../components/icons'
 import { Menu } from '../components/Menu'
 import {
   addTrack,
@@ -26,7 +26,7 @@ import { CRUSH_RATES, eightBitKit, formatSampleRate } from '../model/synth'
 import { barSeconds, buildTimeline } from '../model/timing'
 import { saveFile } from '../platform'
 import type { HeaderSlots } from '../pages/EditorPage'
-import type { MainView } from '../project/layout'
+import { showTrack, shownTracks, type MainView } from '../project/layout'
 import type { Project } from '../project/useProject'
 import { ArrangementView } from './ArrangementView'
 import { ExportDialog } from './ExportDialog'
@@ -55,6 +55,7 @@ function TrackList({ project, onSelect, onEditSound, onMessage }: TrackListProps
   const retro = isRetro(song)
   const master = { ...MASTER_DEFAULTS, ...song.master }
   const audible = audibleTracks(song)
+  const shown = shownTracks(song, project.layout)
 
   /** Drum tracks switch between the SoundFont kit and the 8-bit kit; other tracks pick their sound in the sound window. */
   const setDrumKit = (index: number, value: string): void => {
@@ -104,6 +105,25 @@ function TrackList({ project, onSelect, onEditSound, onMessage }: TrackListProps
               aria-label="Track name"
               onChange={(e) => project.apply(updateTrack(song, cursor, index, { name: e.target.value }), { mergeKey: `name:${track.id}` })}
             />
+            <button
+              className={`icon show ${shown.includes(index) ? '' : 'off'}`}
+              aria-pressed={shown.includes(index)}
+              aria-label={`Show ${track.name} in the score`}
+              title={
+                shown.includes(index)
+                  ? shown.length > 1
+                    ? 'Shown in the score: click to leave it out (it still plays)'
+                    : 'The only track shown in the score'
+                  : 'Left out of the score (it still plays): click to show it'
+              }
+              disabled={shown.includes(index) && shown.length === 1}
+              onClick={(e) => {
+                e.stopPropagation()
+                project.setLayout((layout) => showTrack(song, layout, track.id, !shown.includes(index)))
+              }}
+            >
+              {shown.includes(index) ? <EyeIcon size={15} /> : <EyeOffIcon size={15} />}
+            </button>
             <button
               className={`icon mute ${track.mute ? 'active' : ''}`}
               aria-pressed={!!track.mute}
@@ -413,7 +433,11 @@ export function TabEditor({ project, getEngine, headerSlots, onShowShortcuts }: 
     <div className="tab-editor">
       <TrackList
         project={project}
-        onSelect={(index) => project.setCursor(switchTrack(song, cursor, index))}
+        onSelect={(index) => {
+          // A track picked while it is left out of the score shows again.
+          if (view === 'score' && !shownTracks(song, project.layout).includes(index)) project.setLayout((layout) => showTrack(song, layout, song.tracks[index].id, true))
+          project.setCursor(switchTrack(song, cursor, index))
+        }}
         onEditSound={(index) => {
           stop()
           setSoundEditor(index)

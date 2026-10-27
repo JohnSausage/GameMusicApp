@@ -1,9 +1,9 @@
 import { strToU8, unzipSync, zipSync } from 'fflate'
 import { describe, expect, it } from 'vitest'
 import { decodeWav16, encodeWav16 } from '../src/renderer/src/audio/wav'
-import { addBars, createSong } from '../src/renderer/src/model/edit'
+import { addBars, addTrack, createSong } from '../src/renderer/src/model/edit'
 import { createDemoSong, type Song, type TakeInfo } from '../src/renderer/src/model/song'
-import type { Layout } from '../src/renderer/src/project/layout'
+import { DEFAULT_LAYOUT, sameLayout, showTrack, shownTracks, type Layout } from '../src/renderer/src/project/layout'
 import { FORMAT_VERSION, parseProject, ProjectFileError, serializeProject, suggestedFileName } from '../src/renderer/src/project/projectFile'
 
 const zipJson = (json: unknown): Uint8Array => zipSync({ 'song.json': strToU8(JSON.stringify(json)) })
@@ -48,16 +48,17 @@ describe('project file', () => {
 
   it('keeps the editor layout, and fixes settings it does not know', () => {
     const song = createDemoSong()
-    const layout: Layout = { view: 'arrangement', staves: 'tab', zoom: 1.25, drumGridMinimized: true, pianoRollMinimized: false }
+    const layout: Layout = { view: 'arrangement', staves: 'tab', zoom: 1.25, drumGridMinimized: true, pianoRollMinimized: false, hiddenTracks: [song.tracks[1].id] }
     expect(parseProject(serializeProject(song, new Map(), layout)).layout).toEqual(layout)
     expect(parseProject(serializeProject(song)).layout).toBeUndefined() // files saved before layouts: the app uses the last one
-    const odd = { view: 'mixer', staves: 'sideways', zoom: 9, drumGridMinimized: 'yes', pianoRollMinimized: true }
+    const odd = { view: 'mixer', staves: 'sideways', zoom: 9, drumGridMinimized: 'yes', pianoRollMinimized: true, hiddenTracks: ['a', 7, 'a'] }
     expect(parseProject(zipJson({ app: 'GameMusicApp', formatVersion: FORMAT_VERSION, song, layout: odd })).layout).toEqual({
       view: 'score',
       staves: 'notation+tab',
       zoom: 2,
       drumGridMinimized: false,
-      pianoRollMinimized: true
+      pianoRollMinimized: true,
+      hiddenTracks: ['a']
     })
   })
 
@@ -113,5 +114,35 @@ describe('decodeWav16', () => {
 
   it('rejects other files', () => {
     expect(() => decodeWav16(new Uint8Array(20))).toThrow('Not a WAV file')
+  })
+})
+
+describe('tracks shown in the score', () => {
+  const song = createDemoSong()
+  const [a, b] = song.tracks.map((t) => t.id)
+  const apply = (layout: Layout, change: Partial<Layout>): Layout => ({ ...layout, ...change })
+
+  it('shows every track until some are left out', () => {
+    expect(shownTracks(song, DEFAULT_LAYOUT)).toEqual(song.tracks.map((_, i) => i))
+    const hidden = apply(DEFAULT_LAYOUT, showTrack(song, DEFAULT_LAYOUT, a, false))
+    expect(hidden.hiddenTracks).toEqual([a])
+    expect(shownTracks(song, hidden)).toEqual(song.tracks.slice(1).map((_, i) => i + 1))
+    expect(sameLayout(hidden, DEFAULT_LAYOUT)).toBe(false)
+    expect(apply(hidden, showTrack(song, hidden, a, true)).hiddenTracks).toEqual([])
+  })
+
+  it('never leaves out the last track shown', () => {
+    let layout = DEFAULT_LAYOUT
+    for (const track of song.tracks) layout = apply(layout, showTrack(song, layout, track.id, false))
+    expect(layout.hiddenTracks).toHaveLength(song.tracks.length - 1)
+    expect(shownTracks(song, layout)).toEqual([song.tracks.length - 1])
+    // A file where every track is hidden shows them all.
+    expect(shownTracks(song, { ...DEFAULT_LAYOUT, hiddenTracks: song.tracks.map((t) => t.id) })).toHaveLength(song.tracks.length)
+  })
+
+  it('forgets tracks that were deleted', () => {
+    const three = addTrack(song, { track: 0, bar: 0, beat: 0, string: 1 }, 'drums').song
+    const layout = { ...DEFAULT_LAYOUT, hiddenTracks: ['gone', a] }
+    expect(apply(layout, showTrack(three, layout, b, false)).hiddenTracks).toEqual([a, b])
   })
 })

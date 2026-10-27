@@ -17,6 +17,8 @@ export interface ScoreTarget extends BeatRef {
 interface Props {
   song: Song
   staveMode: StaveMode
+  /** The tracks shown, by index (all by default). */
+  tracks?: number[]
   /** Score zoom, 1 = 100 % (VIEW-10). */
   zoom?: number
   /** Playback position in seconds, or null when stopped. Read every animation frame. */
@@ -220,7 +222,7 @@ function stringBox(api: alphaTab.AlphaTabApi, converted: ConvertedScore, cursor:
   return { x: bounds.visualBounds.x + bounds.visualBounds.w / 2 - w / 2, y: staff.y + (cursor.string - 1) * spacing - spacing / 2, w, h: spacing }
 }
 
-export function ScoreView({ song, staveMode, zoom = 1, positionRef, editCursor, selection, onScoreClick, onSelectArea, endActions }: Props): React.JSX.Element {
+export function ScoreView({ song, staveMode, tracks, zoom = 1, positionRef, editCursor, selection, onScoreClick, onSelectArea, endActions }: Props): React.JSX.Element {
   const scrollRef = useRef<HTMLDivElement>(null)
   const hostRef = useRef<HTMLDivElement>(null)
   const playCursorRef = useRef<HTMLDivElement>(null)
@@ -247,6 +249,9 @@ export function ScoreView({ song, staveMode, zoom = 1, positionRef, editCursor, 
   const colorsRef = useRef<Theme | null>(null)
 
   const timeline = useMemo(() => buildTimeline(song), [song])
+  // The same tracks as a stable value, so the score is only drawn again when they change.
+  const shownKey = (tracks ?? song.tracks.map((_, i) => i)).join(',')
+  const shown = useMemo(() => shownKey.split(',').map(Number), [shownKey])
 
   useEffect(() => {
     const api = createApi(hostRef.current!)
@@ -280,8 +285,8 @@ export function ScoreView({ song, staveMode, zoom = 1, positionRef, editCursor, 
     renderStartRef.current = performance.now()
     const converted = songToAlphaTab(song, api.settings, staveMode === 'tab')
     convertedRef.current = converted
-    api.renderScore(converted.score, song.tracks.map((_, i) => i))
-  }, [song, staveMode, zoom, theme])
+    api.renderScore(converted.score, shown)
+  }, [song, staveMode, zoom, theme, shown])
 
   // Overlays are positioned every frame from alphaTab's layout, so they follow re-renders.
   useEffect(() => {
@@ -293,8 +298,9 @@ export function ScoreView({ song, staveMode, zoom = 1, positionRef, editCursor, 
       const converted = convertedRef.current
       if (api?.boundsLookup && converted) {
         const position = positionRef?.current ?? null
-        const span = position === null ? undefined : beatAt(timeline, 0, position)
-        place(playCursorRef.current!, span ? beatColumn(api, converted.beats[0]?.[span.barIndex]?.[span.beatIndex]) : null)
+        // The playhead spans the system at a beat of the first track shown.
+        const span = position === null ? undefined : beatAt(timeline, shown[0], position)
+        place(playCursorRef.current!, span ? beatColumn(api, converted.beats[shown[0]]?.[span.barIndex]?.[span.beatIndex]) : null)
 
         const editBeat = editCursor ? converted.beats[editCursor.track]?.[editCursor.bar]?.[editCursor.beat] : undefined
         place(editColumnRef.current!, editCursor ? beatColumn(api, editBeat) : null)
@@ -336,7 +342,7 @@ export function ScoreView({ song, staveMode, zoom = 1, positionRef, editCursor, 
 
     frame = requestAnimationFrame(tick)
     return () => cancelAnimationFrame(frame)
-  }, [timeline, positionRef, editCursor, selection, song])
+  }, [timeline, positionRef, editCursor, selection, song, shown])
 
   // Dragging a rectangle selects the beats under it (in the track where the drag started).
   const relative = (event: React.PointerEvent<HTMLDivElement>): { x: number; y: number } => {
