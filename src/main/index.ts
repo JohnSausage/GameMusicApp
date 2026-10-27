@@ -115,6 +115,11 @@ async function runSmokeTest(win: BrowserWindow): Promise<void> {
     await sleep(500)
     const drumHits = document.querySelectorAll('.drum-cell:not(.off)').length
 
+    // A keys track shows its piano roll.
+    button('+ Keys')?.click()
+    await sleep(500)
+    const pianoRoll = document.querySelector('.piano-roll .roll-grid') !== null
+
     // Retro sounds + a second of looped playback: loads the chip synth worklet and SoundFont synth.
     button('Make it retro')?.click()
     await sleep(300)
@@ -168,6 +173,7 @@ async function runSmokeTest(win: BrowserWindow): Promise<void> {
       editor,
       scoreRenderMs,
       drumHits,
+      pianoRoll,
       retroSounds,
       playing,
       transcription,
@@ -178,7 +184,7 @@ async function runSmokeTest(win: BrowserWindow): Promise<void> {
   })()`)
   const transcribed = /^[1-9]\d* notes? in/.test(result.transcription ?? '')
   const passed =
-    errors.length === 0 && result.startPage && result.scoreRenderMs !== null && result.preloadBridge && result.drumHits > 0 && result.playing && transcribed
+    errors.length === 0 && result.startPage && result.scoreRenderMs !== null && result.preloadBridge && result.drumHits > 0 && result.pianoRoll && result.playing && transcribed
   console.log('SMOKE_TEST_RESULT ' + JSON.stringify({ ...result, userData: app.getPath('userData'), errors }))
   app.exit(passed ? 0 : 1)
 }

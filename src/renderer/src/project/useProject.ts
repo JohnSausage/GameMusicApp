@@ -35,6 +35,11 @@ export interface Project {
   canRedo: boolean
   /** Applies an edit; returns false when the edit wasn't possible. */
   apply: (result: EditResult | null, options?: ApplyOptions) => boolean
+  /**
+   * Applies an edit computed from the newest song and cursor, e.g. for MIDI notes
+   * that arrive faster than the screen updates. `change` returns null for no edit.
+   */
+  update: (change: (song: Song, cursor: Cursor) => EditResult | null, options?: ApplyOptions) => void
   setCursor: (cursor: Cursor) => void
   undo: () => void
   redo: () => void
@@ -60,15 +65,23 @@ export function useProject(): {
 
   if (!state) return { project: null, openProject, closeProject }
 
+  const applyTo = (s: ProjectState, result: EditResult, options: ApplyOptions): ProjectState => {
+    const merge = options.mergeKey !== undefined && options.mergeKey === s.lastMergeKey && s.past.length > 0
+    const past = merge ? s.past : [...s.past, { song: s.song, cursor: s.cursor }].slice(-MAX_UNDO)
+    return { ...s, song: result.song, cursor: result.cursor, past, future: [], lastMergeKey: options.mergeKey ?? null }
+  }
+
   const apply = (result: EditResult | null, options: ApplyOptions = {}): boolean => {
     if (!result) return false
-    setState((s) => {
-      if (!s) return s
-      const merge = options.mergeKey !== undefined && options.mergeKey === s.lastMergeKey && s.past.length > 0
-      const past = merge ? s.past : [...s.past, { song: s.song, cursor: s.cursor }].slice(-MAX_UNDO)
-      return { ...s, song: result.song, cursor: result.cursor, past, future: [], lastMergeKey: options.mergeKey ?? null }
-    })
+    setState((s) => (s ? applyTo(s, result, options) : s))
     return true
+  }
+
+  const update = (change: (song: Song, cursor: Cursor) => EditResult | null, options: ApplyOptions = {}): void => {
+    setState((s) => {
+      const result = s ? change(s.song, s.cursor) : null
+      return s && result ? applyTo(s, result, options) : s
+    })
   }
 
   const project: Project = {
@@ -80,6 +93,7 @@ export function useProject(): {
     canUndo: state.past.length > 0,
     canRedo: state.future.length > 0,
     apply,
+    update,
     setCursor: (cursor) => setState((s) => (s ? { ...s, cursor: clampCursor(s.song, cursor), lastMergeKey: null } : s)),
     undo: () =>
       setState((s) => {

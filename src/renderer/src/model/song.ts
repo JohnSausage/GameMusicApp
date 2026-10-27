@@ -41,8 +41,11 @@ export type Instrument =
 export interface Track {
   id: string
   name: string
-  /** Drum tracks use one "string" per kit piece (see DRUM_PIECES); absent = fretted. */
-  kind?: 'drums'
+  /**
+   * Absent = fretted (guitar, bass). Drum tracks use one "string" per kit piece
+   * (see DRUM_PIECES), keys tracks one per piano key (see KEYS_TUNING); their notes are all fret 0.
+   */
+  kind?: 'drums' | 'keys'
   /** MIDI note per string, string 1 (highest) first. */
   tuning: number[]
   instrument: Instrument
@@ -105,7 +108,7 @@ export function takeSeconds(take: TakeInfo, audio: ProjectAudio): number {
   return (audio.get(take.id)?.length ?? 0) / take.sampleRate
 }
 
-export type TrackKind = 'guitar' | 'bass' | 'drums'
+export type TrackKind = 'guitar' | 'bass' | 'drums' | 'keys'
 
 export interface DrumPiece {
   /** General MIDI drum note. */
@@ -127,6 +130,23 @@ export const DRUM_PIECES: DrumPiece[] = [
 ]
 
 export const DRUM_TUNING = DRUM_PIECES.map((p) => p.note)
+
+/** Keys tracks (TRK-02 melodic, INST-02): one row per piano key, C8 (108) at the top down to A0 (21). */
+export const KEYS_TUNING = Array.from({ length: 88 }, (_, i) => 108 - i)
+
+/** Row ("string") of a pitch on a keys track, and back. */
+export const keyRow = (pitch: number): number => 109 - pitch
+export const rowPitch = (row: number): number => 109 - row
+
+/** General MIDI sounds offered for keys tracks. */
+export const KEYS_PROGRAMS: { program: number; name: string }[] = [
+  { program: 0, name: 'Piano' },
+  { program: 4, name: 'Electric piano' },
+  { program: 16, name: 'Organ' },
+  { program: 48, name: 'Strings' },
+  { program: 80, name: 'Square lead' },
+  { program: 89, name: 'Warm pad' }
+]
 
 export const GUITAR_STANDARD = [64, 59, 55, 50, 45, 40]
 export const BASS_STANDARD = [43, 38, 33, 28]
@@ -150,8 +170,13 @@ export function audibleTracks(song: Song): boolean[] {
   return song.tracks.map((t) => !t.mute && (!anySolo || !!t.solo))
 }
 
+/** Guitar and bass: notes have strings and frets (tab, techniques, transcription). */
+export function isFretted(track: Track): boolean {
+  return track.kind === undefined
+}
+
 export function isBassTrack(track: Track): boolean {
-  return track.kind !== 'drums' && track.tuning.length <= 5
+  return isFretted(track) && track.tuning.length <= 5
 }
 
 export function newId(): string {
@@ -165,19 +190,19 @@ export function barCount(song: Song): number {
 
 export function defaultInstrument(kind: TrackKind): Instrument {
   // Program 0 on the General MIDI drum channel is the standard kit.
-  return { kind: 'soundfont', program: kind === 'bass' ? GM_FINGER_BASS : kind === 'drums' ? 0 : GM_ACOUSTIC_GUITAR_STEEL }
+  return { kind: 'soundfont', program: kind === 'bass' ? GM_FINGER_BASS : kind === 'drums' || kind === 'keys' ? 0 : GM_ACOUSTIC_GUITAR_STEEL }
 }
 
 export function trackKind(track: Track): TrackKind {
-  return track.kind === 'drums' ? 'drums' : isBassTrack(track) ? 'bass' : 'guitar'
+  return track.kind ?? (isBassTrack(track) ? 'bass' : 'guitar')
 }
 
 export function createTrack(kind: TrackKind, bars: Bar[], name?: string): Track {
   return {
     id: newId(),
-    name: name ?? { guitar: 'Guitar', bass: 'Bass', drums: 'Drums' }[kind],
-    ...(kind === 'drums' ? { kind: 'drums' as const } : {}),
-    tuning: kind === 'bass' ? BASS_STANDARD : kind === 'drums' ? DRUM_TUNING : GUITAR_STANDARD,
+    name: name ?? { guitar: 'Guitar', bass: 'Bass', drums: 'Drums', keys: 'Keys' }[kind],
+    ...(kind === 'drums' || kind === 'keys' ? { kind } : {}),
+    tuning: { guitar: GUITAR_STANDARD, bass: BASS_STANDARD, drums: DRUM_TUNING, keys: KEYS_TUNING }[kind],
     instrument: defaultInstrument(kind),
     volume: kind === 'bass' ? 0.75 : 0.9,
     pan: 0,

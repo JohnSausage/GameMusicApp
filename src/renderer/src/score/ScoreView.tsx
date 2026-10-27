@@ -88,7 +88,7 @@ function drawTabRests(container: HTMLElement, api: alphaTab.AlphaTabApi, convert
   container.replaceChildren()
   const spacing = tabLineSpacing(api)
   converted.beats.forEach((trackBeats, trackIndex) => {
-    if (song.tracks[trackIndex]?.kind === 'drums') return // the percussion staff draws its own rests
+    if (song.tracks[trackIndex]?.kind !== undefined) return // only fretted tracks have a tab; other staves draw their own rests
     const strings = song.tracks[trackIndex]?.tuning.length ?? 6
     trackBeats.forEach((barBeats, barIndex) => {
       const staff = tabStaff(api, barIndex, trackIndex)
@@ -263,8 +263,8 @@ export function ScoreView({ song, staveMode, zoom = 1, positionRef, editCursor, 
 
         const editBeat = editCursor ? converted.beats[editCursor.track]?.[editCursor.bar]?.[editCursor.beat] : undefined
         place(editColumnRef.current!, editCursor ? beatColumn(api, editBeat) : null)
-        // Drum tracks have no tab, so there is no string to box; the drum grid shows the kit piece.
-        const drums = editCursor ? song.tracks[editCursor.track]?.kind === 'drums' : false
+        // Drum and keys tracks have no tab, so there is no string to box; the drum grid or piano roll shows the row.
+        const drums = editCursor ? song.tracks[editCursor.track]?.kind !== undefined : false
         const box = editCursor && !drums ? stringBox(api, converted, editCursor) : null
         place(editStringRef.current!, box)
         const staves = drums && editCursor ? trackStavesY(api, editCursor.bar, editCursor.track) : null
@@ -378,7 +378,7 @@ export function ScoreView({ song, staveMode, zoom = 1, positionRef, editCursor, 
     const staff = tabStaff(api, ref.barIndex, ref.trackIndex)
     const strings = song.tracks[ref.trackIndex].tuning.length
     const spacing = tabLineSpacing(api)
-    if (staff && song.tracks[ref.trackIndex].kind !== 'drums' && y >= staff.y - spacing && y <= staff.y + (strings - 1) * spacing + spacing) {
+    if (staff && song.tracks[ref.trackIndex].kind === undefined && y >= staff.y - spacing && y <= staff.y + (strings - 1) * spacing + spacing) {
       string = Math.max(1, Math.min(strings, Math.round((y - staff.y) / spacing) + 1))
     }
     onScoreClick({ ...ref, string }, event.shiftKey)

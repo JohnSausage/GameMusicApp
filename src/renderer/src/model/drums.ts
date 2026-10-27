@@ -118,3 +118,26 @@ export function applyPattern(song: Song, cursor: Cursor, track: number, bar: num
     draft.tracks[track].bars[bar] = stepsToBar(steps, barTicks(draft) / 16)
   })
 }
+
+/** General MIDI drum notes that aren't kit pieces here, mapped to the closest piece (for MIDI keyboards and MIDI files). */
+const GM_DRUM_ALIASES: Record<number, number> = {
+  35: 36, // acoustic bass drum → kick
+  37: 38, // side stick → snare
+  39: 38, // hand clap → snare
+  40: 38, // electric snare → snare
+  41: 45, // low floor tom → low tom
+  43: 45, // high floor tom → low tom
+  44: 42, // pedal hi-hat → closed hi-hat
+  48: 50, // hi-mid tom → high tom
+  52: 49, // Chinese cymbal → crash
+  53: 51, // ride bell → ride
+  55: 49, // splash → crash
+  57: 49, // crash 2 → crash
+  59: 51 // ride 2 → ride
+}
+
+/** The row of the kit piece for a General MIDI drum note, or null if there's no close one. */
+export function drumRowFor(note: number): number | null {
+  const row = pieceRow(GM_DRUM_ALIASES[note] ?? note)
+  return row > 0 ? row : null
+}

@@ -11,6 +11,8 @@ export function usePlayback(getEngine: GetEngine): {
   stop: () => void
   /** Volume, mute and solo changes while playing. */
   updateMix: (song: Song) => void
+  /** The song position heard at a performance.now() time (see AudioEngine.positionAt). */
+  positionAt: (performanceMs: number) => number | null
   setMetronome: (on: boolean) => void
 } {
   const [playing, setPlaying] = useState(false)
@@ -50,5 +52,7 @@ export function usePlayback(getEngine: GetEngine): {
     setPlaying(false)
   }
 
-  return { playing, positionRef, play, stop, updateMix, setMetronome }
+  const positionAt = (performanceMs: number): number | null => engineRef.current?.positionAt(performanceMs) ?? null
+
+  return { playing, positionRef, play, stop, updateMix, setMetronome, positionAt }
 }

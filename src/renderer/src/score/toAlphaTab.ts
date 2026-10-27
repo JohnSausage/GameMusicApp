@@ -64,11 +64,13 @@ export function songToAlphaTab(song: Song, settings: alphaTab.Settings, tabOnly 
     const staff = atTrack.staves[0]
     // Drum tracks get a percussion staff; alphaTab draws each note by its General MIDI drum number.
     const drums = track.kind === 'drums'
+    // Keys tracks have no tab: they always show notation, also in "tab only" view.
+    const keys = track.kind === 'keys'
     staff.isPercussion = drums
-    staff.showTablature = !drums
-    staff.showStandardNotation = !tabOnly
+    staff.showTablature = !drums && !keys
+    staff.showStandardNotation = !tabOnly || keys
     staff.showSlash = drums && tabOnly
-    if (!drums) staff.stringTuning = new Tuning('', [...track.tuning], false)
+    if (!drums && !keys) staff.stringTuning = new Tuning('', [...track.tuning], false)
 
     const trackBeats: alphaTab.model.Beat[][] = []
     // Ties, hammer-ons and slides only link to the beat right before or after (as in playback).
@@ -77,11 +79,14 @@ export function songToAlphaTab(song: Song, settings: alphaTab.Settings, tabOnly 
     const fretAfter = (k: number, string: number): number | undefined => flat[k + 1]?.notes.find((m) => m.string === string)?.fret
     let k = -1
     // Guitar is notated in treble clef, bass in bass clef, both an octave above how they sound.
-    const clef = drums ? Clef.Neutral : track.tuning.length <= 5 ? Clef.F4 : Clef.G2
+    // Keys are notated as they sound, in bass clef when most notes are below middle C.
+    const keyPitches = keys ? flat.flatMap((b) => b.notes.map((n) => track.tuning[n.string - 1])) : []
+    const lowKeys = keyPitches.length > 0 && keyPitches.reduce((sum, p) => sum + p, 0) / keyPitches.length < 60
+    const clef = drums ? Clef.Neutral : keys ? (lowKeys ? Clef.F4 : Clef.G2) : track.tuning.length <= 5 ? Clef.F4 : Clef.G2
     for (let barIndex = 0; barIndex < barCount; barIndex++) {
       const bar = new Bar()
       bar.clef = clef
-      bar.clefOttava = drums ? Ottavia.Regular : Ottavia._8vb
+      bar.clefOttava = drums || keys ? Ottavia.Regular : Ottavia._8vb
       staff.addBar(bar)
       const voice = new Voice()
       bar.addVoice(voice)
@@ -102,6 +107,11 @@ export function songToAlphaTab(song: Song, settings: alphaTab.Settings, tabOnly 
             const strength = strengthOf(n.velocity)
             if (strength === 'accent') note.accentuated = AccentuationType.Normal
             note.isGhost = strength === 'ghost'
+          } else if (keys) {
+            const pitch = track.tuning[n.string - 1] + n.fret
+            note.octave = Math.floor(pitch / 12)
+            note.tone = pitch % 12
+            note.isTieDestination = !!n.tie && fretBefore(k, n.string) === n.fret
           } else {
             // alphaTab numbers strings from the lowest (1); we number from the highest.
             note.string = track.tuning.length - n.string + 1

@@ -101,6 +101,8 @@ export function buildTimeline(song: Song, { legato = true }: { legato?: boolean 
 
   song.tracks.forEach((track, trackIndex) => {
     const techniques = track.kind !== 'drums'
+    // Hammer-ons and slides are for fretted tracks; keys tracks only hold (tie) notes.
+    const legatoHere = legato && track.kind === undefined
     const sounding = new Map<number, Sounding>()
     let time = 0
     track.bars.forEach((bar, barIndex) => {
@@ -116,7 +118,7 @@ export function buildTimeline(song: Song, { legato = true }: { legato?: boolean 
           if (continues && note.tie && before.pitch === pitch) {
             before.event.duration += length
             Object.assign(before, next)
-          } else if (continues && legato && before.legato && before.pitch !== pitch) {
+          } else if (continues && legatoHere && before.legato && before.pitch !== pitch) {
             const glide = before.legato === 'slide' ? Math.min(MAX_SLIDE_SECONDS, before.length / 2) : 0
             ;(before.event.bends ??= []).push({ time: time - glide, pitch, glide })
             before.event.duration += length
