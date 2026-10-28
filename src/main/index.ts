@@ -88,6 +88,13 @@ async function runSmokeTest(win: BrowserWindow): Promise<void> {
   win.webContents.on('did-fail-load', (_event, code, description, url) => fail(`did-fail-load ${code} ${description} ${url}`))
   win.webContents.on('render-process-gone', (_event, details) => fail(`renderer gone: ${details.reason}`))
   await new Promise<void>((resolve) => win.webContents.once('did-finish-load', () => resolve()))
+  // Exports are kept here instead of being saved (no save dialog in the smoke test).
+  const saved: { name: string; data: Buffer }[] = []
+  ipcMain.removeHandler('save-file')
+  ipcMain.handle('save-file', (_event, defaultName: string, data: Uint8Array) => {
+    saved.push({ name: defaultName, data: Buffer.from(data) })
+    return `(smoke test) ${defaultName}`
+  })
   // Start page → most recent project (or the demo song if there is none) → editor with a rendered score
   // → add drums with a pattern → retro sounds and playback → import a generated WAV in the record/import dialog and transcribe it with Basic Pitch.
   // alphaTab only renders into a visible, non-zero-size container: run headless with
@@ -120,6 +127,20 @@ async function runSmokeTest(win: BrowserWindow): Promise<void> {
     eye()?.click()
     await sleep(1000)
     hiddenTrack.shownAgain = eye()?.getAttribute('aria-pressed') === 'true'
+
+    // The page view: the score on A4 pages, then back; and the score as a PDF of those pages.
+    const pagesToggle = (name) => button(name, document.querySelector('.segmented[aria-label="Pages"]') ?? document)?.click()
+    pagesToggle('Pages')
+    await sleep(1500)
+    const pageView = { pages: document.querySelectorAll('.score-page').length }
+    pagesToggle('Screen')
+    await sleep(1000)
+    pageView.screenAgain = document.querySelectorAll('.score-page').length === 0
+    document.querySelector('.editor-header .menu-button[title="Export"]')?.click()
+    await sleep(200)
+    ;[...document.querySelectorAll('.menu-list [role=menuitem]')].find((item) => item.textContent.startsWith('PDF'))?.click()
+    await waitFor(() => /PDF saved|PDF could not/.test(document.querySelector('.status-bar .status')?.textContent ?? ''), 15000)
+    pageView.pdfMessage = document.querySelector('.status-bar .status')?.textContent ?? null
 
     // A drum track with a starter pattern from the drum grid.
     button('+ Drums')?.click()
@@ -227,6 +248,7 @@ async function runSmokeTest(win: BrowserWindow): Promise<void> {
       drumHits,
       pianoRoll,
       hiddenTrack,
+      pageView,
       arrangement,
       soundWindow,
       retroSounds,
@@ -238,8 +260,13 @@ async function runSmokeTest(win: BrowserWindow): Promise<void> {
     }
   })()`)
   const transcribed = /^[1-9]\d* notes? in/.test(result.transcription ?? '')
+  const pdf = saved.find((file) => file.name.endsWith('.pdf'))?.data
+  // The PDF is kept in the temp folder, to look at.
+  const pdfFile = join(app.getPath('temp'), 'GameMusicApp-smoke-test.pdf')
+  if (pdf) await writeFile(pdfFile, pdf)
+  result.pageView.pdf = pdf ? { file: pdfFile, bytes: pdf.length, header: pdf.subarray(0, 5).toString('latin1'), pages: pdf.toString('latin1').match(/\/Type\s*\/Page\b(?!s)/g)?.length ?? 0 } : null
   const passed =
-    errors.length === 0 && result.startPage && result.theme !== null && result.scoreRenderMs !== null && result.preloadBridge && result.drumHits > 0 && result.pianoRoll && result.hiddenTrack.hidden && result.hiddenTrack.shownAgain && result.arrangement.cells > 0 && result.arrangement.paletteParts > 0 && result.arrangement.afterDuplicate === result.arrangement.sections + 1 && result.arrangement.newPart && result.arrangement.partScore && result.arrangement.duplicated && result.soundWindow.categories >= 17 && result.playing && transcribed
+    errors.length === 0 && result.startPage && result.theme !== null && result.scoreRenderMs !== null && result.preloadBridge && result.drumHits > 0 && result.pianoRoll && result.hiddenTrack.hidden && result.hiddenTrack.shownAgain && result.pageView.pages > 0 && result.pageView.screenAgain && result.pageView.pdf?.header === '%PDF-' && result.pageView.pdf.pages > 0 && result.arrangement.cells > 0 && result.arrangement.paletteParts > 0 && result.arrangement.afterDuplicate === result.arrangement.sections + 1 && result.arrangement.newPart && result.arrangement.partScore && result.arrangement.duplicated && result.soundWindow.categories >= 17 && result.playing && transcribed
   console.log('SMOKE_TEST_RESULT ' + JSON.stringify({ ...result, userData: app.getPath('userData'), errors }))
   app.exit(passed ? 0 : 1)
 }
@@ -261,6 +288,11 @@ app.whenReady().then(() => {
     await writeFile(result.filePath, data)
     return result.filePath
   })
+
+  // The PDF export: the renderer has put the pages for printing in place (see score/pdf.ts); they set their own size.
+  ipcMain.handle('print-pdf', (event) =>
+    event.sender.printToPDF({ pageSize: 'A4', printBackground: true, preferCSSPageSize: true, margins: { top: 0, bottom: 0, left: 0, right: 0 } })
+  )
 
   // Restarts the app, e.g. to apply the audio latency setting (asks first if there are unsaved changes).
   ipcMain.handle('app:restart', (event) => {

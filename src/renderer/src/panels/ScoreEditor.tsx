@@ -139,7 +139,7 @@ export function ScoreEditor(props: Props): React.JSX.Element {
   const { target: project, part = false, getEngine, playback, positionRef, onPlayFrom, message, onMessage: setMessage, clipboard, onClipboard: setClipboard } = props
   const { midiRef, midiDevices, onSharedKey, onSelectedBars, onShowShortcuts, autoFocus = false } = props
   const { song, cursor } = project
-  const { staves, zoom, drumGridMinimized, pianoRollMinimized } = project.layout
+  const { staves, zoom, pageView, drumGridMinimized, pianoRollMinimized } = project.layout
   const [entryDuration, setEntryDuration] = useState<Duration>({ value: 4, dotted: false })
   /** Where the current selection started; the selection runs from here to the cursor. */
   const [anchor, setAnchor] = useState<{ track: number; pos: BeatPos } | null>(null)
@@ -691,6 +691,7 @@ export function ScoreEditor(props: Props): React.JSX.Element {
         staveMode={staves}
         tracks={part ? undefined : shown}
         zoom={zoom}
+        pageView={!part && pageView}
         positionRef={positionRef}
         editCursor={cursor}
         selection={selection}
@@ -758,6 +759,16 @@ export function ScoreEditor(props: Props): React.JSX.Element {
             Tab only
           </button>
         </div>
+        {!part && (
+          <div className="segmented" role="group" aria-label="Pages">
+            <button className={pageView ? '' : 'active'} title="The score as wide as the window" onClick={() => project.setLayout({ pageView: false })}>
+              Screen
+            </button>
+            <button className={pageView ? 'active' : ''} title="The score on A4 pages, as in the PDF (Export → PDF)" onClick={() => project.setLayout({ pageView: true })}>
+              Pages
+            </button>
+          </div>
+        )}
         <div className="segmented" role="group" aria-label="Zoom">
           <button title="Zoom out (Ctrl+−, Ctrl+wheel)" aria-label="Zoom out" disabled={zoom <= ZOOM_STEPS[0]} onClick={() => changeZoom((z) => stepZoom(z, -1))}>
             −

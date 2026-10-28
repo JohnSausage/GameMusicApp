@@ -7,6 +7,7 @@ import type { Song } from '../model/song'
 import { beatAt, buildTimeline } from '../model/timing'
 import type { StaveMode } from '../project/layout'
 import { useTheme, type Theme } from '../theme'
+import { layOutPages, PAGE_MARGIN_X, PAGE_WIDTH, pageMetrics, pageNumber, pageTop, toSurface, toView, type PageLayout } from './pages'
 import { songToAlphaTab, type BeatRef, type ConvertedScore } from './toAlphaTab'
 
 /** What was clicked: the beat, and the tab string if the click was on the tab staff. */
@@ -21,6 +22,8 @@ interface Props {
   tracks?: number[]
   /** Score zoom, 1 = 100 % (VIEW-10). */
   zoom?: number
+  /** The score on A4 pages (black on white, as printed) instead of one sheet as wide as the view. */
+  pageView?: boolean
   /** Playback position in seconds, or null when stopped. Read every animation frame. */
   positionRef?: RefObject<number | null>
   /** Editing cursor: highlights the beat and the string on the tab. */
@@ -42,7 +45,7 @@ interface Box {
   h: number
 }
 
-function createApi(element: HTMLElement): alphaTab.AlphaTabApi {
+export function createApi(element: HTMLElement): alphaTab.AlphaTabApi {
   return new alphaTab.AlphaTabApi(element, {
     core: {
       useWorkers: false,
@@ -88,7 +91,7 @@ const SCORE_COLORS: Record<Theme, Record<ScoreColor, [number, number, number, nu
   }
 }
 
-function setScoreColors(settings: alphaTab.Settings, theme: Theme): void {
+export function setScoreColors(settings: alphaTab.Settings, theme: Theme): void {
   for (const [name, [r, g, b, a]] of Object.entries(SCORE_COLORS[theme])) {
     settings.display.resources[name as ScoreColor] = new alphaTab.model.Color(r, g, b, a)
   }
@@ -110,11 +113,15 @@ function tabStaff(api: alphaTab.AlphaTabApi, barIndex: number, trackIndex: numbe
 const REST_GLYPHS: Record<number, string> = { 1: '\uE4E3', 2: '\uE4E4', 4: '\uE4E5', 8: '\uE4E6', 16: '\uE4E7', 32: '\uE4E8' }
 const AUGMENTATION_DOT = '\uE1E7'
 
+/** Where something on alphaTab's long sheet is shown (moved onto pages in the page view). */
+type MapY = (y: number) => number
+const sameY: MapY = (y) => y
+
 /**
  * alphaTab only draws rests on the tab staff when no notation is shown. With
  * notation, we draw them on the tab ourselves so rests can be seen and clicked there.
  */
-function drawTabRests(container: HTMLElement, api: alphaTab.AlphaTabApi, converted: ConvertedScore, song: Song): void {
+export function drawTabRests(container: HTMLElement, api: alphaTab.AlphaTabApi, converted: ConvertedScore, song: Song, mapY: MapY = sameY): void {
   container.replaceChildren()
   const spacing = tabLineSpacing(api)
   converted.beats.forEach((trackBeats, trackIndex) => {
@@ -131,7 +138,7 @@ function drawTabRests(container: HTMLElement, api: alphaTab.AlphaTabApi, convert
         rest.className = 'tab-rest'
         rest.textContent = (REST_GLYPHS[beat.duration] ?? REST_GLYPHS[4]) + (beat.dots > 0 ? AUGMENTATION_DOT : '')
         rest.style.left = `${bounds.visualBounds.x + bounds.visualBounds.w / 2}px`
-        rest.style.top = `${staff.y + ((strings - 1) * spacing) / 2}px`
+        rest.style.top = `${mapY(staff.y + ((strings - 1) * spacing) / 2)}px`
         rest.style.fontSize = `${26 * api.settings.display.scale}px`
         container.appendChild(rest)
       }
@@ -170,7 +177,7 @@ function trackStavesY(api: alphaTab.AlphaTabApi, barIndex: number, trackIndex: n
 }
 
 /** One highlight box per bar of the selection. */
-function drawSelection(container: HTMLElement, api: alphaTab.AlphaTabApi, converted: ConvertedScore, song: Song, selection: Selection | null | undefined): void {
+function drawSelection(container: HTMLElement, api: alphaTab.AlphaTabApi, converted: ConvertedScore, song: Song, selection: Selection | null | undefined, mapY: MapY): void {
   container.replaceChildren()
   if (!selection) return
   for (const { bar, from, to } of selectedRanges(song, selection)) {
@@ -183,7 +190,7 @@ function drawSelection(container: HTMLElement, api: alphaTab.AlphaTabApi, conver
     box.className = 'score-selection-box'
     place(box, {
       x: first.visualBounds.x - 5,
-      y: staves.top - 4,
+      y: mapY(staves.top) - 4,
       w: last.visualBounds.x + last.visualBounds.w - first.visualBounds.x + 10,
       h: staves.bottom - staves.top + 8
     })
@@ -222,8 +229,11 @@ function stringBox(api: alphaTab.AlphaTabApi, converted: ConvertedScore, cursor:
   return { x: bounds.visualBounds.x + bounds.visualBounds.w / 2 - w / 2, y: staff.y + (cursor.string - 1) * spacing - spacing / 2, w, h: spacing }
 }
 
-export function ScoreView({ song, staveMode, tracks, zoom = 1, positionRef, editCursor, selection, onScoreClick, onSelectArea, endActions }: Props): React.JSX.Element {
+export function ScoreView(props: Props): React.JSX.Element {
+  const { song, staveMode, tracks, zoom = 1, pageView = false, positionRef, editCursor, selection, onScoreClick, onSelectArea, endActions } = props
   const scrollRef = useRef<HTMLDivElement>(null)
+  const wrapperRef = useRef<HTMLDivElement>(null)
+  const pagesLayerRef = useRef<HTMLDivElement>(null)
   const hostRef = useRef<HTMLDivElement>(null)
   const playCursorRef = useRef<HTMLDivElement>(null)
   const editColumnRef = useRef<HTMLDivElement>(null)
@@ -244,7 +254,17 @@ export function ScoreView({ song, staveMode, tracks, zoom = 1, positionRef, edit
   songRef.current = song
   const staveModeRef = useRef(staveMode)
   staveModeRef.current = staveMode
+  const pageViewRef = useRef(pageView)
+  pageViewRef.current = pageView
+  const zoomRef = useRef(zoom)
+  zoomRef.current = zoom
+  /** Where alphaTab's blocks went on the pages; null when the score is one sheet. */
+  const pagesRef = useRef<PageLayout | null>(null)
+  /** alphaTab's padding around the sheet, for the view without pages. */
+  const sheetPaddingRef = useRef<number[]>([])
   const theme = useTheme()
+  // Pages are paper: black on white, as printed.
+  const colors: Theme = pageView ? 'light' : theme
   /** The theme whose colors alphaTab has. */
   const colorsRef = useRef<Theme | null>(null)
 
@@ -256,15 +276,17 @@ export function ScoreView({ song, staveMode, tracks, zoom = 1, positionRef, edit
   useEffect(() => {
     const api = createApi(hostRef.current!)
     apiRef.current = api
+    sheetPaddingRef.current = [...api.settings.display.padding]
     api.renderFinished.on(() => {
       scrollRef.current!.dataset.renderMs = (performance.now() - renderStartRef.current).toFixed(0)
     })
     api.postRenderFinished.on(() => {
       renderVersionRef.current++
+      layOutPageView()
       const converted = convertedRef.current
       if (!converted || !restsRef.current) return
       if (staveModeRef.current === 'tab') restsRef.current.replaceChildren()
-      else drawTabRests(restsRef.current, api, converted, songRef.current)
+      else drawTabRests(restsRef.current, api, converted, songRef.current, viewY)
     })
     api.error.on((error) => console.error('alphaTab error', error))
     return () => {
@@ -273,12 +295,48 @@ export function ScoreView({ song, staveMode, tracks, zoom = 1, positionRef, edit
     }
   }, [])
 
+  /** In the page view: alphaTab's blocks onto pages, with the pages and their numbers behind them. */
+  const layOutPageView = (): void => {
+    const surface = hostRef.current?.querySelector<HTMLElement>('.at-surface')
+    const layer = pagesLayerRef.current
+    layer?.replaceChildren()
+    pagesRef.current = null
+    if (!pageViewRef.current || !surface || !layer) return
+    const layout = layOutPages(surface, pageMetrics(zoomRef.current))
+    pagesRef.current = layout
+    for (let page = 0; page < layout.pageCount; page++) {
+      const sheet = document.createElement('div')
+      sheet.className = 'score-page'
+      sheet.style.top = `${pageTop(layout, page)}px`
+      sheet.style.height = `${layout.metrics.pageHeight}px`
+      const number = pageNumber(layout, page)
+      if (number) {
+        const label = document.createElement('span')
+        label.className = 'score-page-number'
+        label.textContent = number
+        label.style.bottom = `${layout.metrics.marginBottom / 2}px`
+        sheet.appendChild(label)
+      }
+      layer.appendChild(sheet)
+    }
+  }
+
+  /** A point of alphaTab's sheet as shown (on its page in the page view). */
+  const viewY: MapY = (y) => (pagesRef.current ? toView(pagesRef.current, y) : y)
+  const viewBox = (box: Box | null): Box | null => (box ? { ...box, y: viewY(box.y) } : null)
+  /** A point as shown, on alphaTab's sheet; null in a page margin or between pages. */
+  const sheetY = (y: number, snap?: 'down' | 'up'): number | null => (pagesRef.current ? toSurface(pagesRef.current, y, snap) : y)
+
   useEffect(() => {
     const api = apiRef.current!
-    if (api.settings.display.scale !== zoom || colorsRef.current !== theme) {
+    if (api.settings.display.scale !== zoom || colorsRef.current !== colors || api.settings.core.enableLazyLoading === pageView) {
       api.settings.display.scale = zoom
-      setScoreColors(api.settings, theme)
-      colorsRef.current = theme
+      setScoreColors(api.settings, colors)
+      colorsRef.current = colors
+      // Pages: the side margins are alphaTab's padding (it divides it by the zoom), the pages have their own top and bottom.
+      api.settings.display.padding = pageView ? [PAGE_MARGIN_X * zoom, 0] : sheetPaddingRef.current
+      // All of the score is drawn at once, also what's off screen, as the blocks are moved onto pages.
+      api.settings.core.enableLazyLoading = !pageView
       api.updateSettings()
     }
     // The stave profile stays ScoreTab; which staves show is set per staff (tab only = tab, and a rhythm line for drums).
@@ -286,7 +344,7 @@ export function ScoreView({ song, staveMode, tracks, zoom = 1, positionRef, edit
     const converted = songToAlphaTab(song, api.settings, staveMode === 'tab')
     convertedRef.current = converted
     api.renderScore(converted.score, shown)
-  }, [song, staveMode, zoom, theme, shown])
+  }, [song, staveMode, zoom, colors, shown, pageView])
 
   // Overlays are positioned every frame from alphaTab's layout, so they follow re-renders.
   useEffect(() => {
@@ -300,22 +358,22 @@ export function ScoreView({ song, staveMode, tracks, zoom = 1, positionRef, edit
         const position = positionRef?.current ?? null
         // The playhead spans the system at a beat of the first track shown.
         const span = position === null ? undefined : beatAt(timeline, shown[0], position)
-        place(playCursorRef.current!, span ? beatColumn(api, converted.beats[shown[0]]?.[span.barIndex]?.[span.beatIndex]) : null)
+        place(playCursorRef.current!, span ? viewBox(beatColumn(api, converted.beats[shown[0]]?.[span.barIndex]?.[span.beatIndex])) : null)
 
         const editBeat = editCursor ? converted.beats[editCursor.track]?.[editCursor.bar]?.[editCursor.beat] : undefined
-        place(editColumnRef.current!, editCursor ? beatColumn(api, editBeat) : null)
+        place(editColumnRef.current!, editCursor ? viewBox(beatColumn(api, editBeat)) : null)
         // Drum and keys tracks have no tab, so there is no string to box; the drum grid or piano roll shows the row.
         const drums = editCursor ? song.tracks[editCursor.track]?.kind !== undefined : false
         const box = editCursor && !drums ? stringBox(api, converted, editCursor) : null
-        place(editStringRef.current!, box)
+        place(editStringRef.current!, viewBox(box))
         const staves = drums && editCursor ? trackStavesY(api, editCursor.bar, editCursor.track) : null
         const visible = box ?? (staves ? { x: 0, y: staves.top, w: 0, h: staves.bottom - staves.top } : null)
-        if (visible && editCursor) keepVisible(visible, `${editCursor.track}/${editCursor.bar}/${editCursor.beat}`)
+        if (visible && editCursor) keepVisible(viewBox(visible)!, `${editCursor.track}/${editCursor.bar}/${editCursor.beat}`)
 
         const selectionKey = `${renderVersionRef.current}|${JSON.stringify(selection ?? null)}`
         if (selectionKey !== drawnSelectionRef.current) {
           drawnSelectionRef.current = selectionKey
-          drawSelection(selectionLayerRef.current!, api, converted, song, selection)
+          drawSelection(selectionLayerRef.current!, api, converted, song, selection, viewY)
         }
 
         const lastBar = api.boundsLookup.staffSystems.at(-1)?.bars.at(-1)?.realBounds
@@ -324,7 +382,7 @@ export function ScoreView({ song, staveMode, tracks, zoom = 1, positionRef, edit
           const maxX = hostRef.current!.clientWidth - end.offsetWidth - 8
           end.style.display = 'flex'
           end.style.left = `${Math.min(lastBar.x + lastBar.w + 14, maxX)}px`
-          end.style.top = `${lastBar.y + lastBar.h / 2 - end.offsetHeight / 2}px`
+          end.style.top = `${viewY(lastBar.y) + lastBar.h / 2 - end.offsetHeight / 2}px`
         }
       }
       frame = requestAnimationFrame(tick)
@@ -336,8 +394,10 @@ export function ScoreView({ song, staveMode, tracks, zoom = 1, positionRef, edit
       scrolledToRef.current = key
       const scroll = scrollRef.current!
       const margin = 40
-      if (box.y < scroll.scrollTop + margin) scroll.scrollTop = box.y - margin
-      else if (box.y + box.h > scroll.scrollTop + scroll.clientHeight - margin) scroll.scrollTop = box.y + box.h - scroll.clientHeight + margin
+      // The score may not start at the top of the scrolled area (pages have space around them).
+      const y = box.y + wrapperRef.current!.getBoundingClientRect().top - scroll.getBoundingClientRect().top + scroll.scrollTop
+      if (y < scroll.scrollTop + margin) scroll.scrollTop = y - margin
+      else if (y + box.h > scroll.scrollTop + scroll.clientHeight - margin) scroll.scrollTop = y + box.h - scroll.clientHeight + margin
     }
 
     frame = requestAnimationFrame(tick)
@@ -381,14 +441,22 @@ export function ScoreView({ song, staveMode, tracks, zoom = 1, positionRef, edit
     const api = apiRef.current
     const converted = convertedRef.current
     if (!api?.boundsLookup || !converted || !onSelectArea) return
-    const startBeat = beatAtPoint(api, from.x, from.y) ?? beatAtPoint(api, to.x, to.y)
+    const beatAt = (point: { x: number; y: number }): alphaTab.model.Beat | null => {
+      const y = sheetY(point.y)
+      return y === null ? null : beatAtPoint(api, point.x, y)
+    }
+    const startBeat = beatAt(from) ?? beatAt(to)
     const track = startBeat ? converted.refs.get(startBeat)?.trackIndex : undefined
     if (track === undefined) return
+    // The rectangle on alphaTab's sheet; on pages, its ends move into the music.
+    const top = sheetY(area.y, 'down')
+    const bottom = sheetY(area.y + area.h, 'up')
+    if (top === null || bottom === null || bottom < top) return
     let first: { bar: number; beat: number } | null = null
     let last: { bar: number; beat: number } | null = null
     converted.beats[track].forEach((beats, bar) => {
       const staves = trackStavesY(api, bar, track)
-      if (!staves || staves.bottom < area.y || staves.top > area.y + area.h) return
+      if (!staves || staves.bottom < top || staves.top > bottom) return
       beats.forEach((beat, index) => {
         const bounds = api.boundsLookup?.findBeat(beat)?.visualBounds
         if (!bounds || bounds.x + bounds.w < area.x || bounds.x > area.x + area.w) return
@@ -410,7 +478,8 @@ export function ScoreView({ song, staveMode, tracks, zoom = 1, positionRef, edit
     if ((event.target as HTMLElement).closest('.score-end-actions')) return
     const rect = event.currentTarget.getBoundingClientRect()
     const x = event.clientX - rect.left
-    const y = event.clientY - rect.top
+    const y = sheetY(event.clientY - rect.top)
+    if (y === null) return
     const beat = beatAtPoint(api, x, y)
     const ref = beat ? converted.refs.get(beat) : undefined
     if (!ref) return
@@ -426,8 +495,18 @@ export function ScoreView({ song, staveMode, tracks, zoom = 1, positionRef, edit
   }
 
   return (
-    <div ref={scrollRef} className="score-scroll">
-      <div className="score-host-wrapper" onClick={handleClick} onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp}>
+    <div ref={scrollRef} className={`score-scroll ${pageView ? 'page-view' : ''}`}>
+      <div
+        ref={wrapperRef}
+        className="score-host-wrapper"
+        // A page wide: the width alphaTab lays the score out for.
+        style={pageView ? { width: PAGE_WIDTH * zoom } : undefined}
+        onClick={handleClick}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+      >
+        <div ref={pagesLayerRef} className="score-pages" />
         <div ref={hostRef} className="score-host" />
         <div ref={selectionLayerRef} className="score-selection-layer" />
         <div ref={restsRef} className="score-tab-rests" />

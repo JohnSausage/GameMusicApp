@@ -48,14 +48,15 @@ describe('project file', () => {
 
   it('keeps the editor layout, and fixes settings it does not know', () => {
     const song = createDemoSong()
-    const layout: Layout = { view: 'arrangement', staves: 'tab', zoom: 1.25, drumGridMinimized: true, pianoRollMinimized: false, hiddenTracks: [song.tracks[1].id] }
+    const layout: Layout = { view: 'arrangement', staves: 'tab', zoom: 1.25, pageView: true, drumGridMinimized: true, pianoRollMinimized: false, hiddenTracks: [song.tracks[1].id] }
     expect(parseProject(serializeProject(song, new Map(), layout)).layout).toEqual(layout)
     expect(parseProject(serializeProject(song)).layout).toBeUndefined() // files saved before layouts: the app uses the last one
-    const odd = { view: 'mixer', staves: 'sideways', zoom: 9, drumGridMinimized: 'yes', pianoRollMinimized: true, hiddenTracks: ['a', 7, 'a'] }
+    const odd = { view: 'mixer', staves: 'sideways', zoom: 9, pageView: 1, drumGridMinimized: 'yes', pianoRollMinimized: true, hiddenTracks: ['a', 7, 'a'] }
     expect(parseProject(zipJson({ app: 'GameMusicApp', formatVersion: FORMAT_VERSION, song, layout: odd })).layout).toEqual({
       view: 'score',
       staves: 'notation+tab',
       zoom: 2,
+      pageView: false,
       drumGridMinimized: false,
       pianoRollMinimized: true,
       hiddenTracks: ['a']

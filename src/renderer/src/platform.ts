@@ -26,6 +26,8 @@ export interface SettingsState {
 interface ElectronBridge {
   platform: string
   saveFile(defaultName: string, data: Uint8Array): Promise<string | null>
+  /** The window printed to a PDF (A4); what is printed is set by print CSS. */
+  printPdf(): Promise<Uint8Array>
   projects: {
     listRecent(): Promise<RecentProject[]>
     recordRecent(path: string, title: string): Promise<void>

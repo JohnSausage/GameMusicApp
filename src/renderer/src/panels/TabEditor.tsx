@@ -25,6 +25,7 @@ import { importMidi } from '../model/midiImport'
 import { CRUSH_RATES, eightBitKit, formatSampleRate } from '../model/synth'
 import { barSeconds, buildTimeline } from '../model/timing'
 import { saveFile } from '../platform'
+import { scorePdf } from '../score/pdf'
 import type { HeaderSlots } from '../pages/EditorPage'
 import { showTrack, shownTracks, type MainView } from '../project/layout'
 import type { Project } from '../project/useProject'
@@ -416,6 +417,18 @@ export function TabEditor({ project, getEngine, headerSlots, onShowShortcuts }: 
     setMessage(path ? `MIDI saved: ${path}` : '')
   }
 
+  /** The score as in the page view: the tracks shown, with the staves shown. */
+  const exportPdf = async (): Promise<void> => {
+    setMessage('Making the PDF…')
+    try {
+      const pdf = await scorePdf(song, project.layout.staves, shownTracks(song, project.layout))
+      const path = pdf && (await saveFile(`${song.title}.pdf`, pdf))
+      setMessage(path ? `PDF saved: ${path}` : '')
+    } catch (error) {
+      setMessage(`The PDF could not be made: ${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+
   /** What the score and the part editor share. */
   const editorProps = {
     getEngine,
@@ -523,7 +536,8 @@ export function TabEditor({ project, getEngine, headerSlots, onShowShortcuts }: 
                     setExportDialog(true)
                   }
                 },
-                { label: 'MIDI', title: 'All tracks as a MIDI file', onSelect: () => void exportMidi() }
+                { label: 'MIDI', title: 'All tracks as a MIDI file', onSelect: () => void exportMidi() },
+                { label: 'PDF', title: 'The score on A4 pages, as in the page view (the tracks shown in the score)', onSelect: () => void exportPdf() }
               ]}
             />
           </>,

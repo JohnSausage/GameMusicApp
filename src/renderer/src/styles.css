@@ -14,6 +14,8 @@
   /* The score: paper and ink. */
   --score-bg: #ffffff;
   --score-text: #000000;
+  /* Behind the pages in the page view. */
+  --page-desk: #e7e5e4;
   /* Part colors in the arrangement. */
   --part-0: #7c3aed;
   --part-1: #0d9488;
@@ -40,6 +42,7 @@
   --selection: rgba(234, 179, 8, 0.3);
   --score-bg: #24201e;
   --score-text: #ece9e6;
+  --page-desk: #0f0d0c;
   --part-0: #a78bfa;
   --part-1: #2dd4bf;
   --part-2: #fb923c;
@@ -1767,6 +1770,93 @@ button.arr-label:hover:not(:disabled) {
   pointer-events: none;
   border: 1px dashed #2563eb;
   background: rgba(37, 99, 235, 0.08);
+}
+
+/* The page view: the score on A4 pages, black on white as printed, on a desk (see pages.ts). */
+.score-scroll.page-view {
+  --score-bg: #ffffff;
+  --score-text: #000000;
+  background: var(--page-desk);
+}
+
+.score-scroll.page-view .score-host-wrapper {
+  margin: 24px auto;
+}
+
+.score-scroll.page-view .score-host {
+  position: relative;
+}
+
+.score-pages {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.score-page {
+  position: absolute;
+  left: 0;
+  right: 0;
+  background: #ffffff;
+  box-shadow:
+    0 1px 3px rgba(0, 0, 0, 0.25),
+    0 6px 18px rgba(0, 0, 0, 0.1);
+}
+
+.score-page-number {
+  position: absolute;
+  left: 0;
+  right: 0;
+  text-align: center;
+  font-size: 12px;
+  color: #57534e;
+}
+
+:root[data-theme='dark'] .page-view .score-end-actions button {
+  background: #eff6ff;
+  border-color: #93c5fd;
+  color: #1d4ed8;
+}
+
+/* The PDF export (score/pdf.ts): pages made for printing, shown only when printed. */
+.print-root {
+  display: none;
+  --score-text: #000000;
+}
+
+@media print {
+  @page {
+    size: A4;
+    margin: 0;
+  }
+
+  html,
+  body {
+    background: #ffffff !important;
+    height: auto;
+    overflow: visible;
+  }
+
+  body > :not(.print-root) {
+    display: none !important;
+  }
+
+  .print-root {
+    display: block;
+  }
+
+  .print-page {
+    position: relative;
+    width: 210mm;
+    height: 297mm;
+    overflow: hidden;
+    background: #ffffff;
+    break-after: page;
+  }
+
+  .print-page:last-child {
+    break-after: auto;
+  }
 }
 
 /* ---------------------------------------------------------------- drum grid */
