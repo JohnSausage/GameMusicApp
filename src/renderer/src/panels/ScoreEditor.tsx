@@ -36,7 +36,7 @@ import {
   type Duration,
   type EditResult
 } from '../model/edit'
-import { barCount, DRUM_PIECES, isFretted, rowPitch, MAX_FRET, NOTE_VALUES, notePitch, type Beat, type NoteValue, type Track } from '../model/song'
+import { barCount, DRUM_PIECES, isFretted, rowPitch, MAX_FRET, NOTE_VALUES, notePitch, stringPitch, type Beat, type NoteValue, type Track } from '../model/song'
 import type { MidiNoteMessage } from '../midi/midiInput'
 import { quantizeNotes, writeRoll, type TimedNote } from '../model/keys'
 import { stepAdvance, stepEnter } from '../model/stepEntry'
@@ -232,7 +232,7 @@ export function ScoreEditor(props: Props): React.JSX.Element {
 
   /** Drum tracks: a hit on the cursor's kit piece (digits and X). */
   const enterHit = (): void => {
-    if (project.apply(setFret(song, cursor, 0, entryDuration))) void audition(track.tuning[cursor.string - 1])
+    if (project.apply(setFret(song, cursor, 0, entryDuration))) void audition(stringPitch(track, cursor.string, 0))
   }
 
   const enterDigit = (digit: number): void => {
@@ -249,7 +249,7 @@ export function ScoreEditor(props: Props): React.JSX.Element {
       pendingDigit.current = { key, digit, at: now }
     }
     if (project.apply(setFret(song, cursor, fret, entryDuration), { mergeKey })) {
-      void audition(track.tuning[cursor.string - 1] + fret)
+      void audition(stringPitch(track, cursor.string, fret))
     }
   }
 
@@ -559,7 +559,8 @@ export function ScoreEditor(props: Props): React.JSX.Element {
   }
 
   const describeCursor = (): string => {
-    const open = noteName(track.tuning[cursor.string - 1])
+    // The string as it sounds at fret 0 (on the capo, if there is one).
+    const open = noteName(stringPitch(track, cursor.string, 0))
     const what = drums
       ? noteOnString ? 'hit' : beat.notes.length === 0 ? 'rest' : 'no hit'
       : keys

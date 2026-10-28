@@ -46,8 +46,10 @@ export interface Track {
    * (see DRUM_PIECES), keys tracks one per piano key (see KEYS_TUNING); their notes are all fret 0.
    */
   kind?: 'drums' | 'keys'
-  /** MIDI note per string, string 1 (highest) first. */
+  /** MIDI note per string, string 1 (highest) first: the open strings without a capo (see model/tuning.ts). */
   tuning: number[]
+  /** Guitar and bass: the fret of the capo (absent = none). Frets in the tab count from it. */
+  capo?: number
   instrument: Instrument
   /** Mute and solo (PLAY-05); they apply to playback and WAV export. */
   mute?: boolean
@@ -214,8 +216,13 @@ export const MAX_FRET = 24
 export const GM_ACOUSTIC_GUITAR_STEEL = 25
 export const GM_FINGER_BASS = 33
 
+/** The pitch of a fret on a string of the track, with its capo. */
+export function stringPitch(track: Pick<Track, 'tuning' | 'capo'>, string: number, fret: number): number {
+  return track.tuning[string - 1] + (track.capo ?? 0) + fret
+}
+
 export function notePitch(track: Track, note: Note): number {
-  return track.tuning[note.string - 1] + note.fret
+  return stringPitch(track, note.string, note.fret)
 }
 
 /** Length of a beat in quarter notes. */

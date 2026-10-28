@@ -2,6 +2,7 @@ import * as alphaTab from '@coderline/alphatab'
 import { partStarts } from '../model/arrangement'
 import { strengthOf } from '../model/drums'
 import type { NoteValue, Song } from '../model/song'
+import { isStandardTuning, tuningPreset } from '../model/tuning'
 
 const { AccentuationType, Automation, SlideOutType, Bar, Beat, Clef, Duration, MasterBar, Note, Ottavia, Score, Section, Track, Tuning, Voice } = alphaTab.model
 
@@ -60,6 +61,9 @@ export function songToAlphaTab(song: Song, settings: alphaTab.Settings, tabOnly 
   const partLabels = new Map<string, string>()
   for (const start of partStarts(song)) if (start.uses > 1 || !start.sameName) partLabels.set(`${start.track}:${start.bar}`, start.name)
 
+  // Tracks whose tuning is not listed under the title (alphaTab track index → false).
+  const hiddenTunings = new Map<number, boolean>()
+  score.stylesheet.perTrackDisplayTuning = hiddenTunings
   song.tracks.forEach((track, trackIndex) => {
     const atTrack = new Track()
     atTrack.name = track.name
@@ -75,7 +79,12 @@ export function songToAlphaTab(song: Song, settings: alphaTab.Settings, tabOnly 
     staff.showTablature = !drums && !keys
     staff.showStandardNotation = !tabOnly || keys
     staff.showSlash = drums && tabOnly
-    if (!drums && !keys) staff.stringTuning = new Tuning('', [...track.tuning], false)
+    if (!drums && !keys) {
+      // A tuning other than standard is listed under the title; a capo is noted over the first bar.
+      staff.stringTuning = new Tuning(tuningPreset(track.tuning)?.name ?? '', [...track.tuning], isStandardTuning(track.tuning))
+      staff.capo = track.capo ?? 0
+      if (isStandardTuning(track.tuning)) hiddenTunings.set(trackIndex, false)
+    }
 
     const trackBeats: alphaTab.model.Beat[][] = []
     // Ties, hammer-ons and slides only link to the beat right before or after (as in playback).

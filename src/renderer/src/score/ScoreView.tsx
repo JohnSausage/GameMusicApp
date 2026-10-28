@@ -58,12 +58,8 @@ export function createApi(element: HTMLElement): alphaTab.AlphaTabApi {
     display: { staveProfile: alphaTab.StaveProfile.ScoreTab },
     notation: {
       rhythmMode: alphaTab.TabRhythmMode.ShowWithBars,
-      // Dynamics aren't part of our model yet (hides alphaTab's default "f"),
-      // and the tuning label overlaps between tracks.
-      elements: new Map([
-        [alphaTab.NotationElement.EffectDynamics, false],
-        [alphaTab.NotationElement.GuitarTuning, false]
-      ])
+      // Dynamics aren't part of our model yet (hides alphaTab's default "f").
+      elements: new Map([[alphaTab.NotationElement.EffectDynamics, false]])
     },
     player: { enablePlayer: false }
   })

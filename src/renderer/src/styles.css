@@ -709,6 +709,40 @@ label.inline {
   flex-direction: row;
 }
 
+/* The tuning dialog (TuningDialog.tsx): the strings from the lowest, each tuned in semitones. */
+.tuning-dialog {
+  width: min(620px, 100%);
+}
+
+.tuning-strings {
+  display: grid;
+  gap: 8px;
+  margin: 14px 0 10px;
+}
+
+.tuning-string {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.tuning-string .segmented {
+  display: flex;
+  width: 100%;
+}
+
+.tuning-string .segmented button {
+  padding: 4px 0;
+  flex: 1;
+  min-width: 0;
+}
+
+.tuning-string .string-note {
+  flex: 2;
+  font-weight: 600;
+}
+
 .track-card .volume input {
   flex: 1;
 }

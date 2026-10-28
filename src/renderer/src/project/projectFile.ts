@@ -5,6 +5,7 @@ import { decodeWav16, encodeWav16 } from '../audio/wav'
 import { fixPartColors, PART_COLORS, writeOut } from '../model/arrangement'
 import { MASTER_DEFAULTS, NOTE_VALUES, type Bar, type Instrument, type MasterSettings, type ProjectAudio, type Song, type TakeInfo, type Track } from '../model/song'
 import { normalizePatch, PATCH_LIMITS } from '../model/synth'
+import { MAX_CAPO } from '../model/tuning'
 import { checkLayout, type Layout } from './layout'
 
 export const PROJECT_EXTENSION = 'gmsong'
@@ -176,6 +177,7 @@ function checkSong(value: unknown): Song {
   song.tracks.forEach((track, t) => {
     if (typeof track.name !== 'string' || !Array.isArray(track.tuning) || !track.tuning.every(isInt)) fail(`track ${t + 1} is invalid`)
     if (track.kind !== undefined && track.kind !== 'drums' && track.kind !== 'keys') fail(`track ${t + 1} has an unknown kind`)
+    if (track.capo !== undefined && (track.kind !== undefined || !isInt(track.capo) || track.capo < 0 || track.capo > MAX_CAPO)) fail(`track ${t + 1} has an invalid capo`)
     if ((track.mute !== undefined && typeof track.mute !== 'boolean') || (track.solo !== undefined && typeof track.solo !== 'boolean')) {
       fail(`track ${t + 1} has invalid mute/solo settings`)
     }

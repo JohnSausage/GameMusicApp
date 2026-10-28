@@ -4,6 +4,7 @@ import { detectFirstOnset, secondsPerClick } from '../audio/analysis'
 import { importAudioFile, listInputDevices, MicRecorder, samplesToBuffer } from '../audio/recorder'
 import { barsHaveNotes, removeTake, writeBars } from '../model/edit'
 import { isFretted, newId, takeSeconds, type Song, type TakeInfo } from '../model/song'
+import { soundingTuning } from '../model/tuning'
 import type { Project } from '../project/useProject'
 import { ScoreView } from '../score/ScoreView'
 import { extractNotes, runBasicPitch, type ModelOutput, type Sensitivity } from '../transcription/basicPitch'
@@ -255,14 +256,16 @@ export function TakeDialog({ project, getEngine, onClose }: Props): React.JSX.El
 
   const transcription = useMemo(() => {
     if (step.kind !== 'preview' || !take) return null
-    const range = { minPitch: Math.min(...track.tuning), maxPitch: Math.max(...track.tuning) + TRANSCRIBE_MAX_FRET }
+    // Frets count from the capo, if there is one.
+    const tuning = soundingTuning(track)
+    const range = { minPitch: Math.min(...tuning), maxPitch: Math.max(...tuning) + TRANSCRIBE_MAX_FRET }
     const notes = extractNotes(step.model, sensitivity, range)
     return transcribeToBars(notes, {
       tempo: take.info.tempo,
       firstDownbeat: take.info.firstDownbeat,
       stepsPerQuarter,
       timeSignature: song.timeSignature,
-      tuning: track.tuning,
+      tuning,
       preferredFret
     })
   }, [step, take, sensitivity, stepsPerQuarter, preferredFret, track, song.timeSignature])

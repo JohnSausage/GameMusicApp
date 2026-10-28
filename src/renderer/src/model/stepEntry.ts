@@ -4,6 +4,7 @@
 import { drumRowFor } from './drums'
 import { addBars, edit, moveBeat, setFret, type Cursor, type Duration, type EditResult } from './edit'
 import { keyRow, MAX_FRET, type Song, type Track } from './song'
+import { soundingTuning } from './tuning'
 
 /** Fret the hand is assumed to be near when nothing was played before. */
 const DEFAULT_FRET = 3
@@ -11,7 +12,7 @@ const DEFAULT_FRET = 3
 /** String and fret for `pitch`: on a string not used yet in the chord, near the last fret played and the cursor's string. */
 export function fretFor(track: Track, pitch: number, usedStrings: Set<number>, nearFret: number, nearString: number): { string: number; fret: number } | null {
   let best: { string: number; fret: number; cost: number } | null = null
-  for (const [i, open] of track.tuning.entries()) {
+  for (const [i, open] of soundingTuning(track).entries()) {
     const string = i + 1
     const fret = pitch - open
     if (fret < 0 || fret > MAX_FRET || usedStrings.has(string)) continue

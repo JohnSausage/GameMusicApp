@@ -24,6 +24,7 @@ import { MidiKeyboard, type MidiNoteMessage } from '../midi/midiInput'
 import { importMidi } from '../model/midiImport'
 import { CRUSH_RATES, eightBitKit, formatSampleRate } from '../model/synth'
 import { barSeconds, buildTimeline } from '../model/timing'
+import { retuneTrack, tuningLabel, type Retune } from '../model/tuning'
 import { saveFile } from '../platform'
 import { scorePdf } from '../score/pdf'
 import type { HeaderSlots } from '../pages/EditorPage'
@@ -34,6 +35,7 @@ import { ExportDialog } from './ExportDialog'
 import { InstrumentEditor } from './InstrumentEditor'
 import { barsLabel, ScoreEditor, type Clipboard } from './ScoreEditor'
 import { TakeDialog } from './TakeDialog'
+import { TuningDialog } from './TuningDialog'
 import { usePlayback, type Playback } from './usePlayback'
 
 interface Props {
@@ -48,10 +50,11 @@ interface TrackListProps {
   project: Project
   onSelect: (index: number) => void
   onEditSound: (index: number) => void
+  onEditTuning: (index: number) => void
   onMessage: (message: string) => void
 }
 
-function TrackList({ project, onSelect, onEditSound, onMessage }: TrackListProps): React.JSX.Element {
+function TrackList({ project, onSelect, onEditSound, onEditTuning, onMessage }: TrackListProps): React.JSX.Element {
   const { song, cursor } = project
   const retro = isRetro(song)
   const master = { ...MASTER_DEFAULTS, ...song.master }
@@ -192,6 +195,24 @@ function TrackList({ project, onSelect, onEditSound, onMessage }: TrackListProps
               </button>
             )}
           </div>
+          {isFretted(track) && (
+            <div className="track-card-row">
+              <button
+                className="sound-button tuning-button"
+                title="Tuning and capo"
+                aria-label={`Tuning of ${track.name}: ${tuningLabel(track)}`}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onEditTuning(index)
+                }}
+              >
+                <span className="sound-button-name">
+                  <span className="muted">Tuning</span> {tuningLabel(track)}
+                </span>
+                <ChevronDownIcon size={14} />
+              </button>
+            </div>
+          )}
           <label className="track-card-row volume">
             Volume
             <input
@@ -265,6 +286,7 @@ export function TabEditor({ project, getEngine, headerSlots, onShowShortcuts }: 
   const [loopChoice, setLoopChoice] = useState<LoopChoice>({ kind: 'song' })
   const [metronome, setMetronome] = useState(false)
   const [soundEditor, setSoundEditor] = useState<number | null>(null)
+  const [tuningDialog, setTuningDialog] = useState<number | null>(null)
   /** MIDI keyboards found (null: MIDI not available or not connected yet). */
   const [midiDevices, setMidiDevices] = useState<string[] | null>(null)
   /** The bars of the selection in the score, for what to loop and export. */
@@ -417,6 +439,17 @@ export function TabEditor({ project, getEngine, headerSlots, onShowShortcuts }: 
     setMessage(path ? `MIDI saved: ${path}` : '')
   }
 
+  /** New tuning and capo for a guitar or bass track, and what became of its notes. */
+  const retune = (index: number, tuning: number[], capo: number, keep: Retune): void => {
+    const retuned = retuneTrack(song, cursor, index, tuning, capo, keep)
+    if (!retuned) return
+    project.apply(retuned.result)
+    const notes = (n: number): string => `${n} ${n === 1 ? 'note' : 'notes'}`
+    const moved = retuned.moved > 0 ? ` ${notes(retuned.moved)} moved to another string to keep their sound.` : ''
+    const changed = retuned.changed > 0 ? ` ${notes(retuned.changed)} can't be played at the same pitch any more and kept their fret.` : ''
+    setMessage(`${song.tracks[index].name}: ${tuningLabel({ tuning, capo })}.${moved}${changed}`)
+  }
+
   /** The score as in the page view: the tracks shown, with the staves shown. */
   const exportPdf = async (): Promise<void> => {
     setMessage('Making the PDF…')
@@ -454,6 +487,10 @@ export function TabEditor({ project, getEngine, headerSlots, onShowShortcuts }: 
         onEditSound={(index) => {
           stop()
           setSoundEditor(index)
+        }}
+        onEditTuning={(index) => {
+          stop()
+          setTuningDialog(index)
         }}
         onMessage={setMessage}
       />
@@ -609,6 +646,22 @@ export function TabEditor({ project, getEngine, headerSlots, onShowShortcuts }: 
           getEngine={getEngine}
           onClose={() => {
             setSoundEditor(null)
+            focus()
+          }}
+        />
+      )}
+
+      {tuningDialog !== null && song.tracks[tuningDialog] && isFretted(song.tracks[tuningDialog]) && (
+        <TuningDialog
+          track={song.tracks[tuningDialog]}
+          getEngine={getEngine}
+          onApply={(tuning, capo, keep) => {
+            retune(tuningDialog, tuning, capo, keep)
+            setTuningDialog(null)
+            focus()
+          }}
+          onClose={() => {
+            setTuningDialog(null)
             focus()
           }}
         />

@@ -128,6 +128,30 @@ async function runSmokeTest(win: BrowserWindow): Promise<void> {
     await sleep(1000)
     hiddenTrack.shownAgain = eye()?.getAttribute('aria-pressed') === 'true'
 
+    // The tuning dialog of the first guitar or bass track: Drop D with a capo, then undone.
+    const tuning = { before: document.querySelector('.tuning-button')?.textContent ?? null }
+    document.querySelector('.tuning-button')?.click()
+    await sleep(300)
+    const presetSelect = document.querySelector('.tuning-dialog select')
+    const dropD = [...(presetSelect?.options ?? [])].find((o) => o.textContent.startsWith('Drop D'))
+    if (presetSelect && dropD) {
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(presetSelect, dropD.value)
+      presetSelect.dispatchEvent(new Event('change', { bubbles: true }))
+    }
+    const capoSelect = document.querySelectorAll('.tuning-dialog select')[1]
+    if (capoSelect) {
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(capoSelect, '2')
+      capoSelect.dispatchEvent(new Event('change', { bubbles: true }))
+    }
+    await sleep(100)
+    const tuningDialog = document.querySelector('.tuning-dialog')
+    if (tuningDialog) button('Apply', tuningDialog)?.click()
+    await sleep(1000)
+    tuning.after = document.querySelector('.tuning-button')?.textContent ?? null
+    document.querySelector('button[aria-label="Undo"]')?.click()
+    await sleep(1000)
+    tuning.undone = document.querySelector('.tuning-button')?.textContent === tuning.before
+
     // The page view: the score on A4 pages, then back; and the score as a PDF of those pages.
     const pagesToggle = (name) => button(name, document.querySelector('.segmented[aria-label="Pages"]') ?? document)?.click()
     pagesToggle('Pages')
@@ -248,6 +272,7 @@ async function runSmokeTest(win: BrowserWindow): Promise<void> {
       drumHits,
       pianoRoll,
       hiddenTrack,
+      tuning,
       pageView,
       arrangement,
       soundWindow,
@@ -266,7 +291,7 @@ async function runSmokeTest(win: BrowserWindow): Promise<void> {
   if (pdf) await writeFile(pdfFile, pdf)
   result.pageView.pdf = pdf ? { file: pdfFile, bytes: pdf.length, header: pdf.subarray(0, 5).toString('latin1'), pages: pdf.toString('latin1').match(/\/Type\s*\/Page\b(?!s)/g)?.length ?? 0 } : null
   const passed =
-    errors.length === 0 && result.startPage && result.theme !== null && result.scoreRenderMs !== null && result.preloadBridge && result.drumHits > 0 && result.pianoRoll && result.hiddenTrack.hidden && result.hiddenTrack.shownAgain && result.pageView.pages > 0 && result.pageView.screenAgain && result.pageView.pdf?.header === '%PDF-' && result.pageView.pdf.pages > 0 && result.arrangement.cells > 0 && result.arrangement.paletteParts > 0 && result.arrangement.afterDuplicate === result.arrangement.sections + 1 && result.arrangement.newPart && result.arrangement.partScore && result.arrangement.duplicated && result.soundWindow.categories >= 17 && result.playing && transcribed
+    errors.length === 0 && result.startPage && result.theme !== null && result.scoreRenderMs !== null && result.preloadBridge && result.drumHits > 0 && result.pianoRoll && result.hiddenTrack.hidden && result.hiddenTrack.shownAgain && result.tuning.after?.includes('Drop D · capo 2') && result.tuning.undone && result.pageView.pages > 0 && result.pageView.screenAgain && result.pageView.pdf?.header === '%PDF-' && result.pageView.pdf.pages > 0 && result.arrangement.cells > 0 && result.arrangement.paletteParts > 0 && result.arrangement.afterDuplicate === result.arrangement.sections + 1 && result.arrangement.newPart && result.arrangement.partScore && result.arrangement.duplicated && result.soundWindow.categories >= 17 && result.playing && transcribed
   console.log('SMOKE_TEST_RESULT ' + JSON.stringify({ ...result, userData: app.getPath('userData'), errors }))
   app.exit(passed ? 0 : 1)
 }
