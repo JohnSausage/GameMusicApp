@@ -1,7 +1,7 @@
 {
   "name": "game-music-app",
   "productName": "GameMusicApp",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Compose game music on guitar: record, transcribe to tab, arrange, export WAV/MIDI",
   "author": "JohnSausage",
   "license": "UNLICENSED",
