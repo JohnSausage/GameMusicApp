@@ -352,6 +352,22 @@ code {
   min-width: 120px;
 }
 
+/* Unsaved changes a crash left behind (project/recovery.ts). */
+.recovered {
+  margin: 20px 0 8px;
+  padding: 4px 14px 14px;
+  border: 1px solid var(--warning);
+  border-radius: 10px;
+}
+
+.recovered h2 {
+  margin-bottom: 4px;
+}
+
+.recovered p {
+  margin: 0 0 10px;
+}
+
 .recent-list {
   list-style: none;
   padding: 0;

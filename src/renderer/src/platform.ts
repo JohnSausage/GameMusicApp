@@ -5,6 +5,25 @@ export interface RecentProject {
   missing?: boolean
 }
 
+/** Unsaved changes kept for crash recovery (PRJ-06), left behind by a run of the app that ended without saving them. */
+export interface RecoveryEntry {
+  id: string
+  title: string
+  /** The project file the changes belong to; null if it was never saved. */
+  path: string | null
+  /** When the copy was written: the last change. */
+  savedAt: string
+}
+
+/** Copies of unsaved changes, by an id per open project. */
+export interface RecoveryStore {
+  /** Copies left behind by earlier runs, newest first. */
+  list(): Promise<RecoveryEntry[]>
+  read(id: string): Promise<Uint8Array>
+  write(id: string, data: Uint8Array, title: string, path: string | null): Promise<void>
+  clear(id: string): Promise<void>
+}
+
 export interface OpenedProject {
   path: string
   data: Uint8Array
@@ -36,6 +55,7 @@ interface ElectronBridge {
     save(data: Uint8Array, suggestedName: string, path?: string): Promise<string | null>
     setDirty(dirty: boolean): void
   }
+  recovery: RecoveryStore
   presets: {
     list(): Promise<{ id: string; text: string }[]>
     save(name: string, text: string): Promise<string>

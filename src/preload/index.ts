@@ -13,6 +13,12 @@ contextBridge.exposeInMainWorld('gameMusicApp', {
     save: (data: Uint8Array, suggestedName: string, path?: string) => ipcRenderer.invoke('projects:save', data, suggestedName, path),
     setDirty: (dirty: boolean) => ipcRenderer.send('projects:set-dirty', dirty)
   },
+  recovery: {
+    list: () => ipcRenderer.invoke('recovery:list'),
+    read: (id: string) => ipcRenderer.invoke('recovery:read', id),
+    write: (id: string, data: Uint8Array, title: string, path: string | null) => ipcRenderer.invoke('recovery:write', id, data, title, path),
+    clear: (id: string) => ipcRenderer.invoke('recovery:clear', id)
+  },
   presets: {
     list: () => ipcRenderer.invoke('presets:list'),
     save: (name: string, text: string) => ipcRenderer.invoke('presets:save', name, text),

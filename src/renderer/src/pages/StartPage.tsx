@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { ThemeSwitch } from '../components/ThemeSwitch'
 import type { NewSongOptions } from '../model/edit'
 import type { TrackKind } from '../model/song'
-import type { RecentProject } from '../platform'
+import type { RecentProject, RecoveryEntry } from '../platform'
 import type { ProjectStorage } from '../project/storage'
 
 interface Props {
@@ -11,6 +11,7 @@ interface Props {
   onCreate: (options: NewSongOptions) => void
   onOpen: (path?: string) => void
   onOpenDemo: () => void
+  onRestore: (entry: RecoveryEntry) => void
 }
 
 const TIME_SIGNATURES: [number, number][] = [
@@ -79,17 +80,25 @@ function NewProjectForm({ onCreate, onCancel }: { onCreate: (options: NewSongOpt
   )
 }
 
-export function StartPage({ storage, error, onCreate, onOpen, onOpenDemo }: Props): React.JSX.Element {
+export function StartPage({ storage, error, onCreate, onOpen, onOpenDemo, onRestore }: Props): React.JSX.Element {
   const [recent, setRecent] = useState<RecentProject[] | null>(null)
+  const [recovered, setRecovered] = useState<RecoveryEntry[]>([])
   const [creating, setCreating] = useState(false)
 
   const refresh = (): void => {
     void storage.listRecent().then(setRecent)
+    void storage.recovery.list().then(setRecovered)
   }
   useEffect(refresh, [storage])
 
   const remove = async (path: string): Promise<void> => {
     await storage.removeRecent(path)
+    refresh()
+  }
+
+  const discard = async (entry: RecoveryEntry): Promise<void> => {
+    if (!window.confirm(`Throw away the unsaved changes to "${entry.title}"? They can't be restored afterwards.`)) return
+    await storage.recovery.clear(entry.id)
     refresh()
   }
 
@@ -110,6 +119,27 @@ export function StartPage({ storage, error, onCreate, onOpen, onOpenDemo }: Prop
       </div>
       {creating && <NewProjectForm onCreate={(options) => onCreate(options)} onCancel={() => setCreating(false)} />}
       {error && <p className="warning">{error}</p>}
+
+      {recovered.length > 0 && (
+        <section className="recovered">
+          <h2>Unsaved changes from last time</h2>
+          <p className="muted">GameMusicApp closed before these changes were saved. Open them to save them, or throw them away.</p>
+          <ul className="recent-list">
+            {recovered.map((entry) => (
+              <li key={entry.id}>
+                <button className="recent-item recovery-item" onClick={() => onRestore(entry)} title={entry.path ?? 'Never saved'}>
+                  <strong>{entry.title}</strong>
+                  <span className="muted">{entry.path === null ? 'Never saved' : entry.path.startsWith('browser:') ? 'Changes to a project in this browser' : `Changes to ${fileName(entry.path)}`}</span>
+                  <span className="muted">{formatDate(entry.savedAt)}</span>
+                </button>
+                <button className="icon" title="Throw these changes away" aria-label={`Throw away the unsaved changes to ${entry.title}`} onClick={() => void discard(entry)}>
+                  ×
+                </button>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       <h2>Recent projects</h2>
       {recent === null ? null : recent.length === 0 ? (

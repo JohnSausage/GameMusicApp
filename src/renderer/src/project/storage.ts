@@ -1,4 +1,4 @@
-import type { OpenedProject, RecentProject } from '../platform'
+import type { OpenedProject, RecentProject, RecoveryEntry, RecoveryStore } from '../platform'
 import { PROJECT_EXTENSION } from './projectFile'
 
 /** Where projects are read from and written to. */
@@ -11,6 +11,8 @@ export interface ProjectStorage {
   recordRecent(path: string, title: string): Promise<void>
   removeRecent(path: string): Promise<void>
   setDirty(dirty: boolean): void
+  /** Copies of unsaved changes, for crash recovery (see project/recovery.ts). */
+  recovery: RecoveryStore
 }
 
 /** Files on disk, through the Electron main process. */
@@ -22,12 +24,14 @@ function electronStorage(): ProjectStorage {
     save: (data, name, path) => projects.save(data, name, path),
     recordRecent: (path, title) => projects.recordRecent(path, title),
     removeRecent: (path) => projects.removeRecent(path),
-    setDirty: (dirty) => projects.setDirty(dirty)
+    setDirty: (dirty) => projects.setDirty(dirty),
+    recovery: window.gameMusicApp!.recovery
   }
 }
 
 const RECENT_KEY = 'gma.recent'
 const PROJECT_KEY = (path: string): string => `gma.project:${path}`
+const RECOVERY_KEY = 'gma.recovery:'
 
 function toBase64(data: Uint8Array): string {
   let text = ''
@@ -81,6 +85,36 @@ function browserStorage(): ProjectStorage {
     removeRecent: async (path) => writeRecent(readRecent().filter((r) => r.path !== path)),
     setDirty: (dirty) => {
       window.onbeforeunload = dirty ? (event) => event.preventDefault() : null
+    },
+    recovery: browserRecovery()
+  }
+}
+
+/** Browser preview: copies of unsaved changes in localStorage (while it has room). */
+function browserRecovery(): RecoveryStore {
+  /** Copies of this page, not left behind. */
+  const own = new Set<string>()
+  return {
+    list: async () =>
+      Object.keys(localStorage)
+        .filter((key) => key.startsWith(RECOVERY_KEY) && !own.has(key.slice(RECOVERY_KEY.length)))
+        .map((key): RecoveryEntry => {
+          const { title, path, savedAt } = JSON.parse(localStorage.getItem(key)!)
+          return { id: key.slice(RECOVERY_KEY.length), title, path, savedAt }
+        })
+        .sort((a, b) => b.savedAt.localeCompare(a.savedAt)),
+    read: async (id) => fromBase64(JSON.parse(localStorage.getItem(RECOVERY_KEY + id) ?? 'null')?.data ?? ''),
+    write: async (id, data, title, path) => {
+      own.add(id)
+      try {
+        localStorage.setItem(RECOVERY_KEY + id, JSON.stringify({ title, path, savedAt: new Date().toISOString(), data: toBase64(data) }))
+      } catch {
+        // Full: the preview goes without a copy.
+      }
+    },
+    clear: async (id) => {
+      own.delete(id)
+      localStorage.removeItem(RECOVERY_KEY + id)
     }
   }
 }

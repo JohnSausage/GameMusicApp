@@ -1,10 +1,11 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, net, protocol, session } from 'electron'
 import { spawn } from 'node:child_process'
+import { existsSync } from 'node:fs'
 import { writeFile } from 'node:fs/promises'
 import { dirname, join, normalize, sep } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { registerPresetHandlers } from './presets'
-import { confirmCloseWhenDirty, confirmDiscardChanges, registerProjectHandlers } from './projects'
+import { confirmCloseWhenDirty, confirmDiscardChanges, ownRecoveryCopies, registerProjectHandlers } from './projects'
 import { applyStartupSettings, registerSettingsHandlers } from './settings'
 
 const here = dirname(fileURLToPath(import.meta.url))
@@ -79,6 +80,7 @@ async function runSmokeTest(win: BrowserWindow): Promise<void> {
   const errors: string[] = []
   const fail = (reason: string): void => {
     console.log('SMOKE_TEST_RESULT ' + JSON.stringify({ errors: [...errors, reason] }))
+    ownRecoveryCopies().discard()
     app.exit(1)
   }
   setTimeout(() => fail('timeout: the smoke test did not finish within 120 s'), 120000)
@@ -106,7 +108,7 @@ async function runSmokeTest(win: BrowserWindow): Promise<void> {
     await sleep(1500)
     const startPage = document.querySelector('.start-page') !== null
     const theme = document.documentElement.dataset.theme ?? null
-    const recent = [...document.querySelectorAll('.recent-item:not(:disabled)')]
+    const recent = [...document.querySelectorAll('.recent-item:not(.recovery-item):not(:disabled)')]
     ;(recent[0] ?? button('demo song'))?.click()
     await sleep(3000)
     // The project may have been saved with the Arrangement tab open.
@@ -290,8 +292,13 @@ async function runSmokeTest(win: BrowserWindow): Promise<void> {
   const pdfFile = join(app.getPath('temp'), 'GameMusicApp-smoke-test.pdf')
   if (pdf) await writeFile(pdfFile, pdf)
   result.pageView.pdf = pdf ? { file: pdfFile, bytes: pdf.length, header: pdf.subarray(0, 5).toString('latin1'), pages: pdf.toString('latin1').match(/\/Type\s*\/Page\b(?!s)/g)?.length ?? 0 } : null
+  // The edits above are unsaved, so a recovery copy is kept; the smoke test throws it away again.
+  const recovery = ownRecoveryCopies()
+  result.recoveryCopy = recovery.files.length === 1 && existsSync(recovery.files[0])
+  recovery.discard()
+  result.recoveryCopyRemoved = !existsSync(recovery.files[0] ?? '')
   const passed =
-    errors.length === 0 && result.startPage && result.theme !== null && result.scoreRenderMs !== null && result.preloadBridge && result.drumHits > 0 && result.pianoRoll && result.hiddenTrack.hidden && result.hiddenTrack.shownAgain && result.tuning.after?.includes('Drop D · capo 2') && result.tuning.undone && result.pageView.pages > 0 && result.pageView.screenAgain && result.pageView.pdf?.header === '%PDF-' && result.pageView.pdf.pages > 0 && result.arrangement.cells > 0 && result.arrangement.paletteParts > 0 && result.arrangement.afterDuplicate === result.arrangement.sections + 1 && result.arrangement.newPart && result.arrangement.partScore && result.arrangement.duplicated && result.soundWindow.categories >= 17 && result.playing && transcribed
+    errors.length === 0 && result.recoveryCopy && result.recoveryCopyRemoved && result.startPage && result.theme !== null && result.scoreRenderMs !== null && result.preloadBridge && result.drumHits > 0 && result.pianoRoll && result.hiddenTrack.hidden && result.hiddenTrack.shownAgain && result.tuning.after?.includes('Drop D · capo 2') && result.tuning.undone && result.pageView.pages > 0 && result.pageView.screenAgain && result.pageView.pdf?.header === '%PDF-' && result.pageView.pdf.pages > 0 && result.arrangement.cells > 0 && result.arrangement.paletteParts > 0 && result.arrangement.afterDuplicate === result.arrangement.sections + 1 && result.arrangement.newPart && result.arrangement.partScore && result.arrangement.duplicated && result.soundWindow.categories >= 17 && result.playing && transcribed
   console.log('SMOKE_TEST_RESULT ' + JSON.stringify({ ...result, userData: app.getPath('userData'), errors }))
   app.exit(passed ? 0 : 1)
 }

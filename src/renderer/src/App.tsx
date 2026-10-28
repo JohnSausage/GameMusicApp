@@ -4,7 +4,9 @@ import { createSong, type NewSongOptions } from './model/edit'
 import { createDemoSong } from './model/song'
 import { EditorPage } from './pages/EditorPage'
 import { StartPage } from './pages/StartPage'
+import type { RecoveryEntry } from './platform'
 import { parseProject, ProjectFileError, serializeProject, suggestedFileName } from './project/projectFile'
+import { useRecoveryCopy } from './project/recovery'
 import { createStorage } from './project/storage'
 import { useProject } from './project/useProject'
 
@@ -18,6 +20,9 @@ export function App(): React.JSX.Element {
   const [startError, setStartError] = useState('')
   const [saveStatus, setSaveStatus] = useState('')
   const engine = useRef<Promise<AudioEngine> | null>(null)
+  /** Where the open project's unsaved changes are kept for crash recovery. */
+  const [recoveryId, setRecoveryId] = useState<string>(() => crypto.randomUUID())
+  useRecoveryCopy(storage, project, recoveryId)
 
   // Created on first use: browsers only start audio after a user gesture.
   const getEngine = useCallback<GetEngine>(() => (engine.current ??= AudioEngine.create()), [])
@@ -49,6 +54,19 @@ export function App(): React.JSX.Element {
   }
 
   const create = (options: NewSongOptions): void => openProject(createSong(options), null, false)
+
+  /** Opens changes left unsaved last time, still unsaved; saving puts them into their project file. */
+  const restore = async (entry: RecoveryEntry): Promise<void> => {
+    setStartError('')
+    try {
+      const { song, audio, layout } = parseProject(await storage.recovery.read(entry.id))
+      // The copy is kept up to date from now on, until the changes are saved or thrown away.
+      setRecoveryId(entry.id)
+      openProject(song, entry.path, false, audio, layout)
+    } catch (error) {
+      setStartError(`Could not restore the unsaved changes: ${error instanceof ProjectFileError ? error.message : errorText(error)}`)
+    }
+  }
 
   const save = async (saveAs: boolean): Promise<void> => {
     if (!project) return
@@ -95,7 +113,16 @@ export function App(): React.JSX.Element {
   })
 
   if (!project) {
-    return <StartPage storage={storage} error={startError} onCreate={create} onOpen={(path) => void open(path)} onOpenDemo={() => openProject(createDemoSong(), null, true)} />
+    return (
+      <StartPage
+        storage={storage}
+        error={startError}
+        onCreate={create}
+        onOpen={(path) => void open(path)}
+        onOpenDemo={() => openProject(createDemoSong(), null, true)}
+        onRestore={(entry) => void restore(entry)}
+      />
+    )
   }
   return (
     <EditorPage
