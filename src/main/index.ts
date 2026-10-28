@@ -125,16 +125,6 @@ async function runSmokeTest(win: BrowserWindow): Promise<void> {
     const editor = document.querySelector('.status-bar .cursor-info')?.textContent ?? null
     const scoreRenderMs = document.querySelector('.score-scroll')?.dataset.renderMs ?? null
 
-    // The eye on the first track card leaves it out of the score, and shows it again.
-    const eye = () => document.querySelector('.track-card .icon.show')
-    const staves = () => document.querySelector('.score-scroll')?.dataset.renderMs
-    eye()?.click()
-    await sleep(1000)
-    const hiddenTrack = { hidden: eye()?.getAttribute('aria-pressed') === 'false', rendered: staves() !== undefined }
-    eye()?.click()
-    await sleep(1000)
-    hiddenTrack.shownAgain = eye()?.getAttribute('aria-pressed') === 'true'
-
     // The tuning dialog of the first guitar or bass track: Drop D with a capo, then undone.
     const tuning = { before: document.querySelector('.tuning-button')?.textContent ?? null }
     document.querySelector('.tuning-button')?.click()
@@ -189,6 +179,16 @@ async function runSmokeTest(win: BrowserWindow): Promise<void> {
     await sleep(500)
     const pianoRoll = document.querySelector('.piano-roll .roll-grid') !== null
 
+    // The eye on the first track card leaves it out of the score, and shows it again (there are several tracks by now).
+    const eye = () => document.querySelector('.track-card .icon.show')
+    const staves = () => document.querySelector('.score-scroll')?.dataset.renderMs
+    eye()?.click()
+    await sleep(1000)
+    const hiddenTrack = { hidden: eye()?.getAttribute('aria-pressed') === 'false', rendered: staves() !== undefined }
+    eye()?.click()
+    await sleep(1000)
+    hiddenTrack.shownAgain = eye()?.getAttribute('aria-pressed') === 'true'
+
     // The Arrangement tab: the section grid, and a section duplicated as a repeat.
     viewTab('Arrangement')?.click()
     await sleep(500)
@@ -214,26 +214,30 @@ async function runSmokeTest(win: BrowserWindow): Promise<void> {
     await sleep(500)
     arrangement.duplicated = document.querySelectorAll('.arr-chip').length === paletteParts + 2
 
-    // The Sound effects tab: a new effect with a note from its piano roll, exported with the others as WAV files.
+    // The Sound effects tab: a new effect from the Coin template, varied, and exported with the others as WAV files.
     viewTab('Sound effects')?.click()
     await sleep(500)
     const effectList = () => document.querySelector('.effect-list') ?? document
     const effectCount = document.querySelectorAll('.effect-card').length
-    button('+ New effect', effectList())?.click()
+    button('+ New', effectList())?.click()
+    await sleep(200)
+    ;[...document.querySelectorAll('.menu-list [role=menuitem]')].find((item) => item.textContent.startsWith('Coin'))?.click()
     await sleep(1000)
-    const rollGrid = document.querySelector('.effect-editor .roll-grid')
-    if (rollGrid) {
-      const rect = rollGrid.getBoundingClientRect()
-      const at = { clientX: rect.left + 2, clientY: rect.top + rect.height / 2, bubbles: true, pointerId: 1, button: 0, isPrimary: true, pointerType: 'mouse' }
-      rollGrid.dispatchEvent(new PointerEvent('pointerdown', at))
-      rollGrid.dispatchEvent(new PointerEvent('pointerup', at))
-    }
-    await sleep(500)
     const effects = {
       added: document.querySelectorAll('.effect-card').length === effectCount + 1,
       name: document.querySelector('.effect-name-input')?.value ?? null,
-      length: document.querySelector('.effect-card.selected .effect-length')?.textContent ?? null
+      length: document.querySelector('.effect-card.selected .effect-length')?.textContent ?? null,
+      sound: document.querySelector('.effect-sound-button')?.textContent ?? null,
+      // Coin brings its color; a swatch changes it.
+      colored: !!document.querySelector('.effect-card.selected.colored'),
+      recolored: false
     }
+    document.querySelector('.effect-head .arr-swatch[aria-label="Violet"]')?.click()
+    await sleep(200)
+    effects.recolored = document.querySelector('.effect-card.selected')?.getAttribute('style')?.includes('--part-0') ?? false
+    const effectHead = document.querySelector('.effect-head')
+    if (effectHead) button('Vary', effectHead)?.click()
+    await sleep(500)
     button('Export WAV…', effectList())?.click()
     await sleep(300)
     const effectDialog = document.querySelector('.export-dialog')
@@ -336,7 +340,7 @@ async function runSmokeTest(win: BrowserWindow): Promise<void> {
   recovery.discard()
   result.recoveryCopyRemoved = !existsSync(recovery.files[0] ?? '')
   const passed =
-    errors.length === 0 && result.recoveryCopy && result.recoveryCopyRemoved && result.startPage && result.theme !== null && result.scoreRenderMs !== null && result.preloadBridge && result.drumHits > 0 && result.pianoRoll && result.hiddenTrack.hidden && result.hiddenTrack.shownAgain && result.tuning.after?.includes('Drop D · capo 2') && result.tuning.undone && result.pageView.pages > 0 && result.pageView.screenAgain && result.pageView.pdf?.header === '%PDF-' && result.pageView.pdf.pages > 0 && result.arrangement.cells > 0 && result.arrangement.paletteParts > 0 && result.arrangement.afterDuplicate === result.arrangement.sections + 1 && result.arrangement.newPart && result.arrangement.partScore && result.arrangement.duplicated && result.effects.added && result.effects.wav?.header === 'RIFF' && result.effects.wav.channels === 1 && result.effects.wav.seconds > 0 && result.effects.wav.seconds < 2 && result.soundWindow.categories >= 17 && result.playing && transcribed
+    errors.length === 0 && result.recoveryCopy && result.recoveryCopyRemoved && result.startPage && result.theme !== null && result.scoreRenderMs !== null && result.preloadBridge && result.drumHits > 0 && result.pianoRoll && result.hiddenTrack.hidden && result.hiddenTrack.shownAgain && result.tuning.after?.includes('Drop D · capo 2') && result.tuning.undone && result.pageView.pages > 0 && result.pageView.screenAgain && result.pageView.pdf?.header === '%PDF-' && result.pageView.pdf.pages > 0 && result.arrangement.cells > 0 && result.arrangement.paletteParts > 0 && result.arrangement.afterDuplicate === result.arrangement.sections + 1 && result.arrangement.newPart && result.arrangement.partScore && result.arrangement.duplicated && result.effects.added && result.effects.name?.startsWith('Coin') && result.effects.colored && result.effects.recolored && result.effects.wav?.header === 'RIFF' && result.effects.wav.channels === 1 && result.effects.wav.seconds > 0 && result.effects.wav.seconds < 2 && result.soundWindow.categories >= 17 && result.playing && transcribed
   console.log('SMOKE_TEST_RESULT ' + JSON.stringify({ ...result, userData: app.getPath('userData'), errors }))
   app.exit(passed ? 0 : 1)
 }

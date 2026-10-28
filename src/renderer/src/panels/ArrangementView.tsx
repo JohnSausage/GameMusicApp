@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { ColorSwatches, partColor } from '../components/ColorSwatches'
 import {
   addSection,
   copyCellPart,
@@ -9,7 +10,6 @@ import {
   MAX_SECTION_BARS,
   moveSection,
   newPart,
-  PART_COLORS,
   partColors,
   partUses,
   placeSection,
@@ -346,7 +346,6 @@ export function ArrangementView(props: Props): React.JSX.Element {
 
   /** Where bars are drawn in a lane, with a small gap between neighbors. */
   const span = (start: number, length: number): React.CSSProperties => ({ left: start * barPx + 2, width: Math.max(4, length * barPx - 4) })
-  const partColor = (color: number): React.CSSProperties => ({ '--part': `var(--part-${color})` }) as React.CSSProperties
 
   const duplicate = (): void => void edit(duplicateSection(song, cursor, section.id))
   const remove = (): void => void edit(removeSection(song, cursor, section.id), 'A song needs at least one section.')
@@ -583,19 +582,12 @@ export function ArrangementView(props: Props): React.JSX.Element {
                 title="Name of the part, in every section that plays it"
                 onChange={(e) => edit(renamePart(song, cursor, editedTrack.id, edited.id, e.target.value), undefined, `part-name:${edited.id}`)}
               />
-              <div className="arr-swatches" role="group" aria-label="Part color">
-                {Array.from({ length: PART_COLORS }, (_, color) => (
-                  <button
-                    key={color}
-                    className={`arr-swatch ${color === colorOf(edited) ? 'current' : ''}`}
-                    style={partColor(color)}
-                    aria-label={`Color ${color + 1}`}
-                    aria-pressed={color === colorOf(edited)}
-                    title="Color of the part, in every section that plays it"
-                    onClick={() => edit(setPartColor(song, cursor, editedTrack.id, edited.id, color))}
-                  />
-                ))}
-              </div>
+              <ColorSwatches
+                value={colorOf(edited)}
+                label="Part color"
+                title="color of the part, in every section that plays it"
+                onChange={(color) => color !== null && edit(setPartColor(song, cursor, editedTrack.id, edited.id, color))}
+              />
               <button title="A copy of this part to build a variation on: same notes and color, played in no section yet. The copy is edited here." onClick={duplicateEdited}>
                 Duplicate
               </button>

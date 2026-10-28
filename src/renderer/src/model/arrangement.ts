@@ -54,6 +54,9 @@ function partName(track: Track, base: string): string {
 /** How many colors parts can have (styles.css --part-0 …). */
 export const PART_COLORS = 8
 
+/** The part colors' names, for screen readers and tooltips (the colors are --part-0 … --part-7 in styles.css). */
+export const PART_COLOR_NAMES = ['Violet', 'Teal', 'Orange', 'Blue', 'Pink', 'Green', 'Yellow', 'Cyan']
+
 /** The color of every part of the song, by part id. Parts without one get a color by their place in the song. */
 export function partColors(song: Song): Map<string, number> {
   const colors = new Map<string, number>()

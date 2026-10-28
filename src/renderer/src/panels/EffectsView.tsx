@@ -1,15 +1,37 @@
 import { useEffect, useRef, useState } from 'react'
 import type { GetEngine } from '../App'
 import { renderEffect } from '../audio/offline'
+import { ColorSwatches, partColor } from '../components/ColorSwatches'
 import { ChevronDownIcon } from '../components/icons'
-import { Menu } from '../components/Menu'
-import { addEffect, deleteEffect, duplicateEffect, effectSeconds, moveEffect, updateEffect } from '../model/effects'
+import { Menu, type MenuItem } from '../components/Menu'
+import {
+  deleteEffect,
+  duplicateEffect,
+  EFFECT_TEMPLATES,
+  effectSeconds,
+  findEffect,
+  moveEffect,
+  setEffectColor,
+  updateEffect,
+  varyEffect,
+  type EffectTemplate
+} from '../model/effects'
 import { soundName, type SoundEffect } from '../model/song'
 import type { Project } from '../project/useProject'
 
 /** Gap between the effects in "Play all", in seconds. */
 const PLAY_ALL_GAP = 0.5
 const PLAY_ALL_RATE = 48000
+
+/** "New effect" choices: from a template, or empty. */
+const newEffectItems = (onNew: (template?: EffectTemplate) => void): MenuItem[] => [
+  ...EFFECT_TEMPLATES.map((template) => ({ label: template.name, title: `${template.description}: a ready-made sound and notes to change`, onSelect: () => onNew(template) })),
+  'separator',
+  { label: 'Empty', title: 'An 8-bit sound and an empty bar, for your own notes', onSelect: () => onNew() }
+]
+
+/** An effect's color for its card and its header, if it has one. */
+const colorStyle = (effect: SoundEffect): React.CSSProperties | undefined => (effect.color === undefined ? undefined : partColor(effect.color))
 
 const lengthText = (effect: SoundEffect): string => {
   const seconds = effectSeconds(effect)
@@ -26,8 +48,8 @@ interface ListProps {
   /** Plays an effect from its start in its editor (it is picked). */
   onPlay: (id: string) => void
   onStop: () => void
-  /** A new effect was added (it is picked, to be named). */
-  onAdded: (id: string) => void
+  /** Adds an effect, from a template or empty. */
+  onNew: (template?: EffectTemplate) => void
   onExport: () => void
   onMessage: (message: string) => void
 }
@@ -36,8 +58,8 @@ interface ListProps {
  * The game's sound effects, in the place of the track list: pick one to edit,
  * play one or all of them one after the other, add one, export them.
  */
-export function EffectList({ project, getEngine, playing, playingEffect, onPlay, onStop, onAdded, onExport, onMessage }: ListProps): React.JSX.Element {
-  const { song, cursor } = project
+export function EffectList({ project, getEngine, playing, playingEffect, onPlay, onStop, onNew, onExport, onMessage }: ListProps): React.JSX.Element {
+  const { song } = project
   const effects = song.effects ?? []
   /** "Play all": the effect heard now (null while rendering), and how to stop it. */
   const [allPlaying, setAllPlaying] = useState<{ heard: string | null } | null>(null)
@@ -101,16 +123,11 @@ export function EffectList({ project, getEngine, playing, playingEffect, onPlay,
     }
   }
 
-  const add = (): void => {
-    const added = addEffect(song, cursor)
-    project.apply(added.result)
-    onAdded(added.id)
-  }
-
   return (
     <aside className="track-list effect-list">
       <div className="track-list-header">
         <h3>Sound effects</h3>
+        <Menu label="+ New" title="A new sound effect: start from a ready-made one (Jump, Coin, …) or an empty one" align="right" items={newEffectItems(onNew)} />
       </div>
       {effects.map((effect) => {
         const live = playingEffect === effect.id
@@ -118,7 +135,8 @@ export function EffectList({ project, getEngine, playing, playingEffect, onPlay,
         return (
           <div
             key={effect.id}
-            className={`track-card effect-card ${effect.id === project.editedEffect ? 'selected' : ''} ${heard ? 'heard' : ''}`}
+            className={`track-card effect-card ${effect.color !== undefined ? 'colored' : ''} ${effect.id === project.editedEffect ? 'selected' : ''} ${heard ? 'heard' : ''}`}
+            style={colorStyle(effect)}
             onClick={() => project.editEffect(effect.id)}
           >
             <div className="track-card-row">
@@ -148,9 +166,6 @@ export function EffectList({ project, getEngine, playing, playingEffect, onPlay,
       })}
       {effects.length === 0 && <p className="muted small">No sound effects yet.</p>}
       <div className="toolbar">
-        <button title="A new sound effect: an empty bar for an 8-bit sound, played in the piano roll" onClick={add}>
-          + New effect
-        </button>
         {allPlaying ? (
           <button className="active" title="Stop" onClick={stopPlayingAll}>
             {allPlaying.heard ? '■ Stop' : 'Rendering…'}
@@ -174,6 +189,9 @@ interface EditorProps {
   playing: boolean
   /** Plays the edited effect from its start, or stops it. */
   onPlay: () => void
+  /** Plays an effect from its start, e.g. as it is after an edit. */
+  onHear: (effect: SoundEffect) => void
+  onNew: (template?: EffectTemplate) => void
   onEditSound: () => void
   /** Picks its name to type a new one, e.g. for a new effect. */
   selectName: boolean
@@ -184,7 +202,7 @@ interface EditorProps {
 }
 
 /** The sound effect picked in the list: its name, tempo and sound over its score and piano roll. */
-export function EffectEditor({ project, playing, onPlay, onEditSound, selectName, message, onMessage, editor }: EditorProps): React.JSX.Element {
+export function EffectEditor({ project, playing, onPlay, onHear, onNew, onEditSound, selectName, message, onMessage, editor }: EditorProps): React.JSX.Element {
   const { song, cursor } = project
   const effects = song.effects ?? []
   const index = effects.findIndex((e) => e.id === project.editedEffect)
@@ -203,14 +221,21 @@ export function EffectEditor({ project, playing, onPlay, onEditSound, selectName
           when its sound has faded. Keep them all here, next to the music, to hear how they fit together.
         </p>
         <div className="toolbar">
-          <button
-            onClick={() => {
-              const added = addEffect(song, cursor)
-              project.apply(added.result)
-              project.editEffect(added.id)
-            }}
-          >
-            + New effect
+          <span className="muted">Start with</span>
+          {EFFECT_TEMPLATES.map((template) => (
+            <button
+              key={template.name}
+              className="effect-template"
+              style={partColor(template.color)}
+              title={`${template.description}: a ready-made sound and notes to change`}
+              onClick={() => onNew(template)}
+            >
+              {template.name}
+            </button>
+          ))}
+          <span className="muted">or</span>
+          <button title="An 8-bit sound and an empty bar, for your own notes" onClick={() => onNew()}>
+            Empty
           </button>
         </div>
       </div>
@@ -223,6 +248,14 @@ export function EffectEditor({ project, playing, onPlay, onEditSound, selectName
     project.editEffect(effects[index + 1]?.id ?? effects[index - 1]?.id ?? null)
   }
 
+  /** Nudges the 8-bit sound at random, and plays the result. */
+  const vary = (): void => {
+    const varied = varyEffect(song, cursor, effect.id)
+    if (!varied) return
+    project.apply(varied)
+    onHear(findEffect(varied.song, effect.id)!)
+  }
+
   const duplicate = (): void => {
     const copy = duplicateEffect(song, cursor, effect.id)
     if (!copy) return
@@ -233,7 +266,7 @@ export function EffectEditor({ project, playing, onPlay, onEditSound, selectName
 
   return (
     <div className="effect-editor">
-      <div className="toolbar edit-toolbar arrangement-toolbar effect-head" role="group" aria-label="Sound effect">
+      <div className={`toolbar edit-toolbar arrangement-toolbar effect-head ${effect.color !== undefined ? 'colored' : ''}`} role="group" aria-label="Sound effect" style={colorStyle(effect)}>
         <input
           ref={nameRef}
           className="effect-name-input"
@@ -241,6 +274,13 @@ export function EffectEditor({ project, playing, onPlay, onEditSound, selectName
           aria-label="Sound effect name"
           title="Name of the sound effect, also of its WAV file"
           onChange={(e) => project.apply(updateEffect(song, cursor, effect.id, { name: e.target.value }), { mergeKey: `effect-name:${effect.id}` })}
+        />
+        <ColorSwatches
+          value={effect.color ?? null}
+          none
+          label="Sound effect color"
+          title="color of the sound effect in the list, e.g. one per kind of effect"
+          onChange={(color) => project.apply(setEffectColor(song, cursor, effect.id, color))}
         />
         <label className="tempo" title="Tempo of this sound effect in beats per minute (a faster tempo makes shorter notes)">
           <span aria-hidden="true">♩ =</span>
@@ -267,6 +307,17 @@ export function EffectEditor({ project, playing, onPlay, onEditSound, selectName
         </button>
         <button className={playing ? 'active' : ''} title={playing ? 'Stop (Space)' : 'Play this sound effect from its start (Space in the score plays from the cursor)'} onClick={onPlay}>
           {playing ? '■ Stop' : '▶ Play'}
+        </button>
+        <button
+          disabled={effect.track.instrument.kind !== 'synth'}
+          title={
+            effect.track.instrument.kind === 'synth'
+              ? 'Nudge the sound’s settings at random and hear it; again for another try, Ctrl+Z to go back. Duplicate first to keep this one.'
+              : 'Only 8-bit sounds can be varied'
+          }
+          onClick={vary}
+        >
+          Vary
         </button>
         <button title="A copy of this sound effect right after it, to try a variation" onClick={duplicate}>
           Duplicate

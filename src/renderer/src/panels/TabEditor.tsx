@@ -19,8 +19,8 @@ import {
   type BarRange,
   type LoopChoice
 } from '../model/edit'
-import { effectSong, findEffect } from '../model/effects'
-import { audibleTracks, barCount, defaultInstrument, isFretted, MASTER_DEFAULTS, soundName, type Instrument, type Track } from '../model/song'
+import { addEffect, effectSong, findEffect, type EffectTemplate } from '../model/effects'
+import { audibleTracks, barCount, defaultInstrument, isFretted, MASTER_DEFAULTS, soundName, type Instrument, type SoundEffect, type Track } from '../model/song'
 import { MidiKeyboard, type MidiNoteMessage } from '../midi/midiInput'
 import { importMidi } from '../model/midiImport'
 import { CRUSH_RATES, eightBitKit, formatSampleRate } from '../model/synth'
@@ -388,11 +388,23 @@ export function TabEditor({ project, getEngine, headerSlots, onShowShortcuts }: 
   }
 
   /** Plays a sound effect from `from` seconds; it doesn't loop. */
+  const playEffect = (effect: SoundEffect, from: number): void => {
+    setHeard({ effect: effect.id })
+    void playback.play(effectSong(effect), from)
+  }
+
   const playEffectFrom = (id: string, from: number): void => {
     const found = findEffect(song, id)
-    if (!found) return
-    setHeard({ effect: id })
-    void playback.play(effectSong(found), from)
+    if (found) playEffect(found, from)
+  }
+
+  /** A new sound effect, picked to be named; one from a template plays right away. */
+  const newEffect = (template?: EffectTemplate): void => {
+    const added = addEffect(song, cursor, template)
+    project.apply(added.result)
+    project.editEffect(added.id)
+    setAddedEffect(added.id)
+    if (template) playEffect(findEffect(added.result.song, added.id)!, 0)
   }
 
   /** Plays the song or the part again from where it is, e.g. with the loop switched. Sound effects don't loop. */
@@ -527,10 +539,7 @@ export function TabEditor({ project, getEngine, headerSlots, onShowShortcuts }: 
             playEffectFrom(id, 0)
           }}
           onStop={stop}
-          onAdded={(id) => {
-            project.editEffect(id)
-            setAddedEffect(id)
-          }}
+          onNew={newEffect}
           onExport={() => {
             stop()
             setEffectExport(true)
@@ -666,6 +675,8 @@ export function TabEditor({ project, getEngine, headerSlots, onShowShortcuts }: 
             project={project}
             playing={playingEffect !== null && playingEffect === editedEffect}
             onPlay={() => (playingEffect && playingEffect === editedEffect ? stop() : editedEffect && playEffectFrom(editedEffect, 0))}
+            onHear={(changed) => playEffect(changed, 0)}
+            onNew={newEffect}
             onEditSound={() => {
               stop()
               setEffectSound(true)

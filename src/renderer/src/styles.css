@@ -1016,6 +1016,16 @@ kbd {
   min-height: 24px;
 }
 
+/* An effect's color (or none) as a stripe on the left of its card and its header. */
+.effect-card {
+  border-left-width: 4px;
+}
+
+.effect-card.colored,
+.effect-card.colored.selected {
+  border-left-color: var(--part);
+}
+
 .effect-card.heard {
   background: color-mix(in srgb, var(--accent) 12%, var(--surface));
 }
@@ -1062,6 +1072,15 @@ kbd {
   flex: 1;
 }
 
+.effect-head {
+  padding: 4px 0 4px 10px;
+  border-left: 4px solid var(--border);
+}
+
+.effect-head.colored {
+  border-left-color: var(--part);
+}
+
 .effect-name-input {
   font-weight: 600;
   width: 180px;
@@ -1078,6 +1097,11 @@ kbd {
 .effects-empty {
   flex: 0 0 auto;
   max-width: 640px;
+}
+
+/* A template in the empty Sound effects tab, with the color its effects get. */
+.effect-template {
+  border-left: 4px solid var(--part);
 }
 
 /* The edited part's name, color and where it plays, over its score. */
@@ -1276,6 +1300,11 @@ button.arr-label:hover:not(:disabled) {
 .arr-swatch:hover:not(:disabled) {
   border-color: var(--surface);
   box-shadow: 0 0 0 2px var(--text);
+}
+
+/* "No color": crossed out. */
+.arr-swatch.none {
+  background: linear-gradient(to top right, var(--surface) calc(50% - 1px), var(--muted) calc(50% - 1px) calc(50% + 1px), var(--surface) calc(50% + 1px));
 }
 
 /* The palette: every part of every track, under the grid. */
@@ -1570,6 +1599,11 @@ button.arr-label:hover:not(:disabled) {
 
   .editor-main .score-scroll {
     min-height: 420px;
+  }
+
+  /* As tall as its effects, so the "+ New" menu can open over what follows. */
+  .effect-list {
+    overflow: visible;
   }
 }
 

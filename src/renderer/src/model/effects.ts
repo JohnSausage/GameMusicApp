@@ -3,9 +3,10 @@
 // a short piece of music of its own: one track with its own sound and notes, at
 // its own tempo. It is edited as a song of its own (effectSong), as a part of the
 // arrangement is, and saved as a WAV file that ends when its sound has faded.
-import { emptyBar, type Cursor, type EditResult } from './edit'
+import { emptyBar, TICKS_PER_QUARTER, type Cursor, type EditResult } from './edit'
+import { rollToBars } from './keys'
 import { createTrack, keyRow, newId, type Song, type SoundEffect } from './song'
-import { factoryPreset } from './synth'
+import { DEFAULT_PATCH, factoryPreset, varyPatch, type SynthPatch } from './synth'
 import { buildTimeline } from './timing'
 
 export const EFFECT_TEMPO = 120
@@ -49,13 +50,123 @@ function freeName(song: Song, name: string): string {
   return `${base} ${n}`
 }
 
-/** A new effect at the end of the list: one empty bar for an 8-bit sound, played in the piano roll. */
-export function addEffect(song: Song, cursor: Cursor): { result: EditResult; id: string } {
-  const name = freeName(song, 'Effect 1')
-  const track = createTrack('keys', [emptyBar({ ...song, timeSignature: [4, 4] })], name)
-  track.instrument = { kind: 'synth', patch: factoryPreset('8-bit square') }
-  const effect: SoundEffect = { id: newId(), name, tempo: EFFECT_TEMPO, track }
+/** A ready-made sound effect to start from: a sound and its notes. */
+export interface EffectTemplate {
+  name: string
+  /** What it sounds like, for the menu. */
+  description: string
+  /** Its color in the list (see PART_COLOR_NAMES). */
+  color: number
+  tempo: number
+  /** The 8-bit sound: changes to the default patch. */
+  sound: Partial<SynthPatch>
+  /** Its notes: pitch (MIDI), and start and length in 32nd notes. */
+  notes: { pitch: number; at: number; length: number }[]
+}
+
+/** Built-in starting points for sound effects (SYN-37). Sweeps come from the pitch envelope, so most are one note. */
+export const EFFECT_TEMPLATES: EffectTemplate[] = [
+  {
+    name: 'Jump',
+    description: 'A short rising sweep',
+    color: 1,
+    tempo: 120,
+    sound: { duty: 0.25, attack: 0.002, decay: 0.22, sustain: 0, release: 0.03, pitchEnvAmount: -10, pitchEnvTime: 0.16 },
+    notes: [{ pitch: 72, at: 0, length: 4 }]
+  },
+  {
+    name: 'Coin',
+    description: 'Two quick high notes, a pickup',
+    color: 6,
+    tempo: 120,
+    sound: { duty: 0.5, attack: 0.001, decay: 0.45, sustain: 0, release: 0.05 },
+    notes: [
+      { pitch: 83, at: 0, length: 2 },
+      { pitch: 88, at: 2, length: 8 }
+    ]
+  },
+  {
+    name: 'Laser',
+    description: 'A falling zap',
+    color: 7,
+    tempo: 120,
+    sound: { duty: 0.25, attack: 0.001, decay: 0.2, sustain: 0, release: 0.03, pitchEnvAmount: 24, pitchEnvTime: 0.2 },
+    notes: [{ pitch: 76, at: 0, length: 4 }]
+  },
+  {
+    name: 'Hit',
+    description: 'A short crunch of noise, e.g. for damage',
+    color: 4,
+    tempo: 120,
+    sound: { waveform: 'noise', attack: 0.001, decay: 0.16, sustain: 0, release: 0.03, pitchEnvAmount: 18, pitchEnvTime: 0.12, velocity: 0.3, crushBits: 8 },
+    notes: [{ pitch: 55, at: 0, length: 4 }]
+  },
+  {
+    name: 'Explosion',
+    description: 'A long falling rumble of noise',
+    color: 2,
+    tempo: 120,
+    sound: {
+      waveform: 'noise',
+      volume: 1,
+      attack: 0.002,
+      decay: 1.2,
+      sustain: 0,
+      release: 0.2,
+      velocity: 0.3,
+      pitchEnvAmount: 12,
+      pitchEnvTime: 0.8,
+      filterType: 'lowpass',
+      cutoff: 2500,
+      filterEnv: 1.5
+    },
+    notes: [{ pitch: 43, at: 0, length: 16 }]
+  },
+  {
+    name: 'Power-up',
+    description: 'A fast rising arpeggio',
+    color: 5,
+    tempo: 150,
+    sound: { duty: 0.25, attack: 0.001, decay: 0.08, sustain: 0.5, release: 0.06 },
+    notes: [60, 64, 67, 72, 76, 79, 84, 88].map((pitch, i) => ({ pitch, at: i, length: i === 7 ? 4 : 1 }))
+  },
+  {
+    name: 'Blip',
+    description: 'A tiny high beep, e.g. for menus',
+    color: 3,
+    tempo: 120,
+    sound: { duty: 0.125, attack: 0.001, decay: 0.07, sustain: 0, release: 0.02 },
+    notes: [{ pitch: 81, at: 0, length: 2 }]
+  }
+]
+
+const THIRTY_SECOND = TICKS_PER_QUARTER / 8
+
+/**
+ * A new effect at the end of the list: from a template, or one empty bar for an
+ * 8-bit sound. It is named after the template ("Jump", "Jump 2", …) and has its color.
+ */
+export function addEffect(song: Song, cursor: Cursor, template?: EffectTemplate): { result: EditResult; id: string } {
+  const name = freeName(song, template?.name ?? 'Effect 1')
+  const bar = template
+    ? rollToBars(
+        template.notes.map((n) => ({ row: keyRow(n.pitch), start: n.at * THIRTY_SECOND, length: n.length * THIRTY_SECOND, velocity: 100 })),
+        1,
+        TICKS_PER_QUARTER * 4
+      )[0]
+    : emptyBar({ ...song, timeSignature: [4, 4] })
+  const track = createTrack('keys', [bar], name)
+  track.instrument = { kind: 'synth', patch: template ? { ...DEFAULT_PATCH, ...template.sound, name: template.name } : factoryPreset('8-bit square') }
+  const effect: SoundEffect = { id: newId(), name, tempo: template?.tempo ?? EFFECT_TEMPO, track, ...(template && { color: template.color }) }
   return { result: { song: { ...song, effects: [...(song.effects ?? []), effect] }, cursor }, id: effect.id }
+}
+
+/** Nudges the 8-bit sound of an effect at random (see varyPatch). Null for other sounds. */
+export function varyEffect(song: Song, cursor: Cursor, id: string, random: () => number = Math.random): EditResult | null {
+  const instrument = findEffect(song, id)?.track.instrument
+  if (instrument?.kind !== 'synth') return null
+  const patch = varyPatch(instrument.patch, random)
+  return { song: { ...song, effects: song.effects!.map((e) => (e.id === id ? { ...e, track: { ...e.track, instrument: { kind: 'synth', patch } } } : e)) }, cursor }
 }
 
 /** A copy of an effect right after it, to try a variation. */
@@ -78,6 +189,17 @@ export function deleteEffect(song: Song, cursor: Cursor, id: string): EditResult
 export function updateEffect(song: Song, cursor: Cursor, id: string, change: Partial<Pick<SoundEffect, 'name' | 'tempo'>>): EditResult | null {
   if (!findEffect(song, id)) return null
   return { song: { ...song, effects: song.effects!.map((e) => (e.id === id ? { ...e, ...change } : e)) }, cursor }
+}
+
+/** Gives an effect a color (see PART_COLOR_NAMES), or none. */
+export function setEffectColor(song: Song, cursor: Cursor, id: string, color: number | null): EditResult | null {
+  if (!findEffect(song, id)) return null
+  const effects = song.effects!.map((e) => {
+    if (e.id !== id) return e
+    const { color: _, ...rest } = e
+    return color === null ? rest : { ...rest, color }
+  })
+  return { song: { ...song, effects }, cursor }
 }
 
 /** Moves an effect up (-1) or down (1) in the list. */

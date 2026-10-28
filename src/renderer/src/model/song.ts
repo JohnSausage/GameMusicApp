@@ -130,6 +130,8 @@ export interface SoundEffect {
   tempo: number
   /** Its notes and its sound. */
   track: Track
+  /** Color in the list, to tell kinds of effects apart: an index into the part colors (see PART_COLORS). None = no color. */
+  color?: number
 }
 
 export interface Song {

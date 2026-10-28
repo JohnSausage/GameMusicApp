@@ -124,6 +124,46 @@ export function normalizePatch(value: unknown): SynthPatch {
   return patch
 }
 
+/**
+ * A variation of a sound (SYN-13): its settings nudged at random, so it stays
+ * the same kind of sound (same waveform, filter and wobble, no sustain if it had
+ * none) but comes out a little different, e.g. a second jump or another hit.
+ * `random` returns numbers from 0 to 1.
+ */
+export function varyPatch(patch: SynthPatch, random: () => number = Math.random): SynthPatch {
+  /** A factor between 1/spread and spread. */
+  const scale = (spread: number): number => spread ** (random() * 2 - 1)
+  const shift = (range: number): number => (random() * 2 - 1) * range
+  const next: Partial<Record<NumberField, number>> = {
+    attack: patch.attack * scale(1.5),
+    decay: patch.decay * scale(1.4),
+    release: patch.release * scale(1.4)
+  }
+  if (patch.waveform === 'pulse') next.duty = patch.duty + shift(0.1)
+  if (patch.sustain > 0) next.sustain = patch.sustain + shift(0.15)
+  if (patch.pitchEnvAmount !== 0) {
+    next.pitchEnvAmount = patch.pitchEnvAmount * scale(1.4)
+    next.pitchEnvTime = patch.pitchEnvTime * scale(1.5)
+  }
+  if (patch.lfoTarget !== 'off') {
+    next.lfoRate = patch.lfoRate * scale(1.3)
+    next.lfoDepth = patch.lfoDepth + shift(0.1)
+  }
+  if (patch.filterType !== 'off') {
+    next.cutoff = patch.cutoff * scale(1.5)
+    next.resonance = patch.resonance * scale(1.3)
+    next.filterEnv = patch.filterEnv + shift(0.5)
+  }
+  if (patch.crushBits < 16) next.crushBits = Math.round(patch.crushBits + shift(1.5))
+  const varied = { ...patch }
+  for (const [field, value] of Object.entries(next) as [NumberField, number][]) {
+    const [min, max] = PATCH_LIMITS[field]
+    // Three digits are plenty to hear, and keep the numbers in the sound window and the file tidy.
+    varied[field] = Math.min(max, Math.max(min, Number(value.toPrecision(3))))
+  }
+  return varied
+}
+
 const preset = (name: string, settings: Partial<SynthPatch>): SynthPatch => ({ ...DEFAULT_PATCH, ...settings, name })
 
 /** Built-in starting points (SYN-10). */

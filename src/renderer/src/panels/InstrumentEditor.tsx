@@ -14,7 +14,8 @@ import {
   type FilterType,
   type LfoTarget,
   type SynthPatch,
-  type Waveform
+  type Waveform,
+  varyPatch
 } from '../model/synth'
 import { saveFile } from '../platform'
 import { createPresetStore, parsePreset, PRESET_EXTENSION, serializePreset, type UserPreset } from '../project/presets'
@@ -227,6 +228,18 @@ export function InstrumentEditor({ project, trackIndex, getEngine, playName = 's
     })
   }
 
+  /** Nudges the sound at random (SYN-13) and plays a note of it; each try is its own undo step. */
+  const vary = (): void => {
+    const next = varyPatch(patch)
+    setPatch(next)
+    const instrument: Instrument = kit ? { kind: 'synthkit', pieces: kit.map((p, i) => (i === pieceIndex ? { ...p, patch: next } : p)) } : { kind: 'synth', patch: next }
+    const pitch = piece ? piece.note : base + 12
+    void getEngine().then((engine) => {
+      engine.liveNoteOn(instrument, pitch, 100)
+      window.setTimeout(() => engine.liveNoteOff(instrument, pitch), PREVIEW_MS)
+    })
+  }
+
   const resetPiece = (): void => {
     const original = piece && eightBitKit().find((p) => p.note === piece.note)
     if (!original) return
@@ -257,7 +270,8 @@ export function InstrumentEditor({ project, trackIndex, getEngine, playName = 's
   // Computer keys play notes; Z / X shift the piano's octave. Esc closes.
   useEffect(() => {
     const down = (event: KeyboardEvent): void => {
-      if (event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement || event.repeat) return
+      // Ctrl/Cmd shortcuts (undo, save) are not notes.
+      if (event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement || event.repeat || event.ctrlKey || event.metaKey) return
       const key = event.key.toLowerCase()
       const note = keyNote(key)
       if (key === 'escape') onClose()
@@ -440,6 +454,9 @@ export function InstrumentEditor({ project, trackIndex, getEngine, playName = 's
                   )}
                 </select>
               )}
+              <button onClick={vary} title="Nudge the settings at random and hear it: the same kind of sound, a little different. Again for another try, Ctrl+Z to go back.">
+                Vary
+              </button>
               <input value={saveName} onChange={(e) => setSaveName(e.target.value)} aria-label="Preset name" title="Name for saving this sound" />
               <button onClick={() => void savePreset()} title="Keep this sound in your presets, for any project">Save to my presets</button>
               <button onClick={() => void exportPreset()} title={`Save as a .${PRESET_EXTENSION} file, e.g. to send to a friend`}>Export…</button>

@@ -185,6 +185,8 @@ function checkEffects(effects: SoundEffect[]): void {
     if (typeof effect.tempo !== 'number' || effect.tempo < 20 || effect.tempo > 400) fail(`sound effect "${effect.name}" has an invalid tempo`)
     checkTrack(effect.track, `sound effect "${effect.name}"`)
     if (effect.track.parts !== undefined) fail(`sound effect "${effect.name}" has parts`)
+    // A color the app doesn't know is dropped, as for parts.
+    if (effect.color !== undefined && !(isInt(effect.color) && effect.color >= 0 && effect.color < PART_COLORS)) delete effect.color
   })
 }
 
