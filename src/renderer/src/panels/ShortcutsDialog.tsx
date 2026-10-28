@@ -52,7 +52,7 @@ const GROUPS: { title: string; rows: Row[] }[] = [
       [['Space'], 'Play from the cursor / stop'],
       [['L'], 'Loop on / off'],
       [['M'], 'Metronome on / off'],
-      [['Ctrl+Tab'], 'Switch between Score and Arrangement'],
+      [['Ctrl+Tab'], 'Next tab: Score, Arrangement, Sound effects (Ctrl+Shift+Tab goes back)'],
       [['Ctrl++', 'Ctrl+−', 'Ctrl+0'], 'Zoom in, out, back to 100 % (also Ctrl+wheel)']
     ]
   },

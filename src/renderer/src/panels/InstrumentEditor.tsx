@@ -27,6 +27,8 @@ interface Props {
   project: Project
   trackIndex: number
   getEngine: GetEngine
+  /** What its play button plays: the song (default), or e.g. "effect" for a sound effect's own song. */
+  playName?: string
   onClose: () => void
 }
 
@@ -163,7 +165,7 @@ function Keyboard({ base, pressed, onDown, onUp }: { base: number; pressed: Set<
  * shows the synth to shape it. For a synth drum kit (SYN-20) it edits one kit
  * piece at a time, picked with the pads.
  */
-export function InstrumentEditor({ project, trackIndex, getEngine, onClose }: Props): React.JSX.Element {
+export function InstrumentEditor({ project, trackIndex, getEngine, playName = 'song', onClose }: Props): React.JSX.Element {
   const { song, cursor } = project
   const track = song.tracks[trackIndex]
   const drumTrack = track.kind === 'drums'
@@ -346,7 +348,7 @@ export function InstrumentEditor({ project, trackIndex, getEngine, onClose }: Pr
       </span>
       <button onClick={() => void connectMidi()}>{midiDevices ? `MIDI: ${midiDevices.join(', ') || 'no device'}` : 'Connect MIDI keyboard'}</button>
       <span className="spacer" />
-      {playback.playing ? <button onClick={playback.stop}>■ Stop</button> : <button onClick={playSong} title="Play the song from the cursor's bar">▶ Play song</button>}
+      {playback.playing ? <button onClick={playback.stop}>■ Stop</button> : <button onClick={playSong} title={`Play the ${playName} from the cursor's bar`}>▶ Play {playName}</button>}
     </div>
   )
 

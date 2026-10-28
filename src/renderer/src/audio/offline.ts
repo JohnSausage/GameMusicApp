@@ -1,5 +1,6 @@
 import { MIDIControllers, SoundBankLoader, SpessaSynthProcessor } from 'spessasynth_core'
-import { audibleTracks, type Song } from '../model/song'
+import { effectSeconds, effectSong, finishEffectAudio, type EffectWavOptions } from '../model/effects'
+import { audibleTracks, type Song, type SoundEffect } from '../model/song'
 import { buildTimeline, exportFrameCount, notesBetween, type ExportEnding, type NoteEvent, type TimeRange } from '../model/timing'
 import { createBitcrusher, createChipSynth, createTrackBus, crushActive, loadSynthWorklet } from './mixer'
 import { BEND_RANGE, pitchWheelSteps } from './bends'
@@ -136,6 +137,21 @@ export async function renderSongOffline(song: Song, sampleRate = 48000, options:
   const buffer = await offline.startRendering()
   if (ending === 'cut') fadeOut(buffer, CUT_FADE_SECONDS)
   return buffer
+}
+
+/** Rendered after a sound effect's last note: longer than any sound rings on (the longest release is 4 s). */
+const EFFECT_TAIL_SECONDS = 5
+
+/**
+ * A sound effect's audio as it is exported: from its start until its sound has
+ * faded (see finishEffectAudio). Null when it has no notes, or makes no sound.
+ */
+export async function renderEffect(effect: SoundEffect, sampleRate: number, options: EffectWavOptions): Promise<Float32Array[] | null> {
+  const notesEnd = effectSeconds(effect)
+  if (notesEnd === 0) return null
+  const buffer = await renderSongOffline(effectSong(effect), sampleRate, { range: { start: 0, end: notesEnd + EFFECT_TAIL_SECONDS }, ending: 'cut' })
+  const channels = Array.from({ length: buffer.numberOfChannels }, (_, c) => buffer.getChannelData(c))
+  return finishEffectAudio(channels, sampleRate, options)
 }
 
 /** Fades the last `seconds` of a buffer to silence. */

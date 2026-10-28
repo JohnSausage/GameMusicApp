@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { arrange, partSong, setPartBars, syncArrangement, type PartRef } from '../model/arrangement'
 import { clampCursor, type Cursor, type EditResult } from '../model/edit'
+import { EFFECT_CURSOR, effectSong, findEffect, setEffectSong } from '../model/effects'
 import type { ProjectAudio, Song } from '../model/song'
 import { lastLayout, rememberLayout, sameLayout, type Layout } from './layout'
 
@@ -26,6 +27,8 @@ interface ProjectState extends Snapshot {
   lastMergeKey: string | null
   /** The part edited on its own in the arrangement, and the cursor in it. Not part of undo. */
   partEdit: (PartRef & { cursor: Cursor }) | null
+  /** The sound effect edited, and the cursor in it. Not part of undo. */
+  effectEdit: { id: string; cursor: Cursor } | null
 }
 
 export interface ApplyOptions {
@@ -65,6 +68,38 @@ export interface Project {
   editedPart: PartRef | null
   /** Picks the part to edit on its own, or none. */
   editPart: (ref: PartRef | null) => void
+  /** The sound effect edited, as a project of its own like `part` (see effectSong). */
+  effect: Project | null
+  /** Which sound effect `effect` is, by id. */
+  editedEffect: string | null
+  editEffect: (id: string | null) => void
+}
+
+/** A piece of the song edited as a project of its own (a part, a sound effect): where its song and cursor are. */
+interface Piece {
+  /** Its song, or null when it is gone (e.g. deleted, or undone). */
+  own: (s: ProjectState) => Song | null
+  /** The project's song with the piece's edited song put back. */
+  put: (s: ProjectState, edited: Song) => Song
+  cursor: (s: ProjectState) => Cursor
+  withCursor: (s: ProjectState, cursor: Cursor) => ProjectState
+}
+
+const partPiece: Piece = {
+  own: (s) => (s.partEdit && partSong(s.song, s.partEdit)) || null,
+  put: (s, edited) => setPartBars(s.song, s.partEdit!, edited.tracks[0].bars),
+  cursor: (s) => s.partEdit!.cursor,
+  withCursor: (s, cursor) => ({ ...s, partEdit: { ...s.partEdit!, cursor } })
+}
+
+const effectPiece: Piece = {
+  own: (s) => {
+    const effect = s.effectEdit && findEffect(s.song, s.effectEdit.id)
+    return effect ? effectSong(effect) : null
+  },
+  put: (s, edited) => setEffectSong(s.song, s.effectEdit!.id, edited),
+  cursor: (s) => s.effectEdit!.cursor,
+  withCursor: (s, cursor) => ({ ...s, effectEdit: { ...s.effectEdit!, cursor } })
 }
 
 const START_CURSOR: Cursor = { track: 0, bar: 0, beat: 0, string: 1 }
@@ -81,7 +116,7 @@ export function useProject(): {
   const openProject = useCallback((opened: Song, path: string | null, saved: boolean, audio: ProjectAudio = new Map(), layout: Layout = lastLayout()) => {
     // Songs from before the arrangement get one, from their sections.
     const song = arrange(opened)
-    setState({ song, cursor: START_CURSOR, path, audio, savedSong: saved ? song : null, layout, savedLayout: layout, past: [], future: [], lastMergeKey: null, partEdit: null })
+    setState({ song, cursor: START_CURSOR, path, audio, savedSong: saved ? song : null, layout, savedLayout: layout, past: [], future: [], lastMergeKey: null, partEdit: null, effectEdit: null })
   }, [])
 
   const closeProject = useCallback(() => setState(null), [])
@@ -96,16 +131,15 @@ export function useProject(): {
   const applyTo = (s: ProjectState, result: EditResult, options: ApplyOptions): ProjectState => {
     const merge = options.mergeKey !== undefined && options.mergeKey === s.lastMergeKey && s.past.length > 0
     const past = merge ? s.past : [...s.past, { song: s.song, cursor: s.cursor }].slice(-MAX_UNDO)
-    // Changed bars go back into their parts, and every repeat of a part follows.
-    const song = syncArrangement(s.song, result.song)
+    // Changed bars go back into their parts, and every repeat of a part follows. Edits of sound effects leave the tracks as they are.
+    const song = result.song.tracks === s.song.tracks ? result.song : syncArrangement(s.song, result.song)
     return { ...s, song, cursor: result.cursor, past, future: [], lastMergeKey: options.mergeKey ?? null }
   }
 
-  /** An edit of the part edited on its own: its bars go into the part, its cursor stays with the part. */
-  const applyToPart = (s: ProjectState, result: EditResult, options: ApplyOptions): ProjectState => {
-    if (!s.partEdit || !partSong(s.song, s.partEdit)) return s
-    const next = applyTo(s, { song: setPartBars(s.song, s.partEdit, result.song.tracks[0].bars), cursor: s.cursor }, options)
-    return { ...next, partEdit: { ...s.partEdit, cursor: result.cursor } }
+  /** An edit of a piece edited on its own: it goes into the piece (one undo history), its cursor stays with the piece. */
+  const applyToPiece = (piece: Piece, s: ProjectState, result: EditResult, options: ApplyOptions): ProjectState => {
+    if (!piece.own(s)) return s
+    return piece.withCursor(applyTo(s, { song: piece.put(s, result.song), cursor: s.cursor }, options), result.cursor)
   }
 
   const apply = (result: EditResult | null, options: ApplyOptions = {}): boolean => {
@@ -157,33 +191,46 @@ export function useProject(): {
         // The same part again keeps its cursor.
         const same = s.partEdit?.trackId === ref.trackId && s.partEdit.partId === ref.partId
         return same ? s : { ...s, partEdit: { ...ref, cursor: START_CURSOR }, lastMergeKey: null }
+      }),
+    effect: null,
+    editedEffect: null,
+    editEffect: (id) =>
+      setState((s) => {
+        if (!s || s.effectEdit?.id === id) return s
+        return { ...s, effectEdit: id === null ? null : { id, cursor: EFFECT_CURSOR }, lastMergeKey: null }
       })
   }
 
-  const edited = state.partEdit && partSong(state.song, state.partEdit)
-  if (edited) {
-    project.editedPart = { trackId: state.partEdit!.trackId, partId: state.partEdit!.partId }
-    project.part = {
+  /** A piece as a project of its own: its song and cursor, with its edits going into the piece. */
+  const pieceProject = (piece: Piece): Project | null => {
+    const song = piece.own(state)
+    if (!song) return null
+    return {
       ...project,
-      song: edited,
-      cursor: clampCursor(edited, state.partEdit!.cursor),
+      song,
+      cursor: clampCursor(song, piece.cursor(state)),
       apply: (result, options = {}) => {
         if (!result) return false
-        setState((s) => (s ? applyToPart(s, result, options) : s))
+        setState((s) => (s ? applyToPiece(piece, s, result, options) : s))
         return true
       },
       update: (change, options = {}) =>
         setState((s) => {
-          const own = s?.partEdit && partSong(s.song, s.partEdit)
-          const result = own ? change(own, clampCursor(own, s.partEdit!.cursor)) : null
-          return s && result ? applyToPart(s, result, options) : s
+          const own = s && piece.own(s)
+          const result = own ? change(own, clampCursor(own, piece.cursor(s!))) : null
+          return s && result ? applyToPiece(piece, s, result, options) : s
         }),
       setCursor: (cursor) =>
         setState((s) => {
-          const own = s?.partEdit && partSong(s.song, s.partEdit)
-          return s && own ? { ...s, partEdit: { ...s.partEdit!, cursor: clampCursor(own, cursor) }, lastMergeKey: null } : s
+          const own = s && piece.own(s)
+          return s && own ? { ...piece.withCursor(s, clampCursor(own, cursor)), lastMergeKey: null } : s
         })
     }
   }
+
+  project.part = pieceProject(partPiece)
+  if (project.part) project.editedPart = { trackId: state.partEdit!.trackId, partId: state.partEdit!.partId }
+  project.effect = pieceProject(effectPiece)
+  if (project.effect) project.editedEffect = state.effectEdit!.id
   return { project, openProject, closeProject }
 }

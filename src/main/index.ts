@@ -2,7 +2,7 @@ import { app, BrowserWindow, dialog, ipcMain, Menu, net, protocol, session } fro
 import { spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { writeFile } from 'node:fs/promises'
-import { dirname, join, normalize, sep } from 'node:path'
+import { basename, dirname, join, normalize, sep } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { registerPresetHandlers } from './presets'
 import { confirmCloseWhenDirty, confirmDiscardChanges, ownRecoveryCopies, registerProjectHandlers } from './projects'
@@ -97,8 +97,13 @@ async function runSmokeTest(win: BrowserWindow): Promise<void> {
     saved.push({ name: defaultName, data: Buffer.from(data) })
     return `(smoke test) ${defaultName}`
   })
+  ipcMain.removeHandler('save-files')
+  ipcMain.handle('save-files', (_event, files: { name: string; data: Uint8Array }[]) => {
+    for (const file of files) saved.push({ name: file.name, data: Buffer.from(file.data) })
+    return '(smoke test folder)'
+  })
   // Start page → most recent project (or the demo song if there is none) → editor with a rendered score
-  // → add drums with a pattern → retro sounds and playback → import a generated WAV in the record/import dialog and transcribe it with Basic Pitch.
+  // → add drums with a pattern → the arrangement → a sound effect exported as WAV → retro sounds and playback → import a generated WAV in the record/import dialog and transcribe it with Basic Pitch.
   // alphaTab only renders into a visible, non-zero-size container: run headless with
   // --ozone-platform=headless --ozone-override-screen-size=1600,1000 (see package.json "smoke").
   const result = await win.webContents.executeJavaScript(`(async () => {
@@ -208,6 +213,33 @@ async function runSmokeTest(win: BrowserWindow): Promise<void> {
     if (partHead) button('Duplicate', partHead)?.click()
     await sleep(500)
     arrangement.duplicated = document.querySelectorAll('.arr-chip').length === paletteParts + 2
+
+    // The Sound effects tab: a new effect with a note from its piano roll, exported with the others as WAV files.
+    viewTab('Sound effects')?.click()
+    await sleep(500)
+    const effectList = () => document.querySelector('.effect-list') ?? document
+    const effectCount = document.querySelectorAll('.effect-card').length
+    button('+ New effect', effectList())?.click()
+    await sleep(1000)
+    const rollGrid = document.querySelector('.effect-editor .roll-grid')
+    if (rollGrid) {
+      const rect = rollGrid.getBoundingClientRect()
+      const at = { clientX: rect.left + 2, clientY: rect.top + rect.height / 2, bubbles: true, pointerId: 1, button: 0, isPrimary: true, pointerType: 'mouse' }
+      rollGrid.dispatchEvent(new PointerEvent('pointerdown', at))
+      rollGrid.dispatchEvent(new PointerEvent('pointerup', at))
+    }
+    await sleep(500)
+    const effects = {
+      added: document.querySelectorAll('.effect-card').length === effectCount + 1,
+      name: document.querySelector('.effect-name-input')?.value ?? null,
+      length: document.querySelector('.effect-card.selected .effect-length')?.textContent ?? null
+    }
+    button('Export WAV…', effectList())?.click()
+    await sleep(300)
+    const effectDialog = document.querySelector('.export-dialog')
+    if (effectDialog) button('Export…', effectDialog)?.click()
+    await waitFor(() => !document.querySelector('.export-dialog'), 15000)
+    effects.message = document.querySelector('.effect-head .status')?.textContent ?? null
     viewTab('Score')?.click()
     await sleep(1500)
 
@@ -277,6 +309,7 @@ async function runSmokeTest(win: BrowserWindow): Promise<void> {
       tuning,
       pageView,
       arrangement,
+      effects,
       soundWindow,
       retroSounds,
       playing,
@@ -292,13 +325,18 @@ async function runSmokeTest(win: BrowserWindow): Promise<void> {
   const pdfFile = join(app.getPath('temp'), 'GameMusicApp-smoke-test.pdf')
   if (pdf) await writeFile(pdfFile, pdf)
   result.pageView.pdf = pdf ? { file: pdfFile, bytes: pdf.length, header: pdf.subarray(0, 5).toString('latin1'), pages: pdf.toString('latin1').match(/\/Type\s*\/Page\b(?!s)/g)?.length ?? 0 } : null
+  // The new sound effect's WAV file: mono, ending soon after its note.
+  const effectWav = saved.find((file) => file.name === `${result.effects.name}.wav`)?.data
+  result.effects.wav = effectWav
+    ? { header: effectWav.subarray(0, 4).toString('latin1'), channels: effectWav.readUInt16LE(22), seconds: effectWav.readUInt32LE(40) / 2 / effectWav.readUInt16LE(22) / effectWav.readUInt32LE(24) }
+    : null
   // The edits above are unsaved, so a recovery copy is kept; the smoke test throws it away again.
   const recovery = ownRecoveryCopies()
   result.recoveryCopy = recovery.files.length === 1 && existsSync(recovery.files[0])
   recovery.discard()
   result.recoveryCopyRemoved = !existsSync(recovery.files[0] ?? '')
   const passed =
-    errors.length === 0 && result.recoveryCopy && result.recoveryCopyRemoved && result.startPage && result.theme !== null && result.scoreRenderMs !== null && result.preloadBridge && result.drumHits > 0 && result.pianoRoll && result.hiddenTrack.hidden && result.hiddenTrack.shownAgain && result.tuning.after?.includes('Drop D · capo 2') && result.tuning.undone && result.pageView.pages > 0 && result.pageView.screenAgain && result.pageView.pdf?.header === '%PDF-' && result.pageView.pdf.pages > 0 && result.arrangement.cells > 0 && result.arrangement.paletteParts > 0 && result.arrangement.afterDuplicate === result.arrangement.sections + 1 && result.arrangement.newPart && result.arrangement.partScore && result.arrangement.duplicated && result.soundWindow.categories >= 17 && result.playing && transcribed
+    errors.length === 0 && result.recoveryCopy && result.recoveryCopyRemoved && result.startPage && result.theme !== null && result.scoreRenderMs !== null && result.preloadBridge && result.drumHits > 0 && result.pianoRoll && result.hiddenTrack.hidden && result.hiddenTrack.shownAgain && result.tuning.after?.includes('Drop D · capo 2') && result.tuning.undone && result.pageView.pages > 0 && result.pageView.screenAgain && result.pageView.pdf?.header === '%PDF-' && result.pageView.pdf.pages > 0 && result.arrangement.cells > 0 && result.arrangement.paletteParts > 0 && result.arrangement.afterDuplicate === result.arrangement.sections + 1 && result.arrangement.newPart && result.arrangement.partScore && result.arrangement.duplicated && result.effects.added && result.effects.wav?.header === 'RIFF' && result.effects.wav.channels === 1 && result.effects.wav.seconds > 0 && result.effects.wav.seconds < 2 && result.soundWindow.categories >= 17 && result.playing && transcribed
   console.log('SMOKE_TEST_RESULT ' + JSON.stringify({ ...result, userData: app.getPath('userData'), errors }))
   app.exit(passed ? 0 : 1)
 }
@@ -319,6 +357,22 @@ app.whenReady().then(() => {
     if (result.canceled || !result.filePath) return null
     await writeFile(result.filePath, data)
     return result.filePath
+  })
+
+  // Several files into a folder the user picks, e.g. the sound effects; files with the same names are replaced.
+  let lastFolder: string | undefined
+  ipcMain.handle('save-files', async (_event, files: { name: string; data: Uint8Array }[]) => {
+    const result = await dialog.showOpenDialog({
+      title: 'Export into this folder',
+      buttonLabel: 'Export here',
+      defaultPath: lastFolder,
+      properties: ['openDirectory', 'createDirectory', 'promptToCreate']
+    })
+    const folder = result.filePaths[0]
+    if (result.canceled || !folder) return null
+    for (const file of files) await writeFile(join(folder, basename(file.name)), file.data)
+    lastFolder = folder
+    return folder
   })
 
   // The PDF export: the renderer has put the pages for printing in place (see score/pdf.ts); they set their own size.

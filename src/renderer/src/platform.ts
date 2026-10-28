@@ -45,6 +45,8 @@ export interface SettingsState {
 interface ElectronBridge {
   platform: string
   saveFile(defaultName: string, data: Uint8Array): Promise<string | null>
+  /** Saves files into a folder the user picks; returns the folder, or null if cancelled. */
+  saveFiles(files: NamedFile[]): Promise<string | null>
   /** The window printed to a PDF (A4); what is printed is set by print CSS. */
   printPdf(): Promise<Uint8Array>
   projects: {
@@ -87,4 +89,16 @@ export async function saveFile(defaultName: string, data: Uint8Array): Promise<s
   link.click()
   URL.revokeObjectURL(url)
   return defaultName
+}
+
+export interface NamedFile {
+  name: string
+  data: Uint8Array
+}
+
+/** Saves files into a folder the user picks (in a browser: downloads them). Returns where they went, or null if cancelled. */
+export async function saveFiles(files: NamedFile[]): Promise<string | null> {
+  if (window.gameMusicApp) return window.gameMusicApp.saveFiles(files)
+  for (const file of files) await saveFile(file.name, file.data)
+  return 'your downloads'
 }

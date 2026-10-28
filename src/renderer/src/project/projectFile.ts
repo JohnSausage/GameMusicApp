@@ -3,7 +3,7 @@
 import { strFromU8, strToU8, unzipSync, zipSync, type Zippable } from 'fflate'
 import { decodeWav16, encodeWav16 } from '../audio/wav'
 import { fixPartColors, PART_COLORS, writeOut } from '../model/arrangement'
-import { MASTER_DEFAULTS, NOTE_VALUES, type Bar, type Instrument, type MasterSettings, type ProjectAudio, type Song, type TakeInfo, type Track } from '../model/song'
+import { MASTER_DEFAULTS, NOTE_VALUES, type Bar, type Instrument, type MasterSettings, type ProjectAudio, type Song, type SoundEffect, type TakeInfo, type Track } from '../model/song'
 import { normalizePatch, PATCH_LIMITS } from '../model/synth'
 import { MAX_CAPO } from '../model/tuning'
 import { checkLayout, type Layout } from './layout'
@@ -164,6 +164,30 @@ function checkArrangement(song: Song): void {
   }
 }
 
+/** A track of the song or of a sound effect; `where` names it in the message. */
+function checkTrack(track: Track, where: string): void {
+  if (!track || typeof track.name !== 'string' || !Array.isArray(track.tuning) || !track.tuning.every(isInt)) fail(`${where} is invalid`)
+  if (track.kind !== undefined && track.kind !== 'drums' && track.kind !== 'keys') fail(`${where} has an unknown kind`)
+  if (track.capo !== undefined && (track.kind !== undefined || !isInt(track.capo) || track.capo < 0 || track.capo > MAX_CAPO)) fail(`${where} has an invalid capo`)
+  if ((track.mute !== undefined && typeof track.mute !== 'boolean') || (track.solo !== undefined && typeof track.solo !== 'boolean')) {
+    fail(`${where} has invalid mute/solo settings`)
+  }
+  track.instrument = checkInstrument(track.instrument, where)
+  if (track.originalInstrument !== undefined) track.originalInstrument = checkInstrument(track.originalInstrument, `${where} (original sound)`)
+  if (!Array.isArray(track.bars) || track.bars.length === 0) fail(`${where} has no bars`)
+  checkBars(track.bars, track, where)
+}
+
+function checkEffects(effects: SoundEffect[]): void {
+  if (!Array.isArray(effects)) fail('invalid sound effect list')
+  effects.forEach((effect, e) => {
+    if (typeof effect?.id !== 'string' || typeof effect.name !== 'string') fail(`sound effect ${e + 1} has no valid id or name`)
+    if (typeof effect.tempo !== 'number' || effect.tempo < 20 || effect.tempo > 400) fail(`sound effect "${effect.name}" has an invalid tempo`)
+    checkTrack(effect.track, `sound effect "${effect.name}"`)
+    if (effect.track.parts !== undefined) fail(`sound effect "${effect.name}" has parts`)
+  })
+}
+
 /** Checks the structure we rely on, so a damaged file fails here instead of crashing the editor. */
 function checkSong(value: unknown): Song {
   const song = value as Song
@@ -175,20 +199,13 @@ function checkSong(value: unknown): Song {
 
   const bars = song.tracks[0].bars?.length
   song.tracks.forEach((track, t) => {
-    if (typeof track.name !== 'string' || !Array.isArray(track.tuning) || !track.tuning.every(isInt)) fail(`track ${t + 1} is invalid`)
-    if (track.kind !== undefined && track.kind !== 'drums' && track.kind !== 'keys') fail(`track ${t + 1} has an unknown kind`)
-    if (track.capo !== undefined && (track.kind !== undefined || !isInt(track.capo) || track.capo < 0 || track.capo > MAX_CAPO)) fail(`track ${t + 1} has an invalid capo`)
-    if ((track.mute !== undefined && typeof track.mute !== 'boolean') || (track.solo !== undefined && typeof track.solo !== 'boolean')) {
-      fail(`track ${t + 1} has invalid mute/solo settings`)
-    }
-    track.instrument = checkInstrument(track.instrument, `track ${t + 1}`)
-    if (track.originalInstrument !== undefined) track.originalInstrument = checkInstrument(track.originalInstrument, `track ${t + 1} (original sound)`)
-    if (!Array.isArray(track.bars) || track.bars.length !== bars) fail(`track ${t + 1} has the wrong number of bars`)
-    checkBars(track.bars, track, `track ${t + 1}`)
+    checkTrack(track, `track ${t + 1}`)
+    if (track.bars.length !== bars) fail(`track ${t + 1} has the wrong number of bars`)
     if (track.parts !== undefined) checkParts(track, t)
   })
   if (song.arrangement !== undefined) checkArrangement(song)
   fixPartColors(song)
+  if (song.effects !== undefined) checkEffects(song.effects)
   const checked = { ...song, sections: Array.isArray(song.sections) ? song.sections : [], takes: checkTakes(song.takes), master: checkMaster(song.master) }
   // The arrangement is what counts; the bars written out in the file are for reading it without one.
   return writeOut(checked)

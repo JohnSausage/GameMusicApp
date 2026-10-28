@@ -19,6 +19,7 @@ import {
   type BarRange,
   type LoopChoice
 } from '../model/edit'
+import { effectSong, findEffect } from '../model/effects'
 import { audibleTracks, barCount, defaultInstrument, isFretted, MASTER_DEFAULTS, soundName, type Instrument, type Track } from '../model/song'
 import { MidiKeyboard, type MidiNoteMessage } from '../midi/midiInput'
 import { importMidi } from '../model/midiImport'
@@ -28,9 +29,11 @@ import { retuneTrack, tuningLabel, type Retune } from '../model/tuning'
 import { saveFile } from '../platform'
 import { scorePdf } from '../score/pdf'
 import type { HeaderSlots } from '../pages/EditorPage'
-import { showTrack, shownTracks, type MainView } from '../project/layout'
+import { MAIN_VIEWS, showTrack, shownTracks, type MainView } from '../project/layout'
 import type { Project } from '../project/useProject'
 import { ArrangementView } from './ArrangementView'
+import { EffectExportDialog } from './EffectExportDialog'
+import { EffectEditor, EffectList } from './EffectsView'
 import { ExportDialog } from './ExportDialog'
 import { InstrumentEditor } from './InstrumentEditor'
 import { barsLabel, ScoreEditor, type Clipboard } from './ScoreEditor'
@@ -44,6 +47,15 @@ interface Props {
   /** Where to put the transport and the record/export buttons in the page's top bar. */
   headerSlots?: HeaderSlots
   onShowShortcuts?: () => void
+}
+
+/** What plays: the song, the part edited in the arrangement on its own, or a sound effect. */
+type Heard = 'song' | 'part' | { effect: string }
+
+const VIEW_TABS: Record<MainView, { label: string; title: string }> = {
+  score: { label: 'Score', title: 'The notes, bar by bar (Ctrl+Tab switches)' },
+  arrangement: { label: 'Arrangement', title: 'The song’s sections, and the part each track plays in them (Ctrl+Tab switches)' },
+  effects: { label: 'Sound effects', title: 'The game’s sound effects, each with its own sound and notes, exported one WAV file each (Ctrl+Tab switches)' }
 }
 
 interface TrackListProps {
@@ -287,12 +299,15 @@ export function TabEditor({ project, getEngine, headerSlots, onShowShortcuts }: 
   const [metronome, setMetronome] = useState(false)
   const [soundEditor, setSoundEditor] = useState<number | null>(null)
   const [tuningDialog, setTuningDialog] = useState<number | null>(null)
+  const [effectSound, setEffectSound] = useState(false)
+  const [effectExport, setEffectExport] = useState(false)
+  /** The sound effect just added, to type its name. */
+  const [addedEffect, setAddedEffect] = useState<string | null>(null)
   /** MIDI keyboards found (null: MIDI not available or not connected yet). */
   const [midiDevices, setMidiDevices] = useState<string[] | null>(null)
   /** The bars of the selection in the score, for what to loop and export. */
   const [selectedBars, setSelectedBars] = useState<BarRange | null>(null)
-  /** What plays: the part edited in the arrangement, on its own, or the song. */
-  const [playingPart, setPlayingPart] = useState(false)
+  const [heard, setHeard] = useState<Heard>('song')
   /** The editor shown gets the notes of the MIDI keyboard here. */
   const midiRef = useRef<((message: MidiNoteMessage) => void) | null>(null)
   const onMidiNoteRef = useRef<(message: MidiNoteMessage) => void>(() => {})
@@ -305,18 +320,34 @@ export function TabEditor({ project, getEngine, headerSlots, onShowShortcuts }: 
   const timeline = useMemo(() => buildTimeline(song), [song])
   const part = project.part
   const editedPart = project.editedPart
+  const effect = project.effect
+  const editedEffect = project.editedEffect
+  const effects = song.effects ?? []
+  const playingPart = heard === 'part'
+  const playingEffect = playing && typeof heard === 'object' ? heard.effect : null
   const cursorSection = sectionRangeOf(song, cursor.bar)
   const loopRange = loopBars(song, loopChoice)
 
   // Volume, mute and solo changes are heard right away while playing.
   useEffect(() => {
-    if (playing && !playingPart) playback.updateMix(song)
+    if (playing && heard === 'song') playback.updateMix(song)
   }, [song, playing])
 
   // Another part picked while one plays: it stops, as the playhead would show the new one.
   useEffect(() => {
     if (playingPart) stop()
   }, [editedPart?.trackId, editedPart?.partId])
+
+  // The same for sound effects (one started from the list is picked as it starts).
+  useEffect(() => {
+    if (playingEffect && playingEffect !== editedEffect) stop()
+  }, [editedEffect])
+
+  // The sound effects show one: the first, until another is picked.
+  const pickEffect = view === 'effects' && !effect && effects.length > 0
+  useEffect(() => {
+    if (pickEffect) project.editEffect(effects[0].id)
+  }, [pickEffect])
 
   useEffect(() => {
     if (!message) return
@@ -327,11 +358,11 @@ export function TabEditor({ project, getEngine, headerSlots, onShowShortcuts }: 
   /** Focuses the score, or in the arrangement the grid. */
   const focus = (): void => (editorRef.current ?? areaRef.current?.querySelector<HTMLElement>('.arrangement-grid-area'))?.focus()
 
-  /** The song's or the part's playback: what an editor starts is marked as such. */
-  const playbackFor = (forPart: boolean): Playback => ({
+  /** The playback of the song, the part or an effect: what an editor starts is marked as such. */
+  const playbackFor = (what: Heard): Playback => ({
     ...playback,
     play: (...args) => {
-      setPlayingPart(forPart)
+      setHeard(what)
       return playback.play(...args)
     }
   })
@@ -339,7 +370,7 @@ export function TabEditor({ project, getEngine, headerSlots, onShowShortcuts }: 
   /** Plays from `from` seconds with the current (or given) loop and metronome settings. */
   const playFrom = (from: number, withLoop = loop, range: BarRange = loopRange): void => {
     const bar = barSeconds(song)
-    setPlayingPart(false)
+    setHeard('song')
     void playback.play(song, from, { loop: withLoop ? { start: range.start * bar, end: range.end * bar } : null, metronome })
   }
 
@@ -352,14 +383,22 @@ export function TabEditor({ project, getEngine, headerSlots, onShowShortcuts }: 
   const playPartFrom = (from: number, withLoop = loop): void => {
     if (!part) return
     const end = barCount(part.song) * barSeconds(part.song)
-    setPlayingPart(true)
+    setHeard('part')
     void playback.play(part.song, from, { loop: withLoop ? { start: 0, end } : null, metronome })
   }
 
-  /** Plays the song or the part again from where it is, e.g. with the loop switched. */
+  /** Plays a sound effect from `from` seconds; it doesn't loop. */
+  const playEffectFrom = (id: string, from: number): void => {
+    const found = findEffect(song, id)
+    if (!found) return
+    setHeard({ effect: id })
+    void playback.play(effectSong(found), from)
+  }
+
+  /** Plays the song or the part again from where it is, e.g. with the loop switched. Sound effects don't loop. */
   const restart = (withLoop: boolean, range: BarRange = loopRange): void => {
     if (playingPart) playPartFrom(positionRef.current ?? 0, withLoop)
-    else playFrom(positionRef.current ?? 0, withLoop, range)
+    else if (heard === 'song') playFrom(positionRef.current ?? 0, withLoop, range)
   }
 
   /** Loop on/off; while playing, playback continues from where it is with the new setting. */
@@ -400,7 +439,7 @@ export function TabEditor({ project, getEngine, headerSlots, onShowShortcuts }: 
     return () => keyboard.dispose()
   }, [])
 
-  const modalOpen = soundEditor !== null || takeDialog || exportDialog
+  const modalOpen = soundEditor !== null || takeDialog || exportDialog || effectSound || effectExport
 
   /** A key on the MIDI keyboard goes to the editor shown, or just sounds with the cursor's track. */
   const onMidiNote = (m: MidiNoteMessage): void => {
@@ -417,14 +456,14 @@ export function TabEditor({ project, getEngine, headerSlots, onShowShortcuts }: 
   }
   onMidiNoteRef.current = onMidiNote
 
-  /** Score or arrangement; playback goes on. */
+  /** Score, arrangement or sound effects; playback goes on. */
   const showView = (next: MainView): void => project.setLayout({ view: next })
 
   /** Keys that work the same in the score and the arrangement; true if handled. */
   const sharedKey = (event: React.KeyboardEvent): boolean => {
     const ctrl = event.ctrlKey || event.metaKey
     const key = event.key
-    if (ctrl && key === 'Tab') showView(view === 'score' ? 'arrangement' : 'score')
+    if (ctrl && key === 'Tab') showView(MAIN_VIEWS[(MAIN_VIEWS.indexOf(view) + (event.shiftKey ? MAIN_VIEWS.length - 1 : 1)) % MAIN_VIEWS.length])
     else if (key === ' ') playing ? stop() : playFromCursor()
     else if (key.toLowerCase() === 'l' && !ctrl) toggleLoop()
     else if (key.toLowerCase() === 'm' && !ctrl) toggleMetronome()
@@ -477,23 +516,46 @@ export function TabEditor({ project, getEngine, headerSlots, onShowShortcuts }: 
 
   return (
     <div className="tab-editor">
-      <TrackList
-        project={project}
-        onSelect={(index) => {
-          // A track picked while it is left out of the score shows again.
-          if (view === 'score' && !shownTracks(song, project.layout).includes(index)) project.setLayout((layout) => showTrack(song, layout, song.tracks[index].id, true))
-          project.setCursor(switchTrack(song, cursor, index))
-        }}
-        onEditSound={(index) => {
-          stop()
-          setSoundEditor(index)
-        }}
-        onEditTuning={(index) => {
-          stop()
-          setTuningDialog(index)
-        }}
-        onMessage={setMessage}
-      />
+      {view === 'effects' ? (
+        <EffectList
+          project={project}
+          getEngine={getEngine}
+          playing={playing}
+          playingEffect={playingEffect}
+          onPlay={(id) => {
+            project.editEffect(id)
+            playEffectFrom(id, 0)
+          }}
+          onStop={stop}
+          onAdded={(id) => {
+            project.editEffect(id)
+            setAddedEffect(id)
+          }}
+          onExport={() => {
+            stop()
+            setEffectExport(true)
+          }}
+          onMessage={setMessage}
+        />
+      ) : (
+        <TrackList
+          project={project}
+          onSelect={(index) => {
+            // A track picked while it is left out of the score shows again.
+            if (view === 'score' && !shownTracks(song, project.layout).includes(index)) project.setLayout((layout) => showTrack(song, layout, song.tracks[index].id, true))
+            project.setCursor(switchTrack(song, cursor, index))
+          }}
+          onEditSound={(index) => {
+            stop()
+            setSoundEditor(index)
+          }}
+          onEditTuning={(index) => {
+            stop()
+            setTuningDialog(index)
+          }}
+          onMessage={setMessage}
+        />
+      )}
 
       {headerSlots?.transport &&
         createPortal(
@@ -574,7 +636,17 @@ export function TabEditor({ project, getEngine, headerSlots, onShowShortcuts }: 
                   }
                 },
                 { label: 'MIDI', title: 'All tracks as a MIDI file', onSelect: () => void exportMidi() },
-                { label: 'PDF', title: 'The score on A4 pages, as in the page view (the tracks shown in the score)', onSelect: () => void exportPdf() }
+                { label: 'PDF', title: 'The score on A4 pages, as in the page view (the tracks shown in the score)', onSelect: () => void exportPdf() },
+                'separator',
+                {
+                  label: 'Sound effects (WAV)…',
+                  title: effects.length > 0 ? 'The sound effects, one WAV file each' : 'Make sound effects in the Sound effects tab first',
+                  disabled: effects.length === 0,
+                  onSelect: () => {
+                    stop()
+                    setEffectExport(true)
+                  }
+                }
               ]}
             />
           </>,
@@ -583,23 +655,44 @@ export function TabEditor({ project, getEngine, headerSlots, onShowShortcuts }: 
 
       <div ref={areaRef} className="editor-area">
         <div className="view-tabs" role="tablist" aria-label="Main view">
-          {(['score', 'arrangement'] as const).map((v) => (
-            <button
-              key={v}
-              role="tab"
-              aria-selected={view === v}
-              className={`view-tab ${view === v ? 'current' : ''}`}
-              title={v === 'score' ? 'The notes, bar by bar (Ctrl+Tab switches)' : 'The song’s sections, and the part each track plays in them (Ctrl+Tab switches)'}
-              onClick={() => showView(v)}
-            >
-              {v === 'score' ? 'Score' : 'Arrangement'}
+          {MAIN_VIEWS.map((v) => (
+            <button key={v} role="tab" aria-selected={view === v} className={`view-tab ${view === v ? 'current' : ''}`} title={VIEW_TABS[v].title} onClick={() => showView(v)}>
+              {VIEW_TABS[v].label}
             </button>
           ))}
         </div>
-        {view === 'arrangement' ? (
+        {view === 'effects' ? (
+          <EffectEditor
+            project={project}
+            playing={playingEffect !== null && playingEffect === editedEffect}
+            onPlay={() => (playingEffect && playingEffect === editedEffect ? stop() : editedEffect && playEffectFrom(editedEffect, 0))}
+            onEditSound={() => {
+              stop()
+              setEffectSound(true)
+            }}
+            selectName={addedEffect !== null && addedEffect === editedEffect}
+            message={message}
+            onMessage={setMessage}
+            editor={
+              effect &&
+              editedEffect && (
+                <ScoreEditor
+                  key={editedEffect}
+                  {...editorProps}
+                  target={effect}
+                  piece="effect"
+                  playback={playbackFor({ effect: editedEffect })}
+                  positionRef={playingEffect === editedEffect ? positionRef : noPosition}
+                  onPlayFrom={(from) => playEffectFrom(editedEffect, from)}
+                  elementRef={editorRef}
+                />
+              )
+            }
+          />
+        ) : view === 'arrangement' ? (
           <ArrangementView
             project={project}
-            playing={playing && !playingPart}
+            playing={playing && heard === 'song'}
             positionRef={positionRef}
             loop={loop ? loopRange : null}
             message={message}
@@ -617,8 +710,8 @@ export function TabEditor({ project, getEngine, headerSlots, onShowShortcuts }: 
                   key={`${editedPart.trackId}/${editedPart.partId}`}
                   {...editorProps}
                   target={part}
-                  part
-                  playback={playbackFor(true)}
+                  piece="part"
+                  playback={playbackFor('part')}
                   positionRef={playingPart ? positionRef : noPosition}
                   onPlayFrom={(from) => playPartFrom(from)}
                 />
@@ -629,8 +722,8 @@ export function TabEditor({ project, getEngine, headerSlots, onShowShortcuts }: 
           <ScoreEditor
             {...editorProps}
             target={project}
-            playback={playbackFor(false)}
-            positionRef={playingPart ? noPosition : positionRef}
+            playback={playbackFor('song')}
+            positionRef={heard === 'song' ? positionRef : noPosition}
             onPlayFrom={(from) => playFrom(from)}
             onSelectedBars={setSelectedBars}
             elementRef={editorRef}
@@ -646,6 +739,31 @@ export function TabEditor({ project, getEngine, headerSlots, onShowShortcuts }: 
           getEngine={getEngine}
           onClose={() => {
             setSoundEditor(null)
+            focus()
+          }}
+        />
+      )}
+
+      {effectSound && effect && (
+        <InstrumentEditor
+          project={effect}
+          trackIndex={0}
+          getEngine={getEngine}
+          playName="effect"
+          onClose={() => {
+            setEffectSound(false)
+            focus()
+          }}
+        />
+      )}
+
+      {effectExport && (
+        <EffectExportDialog
+          effects={effects}
+          selected={editedEffect}
+          onClose={(result) => {
+            setEffectExport(false)
+            if (result) setMessage(result)
             focus()
           }}
         />

@@ -119,6 +119,19 @@ export interface MasterSettings {
 
 export const MASTER_DEFAULTS: MasterSettings = { crushBits: 16, crushRate: 0 }
 
+/**
+ * A sound effect of the game, e.g. "Jump" or "Coin": a short piece of music of
+ * its own, kept next to the song (see model/effects.ts).
+ */
+export interface SoundEffect {
+  id: string
+  name: string
+  /** Its own tempo, in quarter notes per minute; it is in 4/4. */
+  tempo: number
+  /** Its notes and its sound. */
+  track: Track
+}
+
 export interface Song {
   title: string
   tempo: number
@@ -132,6 +145,8 @@ export interface Song {
   arrangement?: ArrangementSection[]
   takes: TakeInfo[]
   master?: MasterSettings
+  /** The game's sound effects, exported one file each. Not part of the song's music. */
+  effects?: SoundEffect[]
 }
 
 /** Audio of the project's takes: mono samples by take id. */

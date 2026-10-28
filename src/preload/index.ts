@@ -4,6 +4,7 @@ contextBridge.exposeInMainWorld('gameMusicApp', {
   platform: process.platform,
   saveFile: (defaultName: string, data: Uint8Array): Promise<string | null> =>
     ipcRenderer.invoke('save-file', defaultName, data),
+  saveFiles: (files: { name: string; data: Uint8Array }[]): Promise<string | null> => ipcRenderer.invoke('save-files', files),
   printPdf: (): Promise<Uint8Array> => ipcRenderer.invoke('print-pdf'),
   projects: {
     listRecent: () => ipcRenderer.invoke('projects:list-recent'),

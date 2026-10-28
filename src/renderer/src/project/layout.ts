@@ -1,4 +1,4 @@
-// How the editor is laid out: the score or the arrangement, which staves and
+// How the editor is laid out: the score, the arrangement or the sound effects, which staves and
 // tracks show, the zoom, pages or not, and the minimized panels. It is saved in the project file, so a song opens the way it was left;
 // the layout used last is kept per computer as the start for new projects.
 import type { Song } from '../model/song'
@@ -7,8 +7,10 @@ import { readPref, writePref } from '../prefs'
 /** Notation above the tab, or only the tab (drums as a rhythm line, keys still in notation). */
 export type StaveMode = 'notation+tab' | 'tab'
 
-/** The main area: the score, or the arrangement's section grid. */
-export type MainView = 'score' | 'arrangement'
+/** The main area: the score, the arrangement's section grid, or the sound effects. */
+export type MainView = 'score' | 'arrangement' | 'effects'
+
+export const MAIN_VIEWS: MainView[] = ['score', 'arrangement', 'effects']
 
 export interface Layout {
   view: MainView
@@ -35,7 +37,7 @@ export function checkLayout(value: unknown): Layout {
   const layout = (value && typeof value === 'object' ? value : {}) as Partial<Record<keyof Layout, unknown>>
   const flag = (v: unknown, fallback: boolean): boolean => (typeof v === 'boolean' ? v : fallback)
   return {
-    view: layout.view === 'arrangement' || layout.view === 'score' ? layout.view : DEFAULT_LAYOUT.view,
+    view: MAIN_VIEWS.includes(layout.view as MainView) ? (layout.view as MainView) : DEFAULT_LAYOUT.view,
     staves: layout.staves === 'tab' || layout.staves === 'notation+tab' ? layout.staves : DEFAULT_LAYOUT.staves,
     zoom: typeof layout.zoom === 'number' && Number.isFinite(layout.zoom) ? Math.min(ZOOM_STEPS.at(-1)!, Math.max(ZOOM_STEPS[0], layout.zoom)) : DEFAULT_LAYOUT.zoom,
     pageView: flag(layout.pageView, DEFAULT_LAYOUT.pageView),

@@ -103,10 +103,10 @@ function isTyping(target: EventTarget | null): boolean {
 }
 
 interface Props {
-  /** What is edited: the whole song, or one part on its own (Project.part). */
+  /** What is edited: the whole song, or a piece on its own (Project.part, Project.effect). */
   target: Project
-  /** Editing a part on its own: no sections, and the bar commands work on the part. */
-  part?: boolean
+  /** Editing a part of the arrangement or a sound effect on its own: no sections, and the bar commands work on it. */
+  piece?: 'part' | 'effect'
   getEngine: GetEngine
   playback: Playback
   /** Where playback is in this editor's song; holds null while something else plays. */
@@ -133,12 +133,14 @@ interface Props {
 /**
  * The score with its edit toolbar, drum grid or piano roll and status bar:
  * typing frets, note lengths, techniques, selections, copy and paste, MIDI step
- * input and recording. It edits `target`, the whole song or a single part.
+ * input and recording. It edits `target`, the whole song or a piece of it on its own.
  */
 export function ScoreEditor(props: Props): React.JSX.Element {
-  const { target: project, part = false, getEngine, playback, positionRef, onPlayFrom, message, onMessage: setMessage, clipboard, onClipboard: setClipboard } = props
+  const { target: project, piece, getEngine, playback, positionRef, onPlayFrom, message, onMessage: setMessage, clipboard, onClipboard: setClipboard } = props
   const { midiRef, midiDevices, onSharedKey, onSelectedBars, onShowShortcuts, autoFocus = false } = props
   const { song, cursor } = project
+  const part = piece !== undefined
+  const pieceName = piece === 'effect' ? 'sound effect' : 'part'
   const { staves, zoom, pageView, drumGridMinimized, pianoRollMinimized } = project.layout
   const [entryDuration, setEntryDuration] = useState<Duration>({ value: 4, dotted: false })
   /** Where the current selection started; the selection runs from here to the cursor. */
@@ -466,13 +468,13 @@ export function ScoreEditor(props: Props): React.JSX.Element {
 
   const addBar = (): void => edit(addBars(song, cursor, 1))
   const addSection = (): void => edit(addBars(song, cursor, 4, nextSectionName(song)))
-  const lastBarMessage = part ? 'A part needs at least one bar.' : 'A song needs at least one bar.'
+  const lastBarMessage = `A ${part ? pieceName : 'song'} needs at least one bar.`
 
   const onKeyDown = (event: React.KeyboardEvent<HTMLDivElement>): void => {
     if (isTyping(event.target)) return
     const ctrl = event.ctrlKey || event.metaKey
     const key = event.key
-    // Space plays this editor's song (the whole song, or the part on its own).
+    // Space plays this editor's song (the whole song, or the piece on its own).
     if (key === ' ' && !ctrl) {
       event.preventDefault()
       if (recording) stopRecording()
@@ -646,7 +648,7 @@ export function ScoreEditor(props: Props): React.JSX.Element {
             { label: 'Paste', shortcut: 'Ctrl+V', title: 'At the cursor or the start of the selection, overwriting what’s there', onSelect: paste },
             'separator',
             { label: 'Delete beat', shortcut: 'Shift+Del', title: 'The rest of the bar moves up', onSelect: removeBeat },
-            { label: part ? 'Select the whole part' : 'Select whole track', shortcut: 'Ctrl+A', onSelect: selectAll }
+            { label: part ? `Select the whole ${pieceName}` : 'Select whole track', shortcut: 'Ctrl+A', onSelect: selectAll }
           ]}
         />
         <Menu
@@ -700,7 +702,7 @@ export function ScoreEditor(props: Props): React.JSX.Element {
         onScoreClick={onScoreClick}
         endActions={
           part ? (
-            <button onClick={addBar} title="Add an empty bar at the end of the part">+ Bar</button>
+            <button onClick={addBar} title={`Add an empty bar at the end of the ${pieceName}`}>+ Bar</button>
           ) : (
             <>
               <button onClick={addBar} title="Add an empty bar at the end">+ Bar</button>

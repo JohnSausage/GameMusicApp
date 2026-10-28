@@ -1011,6 +1011,75 @@ kbd {
   min-height: 140px;
 }
 
+/* The Sound effects tab (EffectsView.tsx): the list in the place of the tracks, the picked effect over its score. */
+.effect-card .track-card-row {
+  min-height: 24px;
+}
+
+.effect-card.heard {
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+}
+
+.effect-play {
+  width: 28px;
+  padding: 3px 0;
+  font-size: 11px;
+}
+
+.effect-play.active {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.effect-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+.effect-length {
+  white-space: nowrap;
+}
+
+.effect-sound {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: block;
+}
+
+.effect-editor {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.effect-editor > .editor-main {
+  flex: 1;
+}
+
+.effect-name-input {
+  font-weight: 600;
+  width: 180px;
+}
+
+.effect-head .tempo {
+  font-size: 14px;
+}
+
+.effect-sound-button {
+  flex: 0 1 220px;
+}
+
+.effects-empty {
+  flex: 0 0 auto;
+  max-width: 640px;
+}
+
 /* The edited part's name, color and where it plays, over its score. */
 .arr-part-head {
   padding: 4px 0 4px 10px;
