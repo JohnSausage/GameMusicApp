@@ -533,7 +533,9 @@ export function TabEditor({ project, getEngine, headerSlots, onShowShortcuts }: 
           project={project}
           getEngine={getEngine}
           playing={playing}
+          songPlaying={playing && heard === 'song'}
           playingEffect={playingEffect}
+          keys={!modalOpen}
           onPlay={(id) => {
             project.editEffect(id)
             playEffectFrom(id, 0)

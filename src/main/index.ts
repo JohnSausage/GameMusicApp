@@ -230,11 +230,26 @@ async function runSmokeTest(win: BrowserWindow): Promise<void> {
       sound: document.querySelector('.effect-sound-button')?.textContent ?? null,
       // Coin brings its color; a swatch changes it.
       colored: !!document.querySelector('.effect-card.selected.colored'),
-      recolored: false
+      recolored: false,
+      overSong: null
     }
     document.querySelector('.effect-head .arr-swatch[aria-label="Violet"]')?.click()
     await sleep(200)
     effects.recolored = document.querySelector('.effect-card.selected')?.getAttribute('style')?.includes('--part-0') ?? false
+    // Its key plays it over the song, which goes on. (The new effect may still be playing: stop it first.)
+    const transport = () => document.querySelector('.transport-play')
+    if (transport()?.classList.contains('active')) transport().click()
+    await sleep(200)
+    transport()?.click()
+    await sleep(500)
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: effectCount < 9 ? String(effectCount + 1) : '1' }))
+    await sleep(300)
+    effects.overSong = {
+      heard: document.querySelectorAll('.effect-card.heard').length,
+      songPlays: transport()?.classList.contains('active') ?? false
+    }
+    transport()?.click()
+    await sleep(200)
     const effectHead = document.querySelector('.effect-head')
     if (effectHead) button('Vary', effectHead)?.click()
     await sleep(500)
@@ -340,7 +355,7 @@ async function runSmokeTest(win: BrowserWindow): Promise<void> {
   recovery.discard()
   result.recoveryCopyRemoved = !existsSync(recovery.files[0] ?? '')
   const passed =
-    errors.length === 0 && result.recoveryCopy && result.recoveryCopyRemoved && result.startPage && result.theme !== null && result.scoreRenderMs !== null && result.preloadBridge && result.drumHits > 0 && result.pianoRoll && result.hiddenTrack.hidden && result.hiddenTrack.shownAgain && result.tuning.after?.includes('Drop D · capo 2') && result.tuning.undone && result.pageView.pages > 0 && result.pageView.screenAgain && result.pageView.pdf?.header === '%PDF-' && result.pageView.pdf.pages > 0 && result.arrangement.cells > 0 && result.arrangement.paletteParts > 0 && result.arrangement.afterDuplicate === result.arrangement.sections + 1 && result.arrangement.newPart && result.arrangement.partScore && result.arrangement.duplicated && result.effects.added && result.effects.name?.startsWith('Coin') && result.effects.colored && result.effects.recolored && result.effects.wav?.header === 'RIFF' && result.effects.wav.channels === 1 && result.effects.wav.seconds > 0 && result.effects.wav.seconds < 2 && result.soundWindow.categories >= 17 && result.playing && transcribed
+    errors.length === 0 && result.recoveryCopy && result.recoveryCopyRemoved && result.startPage && result.theme !== null && result.scoreRenderMs !== null && result.preloadBridge && result.drumHits > 0 && result.pianoRoll && result.hiddenTrack.hidden && result.hiddenTrack.shownAgain && result.tuning.after?.includes('Drop D · capo 2') && result.tuning.undone && result.pageView.pages > 0 && result.pageView.screenAgain && result.pageView.pdf?.header === '%PDF-' && result.pageView.pdf.pages > 0 && result.arrangement.cells > 0 && result.arrangement.paletteParts > 0 && result.arrangement.afterDuplicate === result.arrangement.sections + 1 && result.arrangement.newPart && result.arrangement.partScore && result.arrangement.duplicated && result.effects.added && result.effects.name?.startsWith('Coin') && result.effects.colored && result.effects.recolored && result.effects.overSong?.heard > 0 && result.effects.overSong.songPlays && result.effects.wav?.header === 'RIFF' && result.effects.wav.channels === 1 && result.effects.wav.seconds > 0 && result.effects.wav.seconds < 2 && result.soundWindow.categories >= 17 && result.playing && transcribed
   console.log('SMOKE_TEST_RESULT ' + JSON.stringify({ ...result, userData: app.getPath('userData'), errors }))
   app.exit(passed ? 0 : 1)
 }

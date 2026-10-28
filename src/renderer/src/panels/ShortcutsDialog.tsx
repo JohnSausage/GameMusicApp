@@ -74,6 +74,13 @@ const GROUPS: { title: string; rows: Row[] }[] = [
     ]
   },
   {
+    title: 'Sound effects',
+    rows: [
+      [['1', '…', '9'], 'Play sound effect 1–9 of the list, also over the song (start the song with ▶ at the top)'],
+      [['Space'], 'Play the picked sound effect from the cursor / stop']
+    ]
+  },
+  {
     title: 'Song',
     rows: [
       [['Ctrl+Z', 'Ctrl+Y'], 'Undo / redo'],

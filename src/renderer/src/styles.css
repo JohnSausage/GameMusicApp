@@ -1054,6 +1054,16 @@ kbd {
   white-space: nowrap;
 }
 
+/* The key that plays an effect (1–9). */
+.effect-key {
+  color: var(--muted);
+  line-height: 1.2;
+}
+
+.effect-keys-hint {
+  margin: 8px 0 0;
+}
+
 .effect-sound {
   overflow: hidden;
   text-overflow: ellipsis;

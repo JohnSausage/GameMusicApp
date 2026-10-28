@@ -354,10 +354,22 @@ export class AudioEngine {
 
   /** Plays an audio buffer (e.g. a recorded take), now or at context time `when`. Returns a stop function. */
   playBuffer(buffer: AudioBuffer, onEnded?: () => void, when = 0): () => void {
+    return this.startBuffer(buffer, this.master, onEnded, when)
+  }
+
+  /**
+   * Plays a rendered sound effect next to the song, as a game does: as loud as
+   * it is exported, and not through the song's master bitcrusher. Returns a stop function.
+   */
+  playEffect(buffer: AudioBuffer, onEnded?: () => void): () => void {
+    return this.startBuffer(buffer, this.ctx.destination, onEnded, 0)
+  }
+
+  private startBuffer(buffer: AudioBuffer, output: AudioNode, onEnded: (() => void) | undefined, when: number): () => void {
     void this.ctx.resume()
     const source = this.ctx.createBufferSource()
     source.buffer = buffer
-    source.connect(this.master)
+    source.connect(output)
     source.onended = () => onEnded?.()
     source.start(when)
     return () => source.stop()
