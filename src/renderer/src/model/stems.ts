@@ -22,8 +22,13 @@ export function stemName(track: Track, index: number): string {
   return track.stem?.trim() || track.name.trim() || `Track ${index + 1}`
 }
 
-/** The prefix of the exported files: "Title" or "Title - Section". The mix is saved as it. */
-const filePrefix = (song: Song, rangeName: string | null): string => [song.title.trim() || 'Song', rangeName].filter(Boolean).join(' - ')
+/** The prefix of the exported files: "Title" or "Title - Section". The mix (and the beat map) are saved as it. */
+export const exportFilePrefix = (song: Song, rangeName: string | null): string => [song.title.trim() || 'Song', rangeName].filter(Boolean).join(' - ')
+
+/** The mix's file name next to stems or a beat map: "Title.wav" or "Title - Section.wav". */
+export function mixFileName(song: Song, rangeName: string | null): string {
+  return uniqueFileNames([exportFilePrefix(song, rangeName)], 'Song', '.wav')[0]
+}
 
 /**
  * The picked tracks as stems: tracks with the same stem name (also only by upper
@@ -36,7 +41,7 @@ export function stemsOf(song: Song, rangeName: string | null, trackIndexes: numb
     const key = stemName(song.tracks[index], index).toLowerCase()
     groups.set(key, [...(groups.get(key) ?? []), index])
   }
-  const prefix = filePrefix(song, rangeName)
+  const prefix = exportFilePrefix(song, rangeName)
   const grouped = [...groups.values()].map((indexes) => ({ name: stemName(song.tracks[indexes[0]], indexes[0]), trackIndexes: indexes }))
   const names = uniqueFileNames([...(withMix ? [prefix] : []), ...grouped.map((stem) => `${prefix} - ${stem.name}`)], 'Stem', '.wav')
   const stems = grouped.map((stem, i) => ({ ...stem, fileName: names[i + (withMix ? 1 : 0)] }))

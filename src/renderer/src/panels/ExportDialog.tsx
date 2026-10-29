@@ -1,9 +1,10 @@
 import { Fragment, useEffect, useState } from 'react'
 import { renderSongOffline } from '../audio/offline'
 import { audioBufferToWav16 } from '../audio/wav'
+import { beatMap, beatMapFileName, beatMapJson } from '../model/beatMap'
 import { sectionRanges, type BarRange } from '../model/edit'
 import { audibleTracks, barCount, type Song } from '../model/song'
-import { stemName, stemsOf, stemSong, tracksWithNotes } from '../model/stems'
+import { mixFileName, stemName, stemsOf, stemSong, tracksWithNotes, type Stem } from '../model/stems'
 import { barSeconds, EXPORT_TAIL_SECONDS, exportFrameCount, type ExportEnding } from '../model/timing'
 import { saveFile, saveFiles, type NamedFile } from '../platform'
 import { readPref, writePref } from '../prefs'
@@ -21,14 +22,15 @@ interface Props {
 
 const RATES = [48000, 44100]
 
-/** Remembered for the next export: the mix or stems, and the mix next to the stems. */
+/** Remembered for the next export: the mix or stems, the mix next to the stems, and a beat map with them. */
 interface Settings {
   stems: boolean
   withMix: boolean
+  withBeatMap: boolean
 }
 
 const SETTINGS_KEY = 'wavExport'
-const DEFAULT_SETTINGS: Settings = { stems: false, withMix: false }
+const DEFAULT_SETTINGS: Settings = { stems: false, withMix: false, withBeatMap: false }
 
 /** WAV export of the whole song, a section or a bar range, as the mix or one file per track (REQUIREMENTS.md EXP-01…05, EXP-09). */
 export function ExportDialog({ song, bars, section, onStemName, onClose }: Props): React.JSX.Element {
@@ -44,7 +46,7 @@ export function ExportDialog({ song, bars, section, onStemName, onClose }: Props
   /** Until chosen by hand: ring out for the whole song, cut (loopable) for parts of it. */
   const [ending, setEnding] = useState<ExportEnding | null>(null)
   const [settings, setSettings] = useState<Settings>(() => ({ ...DEFAULT_SETTINGS, ...readPref<Partial<Settings>>(SETTINGS_KEY, {}) }))
-  const { stems, withMix } = settings
+  const { stems, withMix, withBeatMap } = settings
   const change = (next: Partial<Settings>): void => setSettings((s) => ({ ...s, ...next }))
   /** The tracks picked for stems, by id; until changed by hand: the ones heard in the mix that play in the range. */
   const [picked, setPicked] = useState<Set<string> | null>(null)
@@ -71,8 +73,14 @@ export function ExportDialog({ song, bars, section, onStemName, onClose }: Props
   /** The files of a stem export, with the tracks of stems that join several. */
   const stemFiles = [
     ...(planned.mixFileName ? [{ name: planned.mixFileName, note: 'the mix' }] : []),
-    ...planned.stems.map((stem) => ({ name: stem.fileName, note: stem.trackIndexes.length > 1 ? stem.trackIndexes.map((i) => song.tracks[i].name).join(' + ') : null }))
+    ...planned.stems.map((stem) => ({ name: stem.fileName, note: stem.trackIndexes.length > 1 ? stem.trackIndexes.map((i) => song.tracks[i].name).join(' + ') : null })),
+    ...(withBeatMap ? [{ name: beatMapFileName(song, range.name), note: 'beat map' }] : [])
   ]
+  /** The beat map of the exported files. */
+  const beatMapFile = (mix: string | null, stemList: Stem[]): NamedFile => ({
+    name: beatMapFileName(song, range.name),
+    data: new TextEncoder().encode(beatMapJson(beatMap(song, range, { sampleRate: rate, ending: end, mix, stems: stemList })))
+  })
   const pick = (id: string, on: boolean): void => {
     const next = new Set(pickedIds)
     if (on) next.add(id)
@@ -94,6 +102,14 @@ export function ExportDialog({ song, bars, section, onStemName, onClose }: Props
     try {
       const buffer = await renderSongOffline(song, rate, { range: seconds, ending: end })
       writePref(SETTINGS_KEY, settings)
+      if (withBeatMap) {
+        // The WAV and its beat map belong together: into a folder.
+        const mix = mixFileName(song, range.name)
+        const where = await saveFiles([{ name: mix, data: audioBufferToWav16(buffer) }, beatMapFile(mix, [])])
+        if (where) onClose(`WAV and beat map saved in ${where}.`)
+        else setBusy(null)
+        return
+      }
       const name = range.name ? `${song.title} - ${range.name}` : song.title
       const path = await saveFile(`${name}.wav`, audioBufferToWav16(buffer))
       if (path) onClose(`WAV saved: ${path}`)
@@ -118,11 +134,13 @@ export function ExportDialog({ song, bars, section, onStemName, onClose }: Props
         const buffer = await renderSongOffline(render.song, rate, { range: seconds, ending: end })
         files.push({ name: render.fileName, data: audioBufferToWav16(buffer) })
       }
+      if (withBeatMap) files.push(beatMapFile(planned.mixFileName, planned.stems))
       writePref(SETTINGS_KEY, settings)
       setBusy('Saving…')
       const where = await saveFiles(files)
       const count = planned.stems.length
-      if (where) onClose(`${count} ${count === 1 ? 'stem' : 'stems'}${planned.mixFileName ? ' and the mix' : ''} saved as WAV in ${where}.`)
+      const saved = [`${count} ${count === 1 ? 'stem' : 'stems'}`, ...(planned.mixFileName ? ['the mix'] : []), ...(withBeatMap ? ['the beat map'] : [])]
+      if (where) onClose(`${saved.length > 1 ? `${saved.slice(0, -1).join(', ')} and ${saved.at(-1)}` : saved[0]} saved in ${where}.`)
       else setBusy(null)
     } catch (e) {
       setError(`WAV export failed: ${e instanceof Error ? e.message : String(e)}`)
@@ -194,6 +212,13 @@ export function ExportDialog({ song, bars, section, onStemName, onClose }: Props
               so exporting again updates them in your game.
             </span>
           </label>
+          <label className="checkbox beat-map-option">
+            <input type="checkbox" checked={withBeatMap} onChange={(e) => change({ withBeatMap: e.target.checked })} />
+            <span>
+              <strong>Also a beat map (JSON)</strong> with the tempo, the time signature and where the sections are, in seconds and bars, for game scripts that follow
+              the music (e.g. Export → Unity player script).{!stems && ' The WAV and the beat map go into a folder you choose.'}
+            </span>
+          </label>
         </fieldset>
 
         {stems && (
@@ -263,7 +288,17 @@ export function ExportDialog({ song, bars, section, onStemName, onClose }: Props
                   ))}
                 </>
               )
-            : silent.length > 0 && <> · Muted, left out: {silent.join(', ')}</>}
+            : (
+                <>
+                  {silent.length > 0 && <> · Muted, left out: {silent.join(', ')}</>}
+                  {withBeatMap && (
+                    <>
+                      {' '}
+                      · Files: <span className="stem-file">{mixFileName(song, range.name)}</span>, <span className="stem-file">{beatMapFileName(song, range.name)}</span> (beat map)
+                    </>
+                  )}
+                </>
+              )}
         </p>
         {error && <p className="warning dialog-error">{error}</p>}
 

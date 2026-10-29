@@ -186,6 +186,8 @@ async function runSmokeTest(win: BrowserWindow): Promise<void> {
     }
     const mixBox = stemDialog?.querySelector('.stem-mix input')
     if (mixBox && !mixBox.checked) mixBox.click()
+    const beatMapBox = stemDialog?.querySelector('.beat-map-option input')
+    if (beatMapBox && !beatMapBox.checked) beatMapBox.click()
     await sleep(200)
     const stems = {
       tracks: stemRows.length,
@@ -197,6 +199,12 @@ async function runSmokeTest(win: BrowserWindow): Promise<void> {
     stems.message = document.querySelector('.status-bar .status')?.textContent ?? null
     if (wavExportPref === null) localStorage.removeItem('wavExport')
     else localStorage.setItem('wavExport', wavExportPref)
+
+    // The Unity script that plays the stems.
+    document.querySelector('.editor-header .menu-button[title="Export"]')?.click()
+    await sleep(200)
+    ;[...document.querySelectorAll('.menu-list [role=menuitem]')].find((item) => item.textContent.startsWith('Unity player script'))?.click()
+    await sleep(500)
 
     // A drum track with a starter pattern from the drum grid.
     button('+ Drums')?.click()
@@ -381,12 +389,24 @@ async function runSmokeTest(win: BrowserWindow): Promise<void> {
   if (pdf) await writeFile(pdfFile, pdf)
   result.pageView.pdf = pdf ? { file: pdfFile, bytes: pdf.length, header: pdf.subarray(0, 5).toString('latin1'), pages: pdf.toString('latin1').match(/\/Type\s*\/Page\b(?!s)/g)?.length ?? 0 } : null
   // The stems: the mix and one stereo WAV file per stem (the first two picked tracks share one), all the same length.
-  const stemWavs = (result.stems.files as string[]).map((name) => {
+  const stemWavs = (result.stems.files as string[]).filter((name) => name.endsWith('.wav')).map((name) => {
     const data = saved.find((file) => file.name === name)?.data
     return data ? { name, header: data.subarray(0, 4).toString('latin1'), channels: data.readUInt16LE(22), bytes: data.readUInt32LE(40) } : null
   })
   result.stems.wavs = stemWavs
+  // The beat map next to them: the song's tempo, and the mix and stems it lists.
+  const beatMapName = (result.stems.files as string[]).find((name) => name.endsWith('.json'))
+  const beatMapData = saved.find((file) => file.name === beatMapName)?.data
+  const beatMap = beatMapData ? JSON.parse(beatMapData.toString('utf8')) : null
+  result.stems.beatMap = beatMap && { tempo: beatMap.tempo, bars: beatMap.bars, samples: beatMap.samples, mix: beatMap.mix, stems: beatMap.stems.length, sections: beatMap.sections.length }
+  const unityScript = saved.find((file) => file.name === 'GameMusicPlayer.cs')?.data.toString('utf8') ?? ''
+  result.unityScript = unityScript.includes('public class GameMusicPlayer : MonoBehaviour') && unityScript.includes('public class BeatMapData')
   const stemsOk =
+    result.unityScript &&
+    beatMap?.format === 'GameMusicApp beat map' &&
+    beatMap.mix === stemWavs[0]?.name &&
+    beatMap.stems.length === stemWavs.length - 1 &&
+    beatMap.samples * 4 === stemWavs[0]?.bytes &&
     result.stems.picked > 0 &&
     stemWavs.length === 1 + Math.max(1, result.stems.picked - 1) &&
     stemWavs.every((wav) => wav?.header === 'RIFF' && wav.channels === 2 && wav.bytes > 0 && wav.bytes === stemWavs[0]?.bytes)

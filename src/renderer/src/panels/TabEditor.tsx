@@ -29,6 +29,7 @@ import { barSeconds, buildTimeline } from '../model/timing'
 import { retuneTrack, tuningLabel, type Retune } from '../model/tuning'
 import { saveFile } from '../platform'
 import { scorePdf } from '../score/pdf'
+import gameMusicPlayerScript from '../../../../unity/GameMusicPlayer.cs?raw'
 import type { HeaderSlots } from '../pages/EditorPage'
 import { MAIN_VIEWS, showTrack, shownTracks, type MainView } from '../project/layout'
 import type { Project } from '../project/useProject'
@@ -502,6 +503,12 @@ export function TabEditor({ project, getEngine, headerSlots, onShowShortcuts }: 
     setMessage(`${song.tracks[index].name}: ${tuningLabel({ tuning, capo })}.${moved}${changed}`)
   }
 
+  /** The Unity script that plays exported stems (unity/GameMusicPlayer.cs in the repository). */
+  const exportUnityScript = async (): Promise<void> => {
+    const path = await saveFile('GameMusicPlayer.cs', new TextEncoder().encode(gameMusicPlayerScript))
+    setMessage(path ? `Unity script saved: ${path}. Put it into your Assets folder, add it to a GameObject and drag the stems into it.` : '')
+  }
+
   /** The score as in the page view: the tracks shown, with the staves shown. */
   const exportPdf = async (): Promise<void> => {
     setMessage('Making the PDF…')
@@ -658,6 +665,12 @@ export function TabEditor({ project, getEngine, headerSlots, onShowShortcuts }: 
                     stop()
                     setEffectExport(true)
                   }
+                },
+                'separator',
+                {
+                  label: 'Unity player script (C#)…',
+                  title: 'GameMusicPlayer.cs: plays exported stems in sync in Unity, fades layers in and out, and follows the beat map',
+                  onSelect: () => void exportUnityScript()
                 }
               ]}
             />

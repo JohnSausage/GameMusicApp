@@ -1,7 +1,9 @@
 import { Midi } from '@tonejs/midi'
+import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { songToMidi } from '../src/renderer/src/audio/midiExport'
 import { encodeWav16 } from '../src/renderer/src/audio/wav'
+import { beatMap, beatMapFileName, beatMapJson } from '../src/renderer/src/model/beatMap'
 import { emptyBar, type Cursor } from '../src/renderer/src/model/edit'
 import { audibleTracks, createDemoSong, createTrack, type Song } from '../src/renderer/src/model/song'
 import { setStemName, stemName, stemsOf, stemSong, tracksWithNotes } from '../src/renderer/src/model/stems'
@@ -108,5 +110,83 @@ describe('stems', () => {
     const odd = structuredClone(song)
     ;(odd.tracks[1] as { stem: unknown }).stem = 7
     expect(parseProject(serializeProject(odd)).song.tracks[1].stem).toBeUndefined()
+  })
+})
+
+describe('beat map', () => {
+  /** The demo song (4 bars of 2 s at 120 BPM) as an intro of 1 bar and a loop of 3. */
+  const withSections = (): Song => ({
+    ...createDemoSong(),
+    sections: [
+      { bar: 0, name: 'Intro' },
+      { bar: 1, name: 'Loop' }
+    ]
+  })
+
+  it('has the tempo, the beat and where the sections are, in seconds and bars', () => {
+    const song = withSections()
+    const map = beatMap(song, { start: 0, end: 4, name: null }, { sampleRate: 48000, ending: 'cut', mix: 'Demo song.wav', stems: [] })
+    expect(map).toMatchObject({
+      format: 'GameMusicApp beat map',
+      version: 1,
+      title: 'Demo song',
+      range: null,
+      firstBar: 1,
+      tempo: 120,
+      timeSignature: [4, 4],
+      beatsPerBar: 4,
+      secondsPerBeat: 0.5,
+      secondsPerBar: 2,
+      bars: 4,
+      seconds: 8,
+      loops: true,
+      tailSeconds: 0,
+      sampleRate: 48000,
+      samples: 384000,
+      mix: 'Demo song.wav',
+      stems: []
+    })
+    expect(map.sections).toEqual([
+      { name: 'Intro', bar: 0, bars: 1, start: 0, end: 2 },
+      { name: 'Loop', bar: 1, bars: 3, start: 2, end: 8 }
+    ])
+  })
+
+  it('counts from the first exported bar, and knows the ring-out and the stems', () => {
+    const song = withSections()
+    const { stems } = stemsOf(song, 'bars 1-2', [0, 1])
+    const map = beatMap(song, { start: 0, end: 2, name: 'bars 1-2' }, { sampleRate: 44100, ending: 'tail', mix: null, stems })
+    expect(map).toMatchObject({ range: 'bars 1-2', bars: 2, seconds: 4, loops: false, tailSeconds: 1.5, samples: Math.round(5.5 * 44100) })
+    expect(map.stems).toEqual([
+      { file: 'Demo song - bars 1-2 - Acoustic guitar.wav', name: 'Acoustic guitar', tracks: ['Acoustic guitar'] },
+      { file: 'Demo song - bars 1-2 - Bass.wav', name: 'Bass', tracks: ['Bass'] }
+    ])
+    // A range starting inside a section: it starts at bar 0 of the files.
+    const later = beatMap(song, { start: 2, end: 4, name: 'bars 3-4' }, { sampleRate: 48000, ending: 'cut', mix: null, stems: [] })
+    expect(later.firstBar).toBe(3)
+    expect(later.sections).toEqual([{ name: 'Loop', bar: 0, bars: 2, start: 0, end: 4 }])
+    expect(beatMapFileName(song, 'bars 3-4')).toBe('Demo song - bars 3-4.json')
+  })
+
+  it('counts beats in the time signature: eighths in 6/8', () => {
+    const song: Song = { ...withSections(), tempo: 90, timeSignature: [6, 8] }
+    const map = beatMap(song, { start: 0, end: 1, name: null }, { sampleRate: 48000, ending: 'cut', mix: null, stems: [] })
+    // A 6/8 bar is three quarters: 2 s at 90 quarters a minute, six beats of 1/3 s.
+    expect(map).toMatchObject({ beatsPerBar: 6, secondsPerBar: 2, secondsPerBeat: 0.333333 })
+    expect(JSON.parse(beatMapJson(map))).toEqual(map)
+  })
+
+  it('has the fields the Unity script reads', () => {
+    const script = readFileSync(new URL('../unity/GameMusicPlayer.cs', import.meta.url), 'utf8')
+    /** The public fields of a class in the script, up to its first nested class. */
+    const fields = (name: string): string[] => {
+      const body = script.slice(script.indexOf(`public class ${name}`)).split(/\n\s*\[Serializable\]/)[0]
+      return [...body.matchAll(/public [\w[\]]+ (\w+);/g)].map((m) => m[1]).sort()
+    }
+    const song = withSections()
+    const map = beatMap(song, { start: 0, end: 4, name: null }, { sampleRate: 48000, ending: 'cut', mix: null, stems: stemsOf(song, null, [0]).stems })
+    expect(fields('BeatMapData')).toEqual(Object.keys(map).sort())
+    expect(fields('SectionData')).toEqual(Object.keys(map.sections[0]).sort())
+    expect(fields('StemData')).toEqual(Object.keys(map.stems[0]).sort())
   })
 })
