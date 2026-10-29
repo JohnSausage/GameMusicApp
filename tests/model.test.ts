@@ -28,6 +28,16 @@ describe('buildTimeline', () => {
     expect(chordNotes.map((n) => n.pitch).sort()).toEqual([40, 47, 52, 55])
   })
 
+  it('plays triplets in 2/3 of their value', () => {
+    const triplets = createDemoSong()
+    triplets.tracks[0].bars[0].beats.splice(0, 2, ...[0, 2, 3].map((fret) => ({ value: 8 as const, dotted: false, triplet: true, notes: [{ string: 2, fret, velocity: 96 }] })))
+    // Three triplet eighths take the time of two eighths (0.5 s at 120 BPM).
+    const guitar = buildTimeline(triplets).notes.filter((n) => n.trackIndex === 0)
+    expect(guitar.slice(0, 3).map((n) => n.start)).toEqual([0, 1 / 6, 1 / 3].map((t) => expect.closeTo(t)))
+    expect(guitar[0].duration).toBeCloseTo(1 / 6)
+    expect(guitar[3].start).toBeCloseTo(0.5)
+  })
+
   it('finds the beat at a given time', () => {
     expect(beatAt(timeline, 0, 0.3)).toMatchObject({ barIndex: 0, beatIndex: 1 })
     expect(beatAt(timeline, 1, 7.5)).toMatchObject({ barIndex: 3, beatIndex: 2 })

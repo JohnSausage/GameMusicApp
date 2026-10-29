@@ -34,6 +34,8 @@ export interface Cursor {
 export interface Duration {
   value: NoteValue
   dotted: boolean
+  /** Three in the time of two (see Beat.triplet). */
+  triplet?: boolean
 }
 
 export interface EditResult {
@@ -42,7 +44,8 @@ export interface EditResult {
 }
 
 export function beatTicks(beat: Duration): number {
-  return ((TICKS_PER_QUARTER * 4) / beat.value) * (beat.dotted ? 1.5 : 1)
+  const ticks = ((TICKS_PER_QUARTER * 4) / beat.value) * (beat.dotted ? 1.5 : 1)
+  return beat.triplet ? (ticks * 2) / 3 : ticks
 }
 
 export function barTicks(song: Song): number {
@@ -50,24 +53,95 @@ export function barTicks(song: Song): number {
   return (beats * TICKS_PER_QUARTER * 4) / unit
 }
 
-const REST_OPTIONS = NOTE_VALUES.flatMap((value) => [
-  { value, dotted: true },
-  { value, dotted: false }
-])
-  .map((d) => ({ ...d, ticks: beatTicks(d) }))
-  .sort((a, b) => b.ticks - a.ticks)
+const byLength = (options: Duration[]): (Duration & { ticks: number })[] => options.map((d) => ({ ...d, ticks: beatTicks(d) })).sort((a, b) => b.ticks - a.ticks)
+const STRAIGHT_RESTS = byLength(NOTE_VALUES.flatMap((value) => [{ value, dotted: true }, { value, dotted: false }]))
+const ALL_RESTS = byLength([...STRAIGHT_RESTS, ...NOTE_VALUES.map((value) => ({ value, dotted: false, triplet: true }))])
 
-/** Rest beats that fill `ticks`, largest values first. */
-export function restsFor(ticks: number): Beat[] {
+const restOf = ({ value, dotted, triplet }: Duration): Beat => ({ value, dotted, ...(triplet && { triplet: true }), notes: [] })
+
+/** Rests from `options` that fill `ticks` exactly, largest first; null if they can't. */
+function fill(ticks: number, options: (Duration & { ticks: number })[]): Beat[] | null {
+  if (ticks < 0) return null
   const beats: Beat[] = []
   let remaining = ticks
   while (remaining > 0) {
-    const option = REST_OPTIONS.find((o) => o.ticks <= remaining)
-    if (!option) break
-    beats.push({ value: option.value, dotted: option.dotted, notes: [] })
+    const option = options.find((o) => o.ticks <= remaining)
+    if (!option) return null
+    beats.push(restOf(option))
     remaining -= option.ticks
   }
   return beats
+}
+
+/** True when `ticks` can be filled without triplets: a point on the straight grid, after any triplet group is complete. */
+export const onGrid = (ticks: number): boolean => fill(ticks, STRAIGHT_RESTS) !== null
+
+/** One or two triplet rests of `value` (completing a group of three) and straight rests after them that fill `ticks`; null if that doesn't fit. */
+function tripletRests(ticks: number, value: NoteValue): Beat[] | null {
+  for (const count of [1, 2]) {
+    const after = fill(ticks - count * beatTicks({ value, dotted: false, triplet: true }), STRAIGHT_RESTS)
+    if (after) return [...Array.from({ length: count }, () => restOf({ value, dotted: false, triplet: true })), ...after]
+  }
+  return null
+}
+
+/**
+ * Rest beats that fill `ticks`, largest values first. After a triplet (off the
+ * straight grid), triplet rests come first to complete its group: of the value
+ * `triplet` if they can, e.g. two triplet eighth rests after a triplet eighth.
+ */
+export function restsFor(ticks: number, triplet?: NoteValue): Beat[] {
+  const straight = fill(ticks, STRAIGHT_RESTS)
+  if (straight) return straight
+  for (const value of triplet ? [triplet, ...NOTE_VALUES] : NOTE_VALUES) {
+    const rests = tripletRests(ticks, value)
+    if (rests) return rests
+  }
+  // Odd lengths: as much as fits.
+  const beats: Beat[] = []
+  let remaining = ticks
+  for (let option = ALL_RESTS.find((o) => o.ticks <= remaining); option; option = ALL_RESTS.find((o) => o.ticks <= remaining)) {
+    beats.push(restOf(option))
+    remaining -= option.ticks
+  }
+  return beats
+}
+
+/**
+ * Puts rests for `gap` ticks at beats[at]. After a triplet of value `triplet`,
+ * rests right after give up time when needed, so its group is completed with
+ * rests of its value (a triplet eighth on a quarter rest: two triplet eighth
+ * rests) rather than an odd shorter one.
+ */
+function insertRests(beats: Beat[], at: number, gap: number, triplet?: NoteValue): void {
+  let end = at
+  let ticks = gap
+  if (triplet !== undefined && !onGrid(gap)) {
+    let next = at
+    let total = gap
+    while (!tripletRests(total, triplet) && beats[next]?.notes.length === 0) total += beatTicks(beats[next++])
+    if (tripletRests(total, triplet)) {
+      end = next
+      ticks = total
+    }
+  }
+  beats.splice(at, end - at, ...restsFor(ticks, triplet))
+}
+
+/** The beat with another length; its notes stay. */
+function withDuration(beat: Beat, { value, dotted, triplet }: Duration): Beat {
+  const { triplet: _, ...rest } = beat
+  return { ...rest, value, dotted, ...(triplet && { triplet: true }) }
+}
+
+const tripletValue = (d: Duration): NoteValue | undefined => (d.triplet ? d.value : undefined)
+
+/** Triplet rests of `value` that complete a group ending at `position` (ticks into the bar) off the straight grid; none on it. */
+function completeGroup(position: number, value: NoteValue): Beat[] {
+  if (onGrid(position)) return []
+  const rest = { value, dotted: false, triplet: true }
+  for (const count of [1, 2]) if (onGrid(position + count * beatTicks(rest))) return Array.from({ length: count }, () => restOf(rest))
+  return []
 }
 
 export function emptyBar(song: Song): Bar {
@@ -112,13 +186,12 @@ export function setFret(song: Song, cursor: Cursor, fret: number, duration: Dura
   if (fret < 0 || fret > MAX_FRET) return null
   return edit(song, cursor, (draft, c) => {
     const beats = draft.tracks[c.track].bars[c.bar].beats
-    const beat = beats[c.beat]
-    if (beat.notes.length === 0 && beatTicks(beat) > beatTicks(duration)) {
-      const rest = beatTicks(beat) - beatTicks(duration)
-      beat.value = duration.value
-      beat.dotted = duration.dotted
-      beats.splice(c.beat + 1, 0, ...restsFor(rest))
+    if (beats[c.beat].notes.length === 0 && beatTicks(beats[c.beat]) > beatTicks(duration)) {
+      const rest = beatTicks(beats[c.beat]) - beatTicks(duration)
+      beats[c.beat] = withDuration(beats[c.beat], duration)
+      insertRests(beats, c.beat + 1, rest, tripletValue(duration))
     }
+    const beat = beats[c.beat]
     // A new fret is played again (no longer held), but keeps a hammer-on or slide into the next note.
     const old = beat.notes.find((n) => n.string === c.string)
     beat.notes = beat.notes.filter((n) => n.string !== c.string)
@@ -179,9 +252,9 @@ export function deleteBeat(song: Song, cursor: Cursor): EditResult | null {
 }
 
 /**
- * Changes a beat's length (EDIT-02). Shorter: the gap is filled with rests.
- * Longer: the following beats give up their time; returns null if the bar
- * doesn't have enough room left.
+ * Changes a beat's length (EDIT-02). Shorter: the gap is filled with rests
+ * (after a triplet, completing its group). Longer: the following beats give up
+ * their time; returns null if the bar doesn't have enough room left.
  */
 export function setDuration(song: Song, cursor: Cursor, duration: Duration): EditResult | null {
   const beats = song.tracks[cursor.track].bars[cursor.bar].beats
@@ -193,11 +266,9 @@ export function setDuration(song: Song, cursor: Cursor, duration: Duration): Edi
 
   return edit(song, cursor, (draft, c) => {
     const bar = draft.tracks[c.track].bars[c.bar]
-    const beat = bar.beats[c.beat]
-    beat.value = duration.value
-    beat.dotted = duration.dotted
+    bar.beats[c.beat] = withDuration(bar.beats[c.beat], duration)
     if (newTicks < oldTicks) {
-      bar.beats.splice(c.beat + 1, 0, ...restsFor(oldTicks - newTicks))
+      insertRests(bar.beats, c.beat + 1, oldTicks - newTicks, tripletValue(duration))
       return
     }
     let extra = newTicks - oldTicks
@@ -207,6 +278,15 @@ export function setDuration(song: Song, cursor: Cursor, duration: Duration): Edi
       if (ticks <= extra) {
         bar.beats.splice(c.beat + 1, 1)
         extra -= ticks
+      } else if (next.notes.length === 0) {
+        // A rest gets shorter. Off the straight grid (what is left of a triplet
+        // group), the rests after it join in, so they become straight ones again.
+        let end = c.beat + 2
+        let left = ticks - extra
+        while (!onGrid(left) && bar.beats[end]?.notes.length === 0) left += beatTicks(bar.beats[end++])
+        if (!onGrid(left)) [end, left] = [c.beat + 2, ticks - extra]
+        bar.beats.splice(c.beat + 1, end - c.beat - 1, ...restsFor(left))
+        extra = 0
       } else {
         // The next beat starts later and gets shorter; it keeps its notes.
         const remainder = restsFor(ticks - extra)
@@ -223,12 +303,19 @@ export function stepDuration(song: Song, cursor: Cursor, direction: 'shorter' | 
   const beat = beatAt(song, cursor)
   const index = NOTE_VALUES.indexOf(beat.value) + (direction === 'shorter' ? 1 : -1)
   if (index < 0 || index >= NOTE_VALUES.length) return null
-  return setDuration(song, cursor, { value: NOTE_VALUES[index], dotted: beat.dotted })
+  return setDuration(song, cursor, { value: NOTE_VALUES[index], dotted: beat.dotted, triplet: beat.triplet })
 }
 
+/** Dotted on or off; a dotted note is no triplet. */
 export function toggleDotted(song: Song, cursor: Cursor): EditResult | null {
   const beat = beatAt(song, cursor)
   return setDuration(song, cursor, { value: beat.value, dotted: !beat.dotted })
+}
+
+/** Triplet on or off (EDIT-02); a triplet is not dotted. */
+export function toggleTriplet(song: Song, cursor: Cursor): EditResult | null {
+  const beat = beatAt(song, cursor)
+  return setDuration(song, cursor, { value: beat.value, dotted: false, triplet: !beat.triplet })
 }
 
 // ---------------------------------------------------------------- bars
@@ -369,7 +456,8 @@ function withoutTrailingRests(beats: Beat[]): Beat[] {
 
 /**
  * Gives every selected beat a new length (each keeps its notes). The rest of
- * each bar moves along; rests at the end of the bar absorb the difference.
+ * each bar moves along; rests at the end of the bar absorb the difference. A
+ * triplet group the selection leaves incomplete is completed with rests.
  * Returns null if a bar would overflow, so no notes are ever pushed out.
  */
 export function setSelectionDuration(song: Song, cursor: Cursor, sel: Selection, change: (beat: Beat) => Duration): EditResult | null {
@@ -377,8 +465,10 @@ export function setSelectionDuration(song: Song, cursor: Cursor, sel: Selection,
   const T = barTicks(draft)
   for (const { bar, from, to } of selectedRanges(draft, sel)) {
     const target = draft.tracks[sel.track].bars[bar]
-    const head = [...target.beats.slice(0, from), ...target.beats.slice(from, to + 1).map((b) => ({ ...b, ...change(b) }))]
+    const head = [...target.beats.slice(0, from), ...target.beats.slice(from, to + 1).map((b) => withDuration(b, change(b)))]
     const tail = withoutTrailingRests(target.beats.slice(to + 1))
+    const last = head[head.length - 1]
+    if (last.triplet && !tail[0]?.triplet) head.push(...completeGroup(ticksOf(head), last.value))
     const used = ticksOf(head) + ticksOf(tail)
     if (used > T) return null
     target.beats = [...head, ...tail, ...restsFor(T - used)]

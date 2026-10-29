@@ -396,6 +396,13 @@ export function ScoreEditor(props: Props): React.JSX.Element {
     changeLength((b) => ({ value: b.value, dotted }))
   }
 
+  /** Triplets on or off for the selection or the beat; notes typed next onto rests are triplets too (or not). */
+  const toggleTriplets = (): void => {
+    const triplet = !(selection ? selectionBeats(song, selection).every((b) => b.triplet) : beat.triplet)
+    setEntryDuration((d) => ({ value: selection ? d.value : beat.value, dotted: false, triplet }))
+    changeLength((b) => ({ value: b.value, dotted: false, triplet }))
+  }
+
   const stepLength = (direction: 'shorter' | 'longer'): void => {
     if (!selection) {
       edit(stepDuration(song, cursor, direction), NO_ROOM)
@@ -403,7 +410,7 @@ export function ScoreEditor(props: Props): React.JSX.Element {
     }
     changeLength((b) => {
       const index = NOTE_VALUES.indexOf(b.value) + (direction === 'shorter' ? 1 : -1)
-      return { value: NOTE_VALUES[Math.min(NOTE_VALUES.length - 1, Math.max(0, index))], dotted: b.dotted }
+      return { value: NOTE_VALUES[Math.min(NOTE_VALUES.length - 1, Math.max(0, index))], dotted: b.dotted, triplet: b.triplet }
     })
   }
 
@@ -511,6 +518,7 @@ export function ScoreEditor(props: Props): React.JSX.Element {
     else if (key === '+' || key === '=') stepLength('longer')
     else if (key === '-') stepLength('shorter')
     else if (key === '.') toggleDots()
+    else if (key === '/' && !ctrl) toggleTriplets()
     else if (key.toLowerCase() === 'r' && !ctrl) selection ? removeSelection(false) : edit(clearBeat(song, cursor))
     else if (key.toLowerCase() === 't' && !ctrl && !drums) tie()
     else if (key.toLowerCase() === 'h' && !ctrl && fretted) legato('hammer')
@@ -593,6 +601,9 @@ export function ScoreEditor(props: Props): React.JSX.Element {
         <div className="segmented">
           <button className={beat.dotted ? 'active' : ''} title="Dotted (.); works on all selected beats" onClick={toggleDots}>
             Dotted
+          </button>
+          <button className={beat.triplet ? 'active' : ''} title="Triplet (/): three notes in the time of two; works on all selected beats" onClick={toggleTriplets}>
+            Triplet
           </button>
           <button title="Make this beat a rest (R)" onClick={() => edit(clearBeat(song, cursor))}>
             Rest

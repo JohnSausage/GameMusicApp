@@ -31,6 +31,7 @@ import {
   setSection,
   stepDuration,
   toggleDotted,
+  toggleTriplet,
   updateTake,
   writeBars,
   type Cursor
@@ -51,7 +52,7 @@ function expectFullBars(song: Song): void {
   }
 }
 
-const shape = (bar: Bar): string[] => bar.beats.map((b) => `${b.value}${b.dotted ? '.' : ''}${b.notes.length ? ':' + b.notes.map((n) => `${n.string}/${n.fret}`).join('+') : ''}`)
+const shape = (bar: Bar): string[] => bar.beats.map((b) => `${b.value}${b.dotted ? '.' : ''}${b.triplet ? 't' : ''}${b.notes.length ? ':' + b.notes.map((n) => `${n.string}/${n.fret}`).join('+') : ''}`)
 
 describe('createSong / restsFor', () => {
   it('fills new bars with rests that match the time signature', () => {
@@ -376,5 +377,89 @@ describe('selections', () => {
     const result = pasteBeats(song(), { ...start, bar: 1, beat: 1 }, copied)!
     expect(shape(result.song.tracks[0].bars[1])).toEqual(['4:1/5', '4:1/5', '2'])
     expect(result.cursor).toMatchObject({ bar: 1, beat: 1 })
+  })
+})
+
+describe('triplets', () => {
+  const T8 = { value: 8, dotted: false, triplet: true } as const
+  /** An eighth note, then rests: an eighth, a quarter, a half. */
+  const eighthThenRests = (fret: number): Bar => ({
+    beats: [
+      { value: 8, dotted: false, notes: [{ string: 1, fret, velocity: 96 }] },
+      { value: 8, dotted: false, notes: [] },
+      { value: 4, dotted: false, notes: [] },
+      { value: 2, dotted: false, notes: [] }
+    ]
+  })
+  const values = (beats: { value: number; dotted: boolean; triplet?: boolean }[]): string[] => beats.map((b) => `${b.value}${b.dotted ? '.' : ''}${b.triplet ? 't' : ''}`)
+
+  it('last 2/3 of their value', () => {
+    expect(beatTicks(T8)).toBe(320)
+    expect(beatTicks({ value: 4, dotted: false, triplet: true })).toBe(640)
+    expect(beatTicks({ value: 32, dotted: false, triplet: true })).toBe(80)
+  })
+
+  it('get rests that complete their group, of their value when that fits', () => {
+    expect(values(restsFor(640, 8))).toEqual(['8t', '8t'])
+    expect(values(restsFor(3520, 8))).toEqual(['8t', '8t', '2.'])
+    expect(values(restsFor(640))).toEqual(['4t'])
+    expect(values(restsFor(160))).toEqual(['16t'])
+    // On the straight grid, no triplet rests.
+    expect(values(restsFor(1440, 8))).toEqual(['4.'])
+  })
+
+  it('are typed onto a rest as a group: the note, then two triplet rests', () => {
+    let song = setFret(newSong(), start, 5, T8)!.song
+    expect(shape(song.tracks[0].bars[0])).toEqual(['8t:1/5', '8t', '8t', '2.'])
+    song = setFret(song, { ...start, beat: 1 }, 7, T8)!.song
+    song = setFret(song, { ...start, beat: 2 }, 8, T8)!.song
+    expect(shape(song.tracks[0].bars[0])).toEqual(['8t:1/5', '8t:1/7', '8t:1/8', '2.'])
+    // On a straight eighth rest, the rests after it give up time for the group.
+    song = newSong()
+    song.tracks[0].bars[0] = eighthThenRests(0)
+    song = setFret(song, { ...start, beat: 1 }, 3, T8)!.song
+    expect(shape(song.tracks[0].bars[0])).toEqual(['8:1/0', '8t:1/3', '8t', '8t', '8', '2'])
+    expectFullBars(song)
+  })
+
+  it('toggle on and off, taking the rests after along', () => {
+    const song = newSong()
+    song.tracks[0].bars[0] = eighthThenRests(5)
+    const on = toggleTriplet(song, start)!.song
+    expect(shape(on.tracks[0].bars[0])).toEqual(['8t:1/5', '8t', '8t', '4', '2'])
+    expectFullBars(on)
+    const off = toggleTriplet(on, start)!.song
+    expect(shape(off.tracks[0].bars[0])).toEqual(['8:1/5', '8', '4', '2'])
+    expectFullBars(off)
+  })
+
+  it('stay triplets when stepped shorter or longer; a dotted note is no triplet', () => {
+    const song = setFret(newSong(), start, 5, T8)!.song
+    expect(shape(stepDuration(song, start, 'shorter')!.song.tracks[0].bars[0])[0]).toBe('16t:1/5')
+    expect(shape(stepDuration(song, start, 'longer')!.song.tracks[0].bars[0])[0]).toBe('4t:1/5')
+    const dotted = toggleDotted(song, start)!.song
+    expect(shape(dotted.tracks[0].bars[0])[0]).toBe('8.:1/5')
+    expectFullBars(dotted)
+  })
+
+  it('are made from selected notes; a group left incomplete gets a rest', () => {
+    const song = newSong()
+    const eighth = (fret: number) => ({ value: 8 as const, dotted: false, notes: [{ string: 1, fret, velocity: 96 }] })
+    song.tracks[0].bars[0] = { beats: [eighth(1), eighth(2), eighth(3), eighth(4), { value: 2, dotted: false, notes: [] }] }
+    const toTriplets = () => ({ value: 8 as const, dotted: false, triplet: true })
+    const three = setSelectionDuration(song, start, selectionBetween(0, { bar: 0, beat: 0 }, { bar: 0, beat: 2 }), toTriplets)!.song
+    expect(shape(three.tracks[0].bars[0])).toEqual(['8t:1/1', '8t:1/2', '8t:1/3', '8:1/4', '2', '8'])
+    const two = setSelectionDuration(song, start, selectionBetween(0, { bar: 0, beat: 0 }, { bar: 0, beat: 1 }), toTriplets)!.song
+    expect(shape(two.tracks[0].bars[0])).toEqual(['8t:1/1', '8t:1/2', '8t', '8:1/3', '8:1/4', '2'])
+    expectFullBars(three)
+    expectFullBars(two)
+  })
+
+  it('are pasted as triplets', () => {
+    const song = setFret(newSong(), start, 5, T8)!.song
+    const copied = selectionBeats(song, selectionBetween(0, { bar: 0, beat: 0 }, { bar: 0, beat: 2 }))
+    const pasted = pasteBeats(song, { ...start, bar: 1 }, copied)!.song
+    expect(shape(pasted.tracks[0].bars[1])).toEqual(['8t:1/5', '8t', '8t', '2.'])
+    expectFullBars(pasted)
   })
 })

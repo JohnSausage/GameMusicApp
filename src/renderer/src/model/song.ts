@@ -24,6 +24,8 @@ export interface Note {
 export interface Beat {
   value: NoteValue
   dotted: boolean
+  /** Three in the time of two (EDIT-02): the beat lasts 2/3 of its value, e.g. three triplet eighths in a quarter. */
+  triplet?: boolean
   /** Empty = rest. */
   notes: Note[]
 }
@@ -245,8 +247,9 @@ export function notePitch(track: Track, note: Note): number {
 }
 
 /** Length of a beat in quarter notes. */
-export function beatQuarters(beat: Pick<Beat, 'value' | 'dotted'>): number {
-  return (4 / beat.value) * (beat.dotted ? 1.5 : 1)
+export function beatQuarters(beat: Pick<Beat, 'value' | 'dotted' | 'triplet'>): number {
+  const quarters = (4 / beat.value) * (beat.dotted ? 1.5 : 1)
+  return beat.triplet ? (quarters * 2) / 3 : quarters
 }
 
 /** Which tracks are heard: not muted, and soloed if any track is soloed. */

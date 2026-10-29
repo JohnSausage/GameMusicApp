@@ -89,6 +89,10 @@ describe('project file', () => {
     badNote.tracks[0].bars[0].beats[0].notes[0].string = 9
     expect(() => parseProject(zipJson({ app: 'GameMusicApp', formatVersion: 1, song: badNote }))).toThrow('track 1, bar 1 has an invalid note')
 
+    const badTriplet = createDemoSong()
+    ;(badTriplet.tracks[1].bars[2].beats[0] as { triplet?: unknown }).triplet = 'yes'
+    expect(() => parseProject(zipJson({ app: 'GameMusicApp', formatVersion: 1, song: badTriplet }))).toThrow('track 2, bar 3 has an invalid beat')
+
     const badTake = { ...createDemoSong(), takes: [{ ...take('x'), id: '../evil' }] }
     expect(() => parseProject(zipJson({ app: 'GameMusicApp', formatVersion: 2, song: badTake }))).toThrow('a take has no valid id or name')
 

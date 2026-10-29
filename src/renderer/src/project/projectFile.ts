@@ -125,7 +125,7 @@ function checkBars(bars: Bar[], track: Track, where: string): void {
   bars.forEach((bar, b) => {
     if (!Array.isArray(bar.beats) || bar.beats.length === 0) fail(`${where}, bar ${b + 1} has no beats`)
     for (const beat of bar.beats) {
-      if (!NOTE_VALUES.includes(beat.value) || typeof beat.dotted !== 'boolean' || !Array.isArray(beat.notes)) {
+      if (!NOTE_VALUES.includes(beat.value) || typeof beat.dotted !== 'boolean' || (beat.triplet !== undefined && typeof beat.triplet !== 'boolean') || !Array.isArray(beat.notes)) {
         fail(`${where}, bar ${b + 1} has an invalid beat`)
       }
       for (const note of beat.notes) {

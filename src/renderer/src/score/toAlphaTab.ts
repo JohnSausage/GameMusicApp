@@ -113,6 +113,11 @@ export function songToAlphaTab(song: Song, settings: alphaTab.Settings, tabOnly 
         beat.isEmpty = false
         beat.duration = DURATIONS[source.value]
         beat.dots = source.dotted ? 1 : 0
+        // Triplets: three in the time of two; alphaTab draws the bracket with the 3 over each group.
+        if (source.triplet) {
+          beat.tupletNumerator = 3
+          beat.tupletDenominator = 2
+        }
         if (beatIndex === 0) beat.text = partLabels.get(`${trackIndex}:${barIndex}`) ?? null
         for (const n of source.notes) {
           const note = new Note()
