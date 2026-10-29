@@ -2,7 +2,9 @@ import { Midi } from '@tonejs/midi'
 import { describe, expect, it } from 'vitest'
 import { songToMidi } from '../src/renderer/src/audio/midiExport'
 import { encodeWav16 } from '../src/renderer/src/audio/wav'
-import { createDemoSong } from '../src/renderer/src/model/song'
+import { emptyBar } from '../src/renderer/src/model/edit'
+import { audibleTracks, createDemoSong, createTrack, type Song } from '../src/renderer/src/model/song'
+import { stemFileNames, stemSong, tracksWithNotes } from '../src/renderer/src/model/stems'
 
 describe('encodeWav16', () => {
   it('writes a valid 16-bit PCM header and interleaved samples', () => {
@@ -39,5 +41,45 @@ describe('songToMidi', () => {
     expect(midi.tracks[0].notes[0].time).toBeCloseTo(0)
     expect(midi.tracks[0].notes[1].time).toBeCloseTo(0.25)
     expect(midi.duration).toBeCloseTo(8, 1)
+  })
+})
+
+describe('stems', () => {
+  /** The demo song (guitar and bass, 4 bars of 2 s) with an empty drum track. */
+  const withDrums = (): Song => {
+    const song = createDemoSong()
+    return { ...song, tracks: [...song.tracks, createTrack('drums', song.tracks[0].bars.map(() => emptyBar(song)))] }
+  }
+
+  it('are rendered from the song with only their track heard, as it sounds in the mix', () => {
+    const song = withDrums()
+    song.tracks[0] = { ...song.tracks[0], solo: true, volume: 0.5 }
+    song.tracks[1] = { ...song.tracks[1], mute: true }
+    const bass = stemSong(song, 1)
+    expect(audibleTracks(bass)).toEqual([false, true, false])
+    expect(bass.tracks[1]).toMatchObject({ volume: song.tracks[1].volume, pan: song.tracks[1].pan, instrument: song.tracks[1].instrument })
+    expect(stemSong(song, 0).tracks[0].volume).toBe(0.5)
+    // The song itself is left as it is.
+    expect(song.tracks[1].mute).toBe(true)
+    expect(audibleTracks(song)).toEqual([true, false, false])
+  })
+
+  it('know which tracks play in a range', () => {
+    const song = withDrums()
+    expect(tracksWithNotes(song, { start: 0, end: 8 })).toEqual([true, true, false])
+    expect(tracksWithNotes(song, { start: 100, end: 108 })).toEqual([false, false, false])
+  })
+
+  it('are named after the song, the range and the track, safe for files and each its own', () => {
+    const song = withDrums()
+    song.title = 'Boss: Phase 1'
+    song.tracks[1] = { ...song.tracks[1], name: 'Acoustic guitar' }
+    song.tracks[2] = { ...song.tracks[2], name: ' ' }
+    expect(stemFileNames(song, null, [0, 1, 2])).toEqual([
+      'Boss Phase 1 - Acoustic guitar.wav',
+      'Boss Phase 1 - Acoustic guitar 2.wav',
+      'Boss Phase 1 - Track 3.wav'
+    ])
+    expect(stemFileNames(song, 'Chorus', [2])).toEqual(['Boss Phase 1 - Chorus - Track 3.wav'])
   })
 })

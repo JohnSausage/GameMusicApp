@@ -2189,6 +2189,15 @@ button.arr-label:hover:not(:disabled) {
   margin-top: 3px;
 }
 
+/* The tracks to export as stems, side by side. */
+.stem-tracks {
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+}
+
+.stem-tracks label.checkbox {
+  align-items: center;
+}
+
 /* Smaller windows: the top bar keeps to one line with icon-only buttons (their tooltips name them). */
 @media (max-width: 1180px) {
   .editor-header .button-label {

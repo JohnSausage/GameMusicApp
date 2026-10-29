@@ -4,6 +4,7 @@
 // its own tempo. It is edited as a song of its own (effectSong), as a part of the
 // arrangement is, and saved as a WAV file that ends when its sound has faded.
 import { emptyBar, TICKS_PER_QUARTER, type Cursor, type EditResult } from './edit'
+import { uniqueFileNames } from './fileNames'
 import { rollToBars } from './keys'
 import { createTrack, keyRow, newId, type Song, type SoundEffect } from './song'
 import { DEFAULT_PATCH, factoryPreset, varyPatch, type SynthPatch } from './synth'
@@ -271,12 +272,5 @@ export function finishEffectAudio(channels: Float32Array[], sampleRate: number, 
  * two would be the same (also only by upper and lower case, as on Windows and macOS).
  */
 export function effectFileNames(effects: Pick<SoundEffect, 'name'>[]): string[] {
-  const taken = new Set<string>()
-  return effects.map((effect) => {
-    const base = effect.name.replace(/[\\/:*?"<>|\u0000-\u001f]+/g, '').trim().replace(/\.+$/, '') || 'Effect'
-    let name = base
-    for (let n = 2; taken.has(name.toLowerCase()); n++) name = `${base} ${n}`
-    taken.add(name.toLowerCase())
-    return `${name}.wav`
-  })
+  return uniqueFileNames(effects.map((e) => e.name), 'Effect', '.wav')
 }

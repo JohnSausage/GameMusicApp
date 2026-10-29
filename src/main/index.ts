@@ -163,6 +163,26 @@ async function runSmokeTest(win: BrowserWindow): Promise<void> {
     await waitFor(() => /PDF saved|PDF could not/.test(document.querySelector('.status-bar .status')?.textContent ?? ''), 15000)
     pageView.pdfMessage = document.querySelector('.status-bar .status')?.textContent ?? null
 
+    // Stems: Export → WAV…, one file per track (at least one track picked), all the same length.
+    document.querySelector('.editor-header .menu-button[title="Export"]')?.click()
+    await sleep(200)
+    ;[...document.querySelectorAll('.menu-list [role=menuitem]')].find((item) => item.textContent.startsWith('WAV'))?.click()
+    await sleep(300)
+    const stemDialog = document.querySelector('.export-dialog')
+    stemDialog?.querySelectorAll('input[name="files"]')[1]?.click()
+    await sleep(200)
+    const stemBoxes = [...(stemDialog?.querySelectorAll('.stem-tracks input') ?? [])]
+    if (!stemBoxes.some((box) => box.checked)) stemBoxes[0]?.click()
+    await sleep(100)
+    const stems = {
+      tracks: stemBoxes.length,
+      picked: stemBoxes.filter((box) => box.checked).length,
+      files: stemDialog?.querySelector('p.muted')?.textContent.split('Files: ')[1]?.split(', ') ?? []
+    }
+    if (stemDialog) button('Export…', stemDialog)?.click()
+    await waitFor(() => !document.querySelector('.export-dialog'), 30000)
+    stems.message = document.querySelector('.status-bar .status')?.textContent ?? null
+
     // A drum track with a starter pattern from the drum grid.
     button('+ Drums')?.click()
     await sleep(500)
@@ -327,6 +347,7 @@ async function runSmokeTest(win: BrowserWindow): Promise<void> {
       hiddenTrack,
       tuning,
       pageView,
+      stems,
       arrangement,
       effects,
       soundWindow,
@@ -344,6 +365,16 @@ async function runSmokeTest(win: BrowserWindow): Promise<void> {
   const pdfFile = join(app.getPath('temp'), 'GameMusicApp-smoke-test.pdf')
   if (pdf) await writeFile(pdfFile, pdf)
   result.pageView.pdf = pdf ? { file: pdfFile, bytes: pdf.length, header: pdf.subarray(0, 5).toString('latin1'), pages: pdf.toString('latin1').match(/\/Type\s*\/Page\b(?!s)/g)?.length ?? 0 } : null
+  // The stems: one stereo WAV file per picked track, all the same length.
+  const stemWavs = (result.stems.files as string[]).map((name) => {
+    const data = saved.find((file) => file.name === name)?.data
+    return data ? { name, header: data.subarray(0, 4).toString('latin1'), channels: data.readUInt16LE(22), bytes: data.readUInt32LE(40) } : null
+  })
+  result.stems.wavs = stemWavs
+  const stemsOk =
+    result.stems.picked > 0 &&
+    stemWavs.length === result.stems.picked &&
+    stemWavs.every((wav) => wav?.header === 'RIFF' && wav.channels === 2 && wav.bytes > 0 && wav.bytes === stemWavs[0]?.bytes)
   // The new sound effect's WAV file: mono, ending soon after its note.
   const effectWav = saved.find((file) => file.name === `${result.effects.name}.wav`)?.data
   result.effects.wav = effectWav
@@ -355,7 +386,7 @@ async function runSmokeTest(win: BrowserWindow): Promise<void> {
   recovery.discard()
   result.recoveryCopyRemoved = !existsSync(recovery.files[0] ?? '')
   const passed =
-    errors.length === 0 && result.recoveryCopy && result.recoveryCopyRemoved && result.startPage && result.theme !== null && result.scoreRenderMs !== null && result.preloadBridge && result.drumHits > 0 && result.pianoRoll && result.hiddenTrack.hidden && result.hiddenTrack.shownAgain && result.tuning.after?.includes('Drop D · capo 2') && result.tuning.undone && result.pageView.pages > 0 && result.pageView.screenAgain && result.pageView.pdf?.header === '%PDF-' && result.pageView.pdf.pages > 0 && result.arrangement.cells > 0 && result.arrangement.paletteParts > 0 && result.arrangement.afterDuplicate === result.arrangement.sections + 1 && result.arrangement.newPart && result.arrangement.partScore && result.arrangement.duplicated && result.effects.added && result.effects.name?.startsWith('Coin') && result.effects.colored && result.effects.recolored && result.effects.overSong?.heard > 0 && result.effects.overSong.songPlays && result.effects.wav?.header === 'RIFF' && result.effects.wav.channels === 1 && result.effects.wav.seconds > 0 && result.effects.wav.seconds < 2 && result.soundWindow.categories >= 17 && result.playing && transcribed
+    errors.length === 0 && result.recoveryCopy && result.recoveryCopyRemoved && result.startPage && result.theme !== null && result.scoreRenderMs !== null && result.preloadBridge && result.drumHits > 0 && result.pianoRoll && result.hiddenTrack.hidden && result.hiddenTrack.shownAgain && result.tuning.after?.includes('Drop D · capo 2') && result.tuning.undone && result.pageView.pages > 0 && result.pageView.screenAgain && result.pageView.pdf?.header === '%PDF-' && result.pageView.pdf.pages > 0 && stemsOk && result.arrangement.cells > 0 && result.arrangement.paletteParts > 0 && result.arrangement.afterDuplicate === result.arrangement.sections + 1 && result.arrangement.newPart && result.arrangement.partScore && result.arrangement.duplicated && result.effects.added && result.effects.name?.startsWith('Coin') && result.effects.colored && result.effects.recolored && result.effects.overSong?.heard > 0 && result.effects.overSong.songPlays && result.effects.wav?.header === 'RIFF' && result.effects.wav.channels === 1 && result.effects.wav.seconds > 0 && result.effects.wav.seconds < 2 && result.soundWindow.categories >= 17 && result.playing && transcribed
   console.log('SMOKE_TEST_RESULT ' + JSON.stringify({ ...result, userData: app.getPath('userData'), errors }))
   app.exit(passed ? 0 : 1)
 }
