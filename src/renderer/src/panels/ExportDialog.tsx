@@ -1,11 +1,12 @@
-import { useEffect, useState } from 'react'
+import { Fragment, useEffect, useState } from 'react'
 import { renderSongOffline } from '../audio/offline'
 import { audioBufferToWav16 } from '../audio/wav'
 import { sectionRanges, type BarRange } from '../model/edit'
 import { audibleTracks, barCount, type Song } from '../model/song'
-import { stemFileNames, stemSong, tracksWithNotes } from '../model/stems'
+import { stemName, stemsOf, stemSong, tracksWithNotes } from '../model/stems'
 import { barSeconds, EXPORT_TAIL_SECONDS, exportFrameCount, type ExportEnding } from '../model/timing'
 import { saveFile, saveFiles, type NamedFile } from '../platform'
+import { readPref, writePref } from '../prefs'
 
 interface Props {
   song: Song
@@ -13,13 +14,24 @@ interface Props {
   bars: BarRange
   /** Section the cursor is in, if any. */
   section: string | null
+  /** Puts a track into the stem with this name (empty: its own). An edit of the song, saved with it. */
+  onStemName: (trackIndex: number, name: string) => void
   onClose: (message?: string) => void
 }
 
 const RATES = [48000, 44100]
 
+/** Remembered for the next export: the mix or stems, and the mix next to the stems. */
+interface Settings {
+  stems: boolean
+  withMix: boolean
+}
+
+const SETTINGS_KEY = 'wavExport'
+const DEFAULT_SETTINGS: Settings = { stems: false, withMix: false }
+
 /** WAV export of the whole song, a section or a bar range, as the mix or one file per track (REQUIREMENTS.md EXP-01…05, EXP-09). */
-export function ExportDialog({ song, bars, section, onClose }: Props): React.JSX.Element {
+export function ExportDialog({ song, bars, section, onStemName, onClose }: Props): React.JSX.Element {
   const sections = sectionRanges(song)
   const total = barCount(song)
   const [choice, setChoice] = useState<string>(() => {
@@ -31,8 +43,9 @@ export function ExportDialog({ song, bars, section, onClose }: Props): React.JSX
   const [rate, setRate] = useState(48000)
   /** Until chosen by hand: ring out for the whole song, cut (loopable) for parts of it. */
   const [ending, setEnding] = useState<ExportEnding | null>(null)
-  /** One file per track (stems) instead of the mix. */
-  const [stems, setStems] = useState(false)
+  const [settings, setSettings] = useState<Settings>(() => ({ ...DEFAULT_SETTINGS, ...readPref<Partial<Settings>>(SETTINGS_KEY, {}) }))
+  const { stems, withMix } = settings
+  const change = (next: Partial<Settings>): void => setSettings((s) => ({ ...s, ...next }))
   /** The tracks picked for stems, by id; until changed by hand: the ones heard in the mix that play in the range. */
   const [picked, setPicked] = useState<Set<string> | null>(null)
   /** What the export is doing ("Rendering 2 of 5…"), or null. */
@@ -54,7 +67,12 @@ export function ExportDialog({ song, bars, section, onClose }: Props): React.JSX
   const playing = tracksWithNotes(song, seconds)
   const pickedIds = picked ?? new Set(song.tracks.filter((_, i) => heard[i] && playing[i]).map((t) => t.id))
   const stemTracks = song.tracks.flatMap((track, i) => (pickedIds.has(track.id) ? [i] : []))
-  const stemNames = stemFileNames(song, range.name, stemTracks)
+  const planned = stemsOf(song, range.name, stemTracks, withMix)
+  /** The files of a stem export, with the tracks of stems that join several. */
+  const stemFiles = [
+    ...(planned.mixFileName ? [{ name: planned.mixFileName, note: 'the mix' }] : []),
+    ...planned.stems.map((stem) => ({ name: stem.fileName, note: stem.trackIndexes.length > 1 ? stem.trackIndexes.map((i) => song.tracks[i].name).join(' + ') : null }))
+  ]
   const pick = (id: string, on: boolean): void => {
     const next = new Set(pickedIds)
     if (on) next.add(id)
@@ -75,6 +93,7 @@ export function ExportDialog({ song, bars, section, onClose }: Props): React.JSX
     setError('')
     try {
       const buffer = await renderSongOffline(song, rate, { range: seconds, ending: end })
+      writePref(SETTINGS_KEY, settings)
       const name = range.name ? `${song.title} - ${range.name}` : song.title
       const path = await saveFile(`${name}.wav`, audioBufferToWav16(buffer))
       if (path) onClose(`WAV saved: ${path}`)
@@ -85,19 +104,25 @@ export function ExportDialog({ song, bars, section, onClose }: Props): React.JSX
     }
   }
 
-  /** Each picked track on its own, all the same length, into a folder. */
+  /** Each stem (and the mix, if wanted), all the same length, into a folder. */
   const exportStems = async (): Promise<void> => {
     setError('')
     try {
+      const renders = [
+        ...(planned.mixFileName ? [{ fileName: planned.mixFileName, song }] : []),
+        ...planned.stems.map((stem) => ({ fileName: stem.fileName, song: stemSong(song, stem.trackIndexes) }))
+      ]
       const files: NamedFile[] = []
-      for (const [n, index] of stemTracks.entries()) {
-        setBusy(`Rendering ${n + 1} of ${stemTracks.length}…`)
-        const buffer = await renderSongOffline(stemSong(song, index), rate, { range: seconds, ending: end })
-        files.push({ name: stemNames[n], data: audioBufferToWav16(buffer) })
+      for (const [n, render] of renders.entries()) {
+        setBusy(`Rendering ${n + 1} of ${renders.length}…`)
+        const buffer = await renderSongOffline(render.song, rate, { range: seconds, ending: end })
+        files.push({ name: render.fileName, data: audioBufferToWav16(buffer) })
       }
+      writePref(SETTINGS_KEY, settings)
       setBusy('Saving…')
       const where = await saveFiles(files)
-      if (where) onClose(`${files.length} ${files.length === 1 ? 'stem' : 'stems'} saved as WAV in ${where}.`)
+      const count = planned.stems.length
+      if (where) onClose(`${count} ${count === 1 ? 'stem' : 'stems'}${planned.mixFileName ? ' and the mix' : ''} saved as WAV in ${where}.`)
       else setBusy(null)
     } catch (e) {
       setError(`WAV export failed: ${e instanceof Error ? e.message : String(e)}`)
@@ -156,15 +181,15 @@ export function ExportDialog({ song, bars, section, onClose }: Props): React.JSX
         <fieldset className="choice-group">
           <legend>Files</legend>
           <label className="checkbox">
-            <input type="radio" name="files" checked={!stems} onChange={() => setStems(false)} />
+            <input type="radio" name="files" checked={!stems} onChange={() => change({ stems: false })} />
             <span>
               <strong>The mix,</strong> one file with every track you hear.
             </span>
           </label>
           <label className="checkbox">
-            <input type="radio" name="files" checked={stems} onChange={() => setStems(true)} />
+            <input type="radio" name="files" checked={stems} onChange={() => change({ stems: true })} />
             <span>
-              <strong>One file per track (stems),</strong> into a folder you choose. They are all exactly the same length, so in Unity they play together in sync: one
+              <strong>One file per track or group of tracks (stems),</strong> into a folder you choose. They are all exactly the same length, so in Unity they play together in sync: one
               AudioSource each, started at the same time, and fade a layer in or out (e.g. the drums when a fight starts). Files there with the same names are replaced,
               so exporting again updates them in your game.
             </span>
@@ -173,16 +198,34 @@ export function ExportDialog({ song, bars, section, onClose }: Props): React.JSX
 
         {stems && (
           <fieldset className="choice-group stem-tracks">
-            <legend>Tracks</legend>
+            <legend>Tracks and their stems</legend>
             {song.tracks.map((track, i) => (
-              <label key={track.id} className="checkbox">
-                <input type="checkbox" checked={pickedIds.has(track.id)} onChange={(e) => pick(track.id, e.target.checked)} />
-                <span>
-                  {track.name}
-                  {!heard[i] ? <span className="muted"> · muted</span> : !playing[i] && <span className="muted"> · no notes here</span>}
-                </span>
-              </label>
+              <div key={track.id} className="stem-track">
+                <label className="checkbox">
+                  <input type="checkbox" checked={pickedIds.has(track.id)} onChange={(e) => pick(track.id, e.target.checked)} />
+                  <span>
+                    {track.name}
+                    {!heard[i] ? <span className="muted"> · muted</span> : !playing[i] && <span className="muted"> · no notes here</span>}
+                  </span>
+                </label>
+                <input
+                  className="stem-name"
+                  value={track.stem ?? ''}
+                  placeholder={stemName({ ...track, stem: undefined }, i)}
+                  disabled={!pickedIds.has(track.id)}
+                  aria-label={`Stem of ${track.name}`}
+                  title="The stem this track goes into. Tracks with the same stem name share one file; empty: its own, named after the track. Saved with the project."
+                  onChange={(e) => onStemName(i, e.target.value)}
+                />
+              </div>
             ))}
+            <p className="muted small stem-help">Tracks with the same stem name go into one file, e.g. “Rhythm” for the drums and the bass.</p>
+            <label className="checkbox stem-mix">
+              <input type="checkbox" checked={withMix} onChange={(e) => change({ withMix: e.target.checked })} />
+              <span>
+                <strong>Also the mix</strong> of every track you hear, in the same folder.
+              </span>
+            </label>
           </fieldset>
         )}
 
@@ -207,7 +250,19 @@ export function ExportDialog({ song, bars, section, onClose }: Props): React.JSX
           {barCountText(range.end - range.start)} · {(seconds.end - seconds.start).toFixed(2)} s{end === 'tail' ? ` + ${EXPORT_TAIL_SECONDS} s` : ''} · {frames.toLocaleString('en-US')} samples per
           channel, stereo
           {stems
-            ? stemNames.length > 0 && <> · Files: {stemNames.join(', ')}</>
+            ? stemFiles.length > 0 && (
+                <>
+                  {' '}
+                  · Files:{' '}
+                  {stemFiles.map((file, i) => (
+                    <Fragment key={file.name}>
+                      {i > 0 && ', '}
+                      <span className="stem-file">{file.name}</span>
+                      {file.note && ` (${file.note})`}
+                    </Fragment>
+                  ))}
+                </>
+              )
             : silent.length > 0 && <> · Muted, left out: {silent.join(', ')}</>}
         </p>
         {error && <p className="warning dialog-error">{error}</p>}

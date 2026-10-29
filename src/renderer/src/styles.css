@@ -2189,13 +2189,26 @@ button.arr-label:hover:not(:disabled) {
   margin-top: 3px;
 }
 
-/* The tracks to export as stems, side by side. */
-.stem-tracks {
-  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+/* The tracks to export as stems, a row each with the stem it goes into. */
+.stem-track {
+  display: flex;
+  gap: 8px;
+  align-items: center;
 }
 
-.stem-tracks label.checkbox {
+.stem-track label.checkbox {
+  flex: 1;
   align-items: center;
+  min-width: 0;
+}
+
+.stem-name {
+  width: 180px;
+  flex-shrink: 0;
+}
+
+.stem-tracks .stem-help {
+  margin: 0;
 }
 
 /* Smaller windows: the top bar keeps to one line with icon-only buttons (their tooltips name them). */

@@ -2,9 +2,10 @@ import { Midi } from '@tonejs/midi'
 import { describe, expect, it } from 'vitest'
 import { songToMidi } from '../src/renderer/src/audio/midiExport'
 import { encodeWav16 } from '../src/renderer/src/audio/wav'
-import { emptyBar } from '../src/renderer/src/model/edit'
+import { emptyBar, type Cursor } from '../src/renderer/src/model/edit'
 import { audibleTracks, createDemoSong, createTrack, type Song } from '../src/renderer/src/model/song'
-import { stemFileNames, stemSong, tracksWithNotes } from '../src/renderer/src/model/stems'
+import { setStemName, stemName, stemsOf, stemSong, tracksWithNotes } from '../src/renderer/src/model/stems'
+import { parseProject, serializeProject } from '../src/renderer/src/project/projectFile'
 
 describe('encodeWav16', () => {
   it('writes a valid 16-bit PCM header and interleaved samples', () => {
@@ -44,6 +45,8 @@ describe('songToMidi', () => {
   })
 })
 
+const CURSOR: Cursor = { track: 0, bar: 0, beat: 0, string: 1 }
+
 describe('stems', () => {
   /** The demo song (guitar and bass, 4 bars of 2 s) with an empty drum track. */
   const withDrums = (): Song => {
@@ -51,14 +54,15 @@ describe('stems', () => {
     return { ...song, tracks: [...song.tracks, createTrack('drums', song.tracks[0].bars.map(() => emptyBar(song)))] }
   }
 
-  it('are rendered from the song with only their track heard, as it sounds in the mix', () => {
+  it('are rendered from the song with only their tracks heard, as they sound in the mix', () => {
     const song = withDrums()
     song.tracks[0] = { ...song.tracks[0], solo: true, volume: 0.5 }
     song.tracks[1] = { ...song.tracks[1], mute: true }
-    const bass = stemSong(song, 1)
+    const bass = stemSong(song, [1])
     expect(audibleTracks(bass)).toEqual([false, true, false])
     expect(bass.tracks[1]).toMatchObject({ volume: song.tracks[1].volume, pan: song.tracks[1].pan, instrument: song.tracks[1].instrument })
-    expect(stemSong(song, 0).tracks[0].volume).toBe(0.5)
+    expect(stemSong(song, [0]).tracks[0].volume).toBe(0.5)
+    expect(audibleTracks(stemSong(song, [1, 2]))).toEqual([false, true, true])
     // The song itself is left as it is.
     expect(song.tracks[1].mute).toBe(true)
     expect(audibleTracks(song)).toEqual([true, false, false])
@@ -70,16 +74,39 @@ describe('stems', () => {
     expect(tracksWithNotes(song, { start: 100, end: 108 })).toEqual([false, false, false])
   })
 
-  it('are named after the song, the range and the track, safe for files and each its own', () => {
+  it('are a file per track, named after the song, the range and the track, safe for files and each its own', () => {
     const song = withDrums()
     song.title = 'Boss: Phase 1'
     song.tracks[1] = { ...song.tracks[1], name: 'Acoustic guitar' }
     song.tracks[2] = { ...song.tracks[2], name: ' ' }
-    expect(stemFileNames(song, null, [0, 1, 2])).toEqual([
-      'Boss Phase 1 - Acoustic guitar.wav',
-      'Boss Phase 1 - Acoustic guitar 2.wav',
-      'Boss Phase 1 - Track 3.wav'
+    const files = (rangeName: string | null, indexes: number[]): string[] => stemsOf(song, rangeName, indexes).stems.map((stem) => stem.fileName)
+    // Two tracks of the same name share a stem; a track without a name is named by its place.
+    expect(files(null, [0, 2])).toEqual(['Boss Phase 1 - Acoustic guitar.wav', 'Boss Phase 1 - Track 3.wav'])
+    expect(stemsOf(song, null, [0, 1, 2]).stems.map((stem) => stem.trackIndexes)).toEqual([[0, 1], [2]])
+    expect(files('Chorus', [2])).toEqual(['Boss Phase 1 - Chorus - Track 3.wav'])
+  })
+
+  it('join the tracks with the same stem name, which is saved with the project', () => {
+    let song = withDrums()
+    song = setStemName(song, CURSOR, 1, 'Rhythm')!.song
+    song = setStemName(song, CURSOR, 2, ' rhythm ')!.song
+    const { stems, mixFileName } = stemsOf(song, null, [0, 1, 2], true)
+    expect(stems.map((stem) => [stem.name, stem.trackIndexes, stem.fileName])).toEqual([
+      ['Acoustic guitar', [0], 'Demo song - Acoustic guitar.wav'],
+      ['Rhythm', [1, 2], 'Demo song - Rhythm.wav']
     ])
-    expect(stemFileNames(song, 'Chorus', [2])).toEqual(['Boss Phase 1 - Chorus - Track 3.wav'])
+    expect(mixFileName).toBe('Demo song.wav')
+    expect(stemName(song.tracks[2], 2)).toBe('rhythm')
+    expect(parseProject(serializeProject(song)).song.tracks.map((t) => t.stem)).toEqual([undefined, 'Rhythm', ' rhythm '])
+
+    // An empty name gives the track its own stem again.
+    const own = setStemName(song, CURSOR, 2, '  ')!.song
+    expect('stem' in own.tracks[2]).toBe(false)
+    expect(setStemName(song, CURSOR, 9, 'x')).toBeNull()
+
+    // A stem name that isn't text is dropped when the file is opened.
+    const odd = structuredClone(song)
+    ;(odd.tracks[1] as { stem: unknown }).stem = 7
+    expect(parseProject(serializeProject(odd)).song.tracks[1].stem).toBeUndefined()
   })
 })

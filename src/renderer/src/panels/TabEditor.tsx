@@ -21,6 +21,7 @@ import {
 } from '../model/edit'
 import { addEffect, effectSong, findEffect, type EffectTemplate } from '../model/effects'
 import { audibleTracks, barCount, defaultInstrument, isFretted, MASTER_DEFAULTS, soundName, type Instrument, type SoundEffect, type Track } from '../model/song'
+import { setStemName } from '../model/stems'
 import { MidiKeyboard, type MidiNoteMessage } from '../midi/midiInput'
 import { importMidi } from '../model/midiImport'
 import { CRUSH_RATES, eightBitKit, formatSampleRate } from '../model/synth'
@@ -803,6 +804,7 @@ export function TabEditor({ project, getEngine, headerSlots, onShowShortcuts }: 
           song={song}
           bars={selectedBars ?? { start: cursor.bar, end: cursor.bar + 1 }}
           section={cursorSection?.name ?? null}
+          onStemName={(index, name) => project.apply(setStemName(song, cursor, index, name), { mergeKey: `stem-name:${song.tracks[index].id}` })}
           onClose={(result) => {
             setExportDialog(false)
             if (result) setMessage(result)

@@ -56,6 +56,8 @@ export interface Track {
   solo?: boolean
   volume: number
   pan: number
+  /** Stem export (see model/stems.ts): the stem it goes into; tracks with the same one share a file. Absent = its own, named after it. */
+  stem?: string
   /** Every track has the same number of bars as the song. */
   bars: Bar[]
   /** The sound before "Make it retro" replaced it, so it can be switched back (SYN-31). */

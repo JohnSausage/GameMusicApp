@@ -163,7 +163,9 @@ async function runSmokeTest(win: BrowserWindow): Promise<void> {
     await waitFor(() => /PDF saved|PDF could not/.test(document.querySelector('.status-bar .status')?.textContent ?? ''), 15000)
     pageView.pdfMessage = document.querySelector('.status-bar .status')?.textContent ?? null
 
-    // Stems: Export → WAV…, one file per track (at least one track picked), all the same length.
+    // Stems: Export → WAV…, one file per track (at least one track picked), the first two sharing a stem, and the mix
+    // next to them; all the same length. The dialog's remembered settings are put back afterwards.
+    const wavExportPref = localStorage.getItem('wavExport')
     document.querySelector('.editor-header .menu-button[title="Export"]')?.click()
     await sleep(200)
     ;[...document.querySelectorAll('.menu-list [role=menuitem]')].find((item) => item.textContent.startsWith('WAV'))?.click()
@@ -171,17 +173,30 @@ async function runSmokeTest(win: BrowserWindow): Promise<void> {
     const stemDialog = document.querySelector('.export-dialog')
     stemDialog?.querySelectorAll('input[name="files"]')[1]?.click()
     await sleep(200)
-    const stemBoxes = [...(stemDialog?.querySelectorAll('.stem-tracks input') ?? [])]
-    if (!stemBoxes.some((box) => box.checked)) stemBoxes[0]?.click()
+    const stemBox = (row) => row.querySelector('input[type="checkbox"]')
+    const stemRows = [...(stemDialog?.querySelectorAll('.stem-track') ?? [])]
+    if (!stemRows.some((row) => stemBox(row).checked)) stemBox(stemRows[0])?.click()
     await sleep(100)
+    const pickedRows = stemRows.filter((row) => stemBox(row).checked)
+    for (const row of pickedRows.slice(0, 2)) {
+      const input = row.querySelector('.stem-name')
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, 'Band')
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+      await sleep(100)
+    }
+    const mixBox = stemDialog?.querySelector('.stem-mix input')
+    if (mixBox && !mixBox.checked) mixBox.click()
+    await sleep(200)
     const stems = {
-      tracks: stemBoxes.length,
-      picked: stemBoxes.filter((box) => box.checked).length,
-      files: stemDialog?.querySelector('p.muted')?.textContent.split('Files: ')[1]?.split(', ') ?? []
+      tracks: stemRows.length,
+      picked: pickedRows.length,
+      files: [...(stemDialog?.querySelectorAll('.stem-file') ?? [])].map((file) => file.textContent)
     }
     if (stemDialog) button('Export…', stemDialog)?.click()
     await waitFor(() => !document.querySelector('.export-dialog'), 30000)
     stems.message = document.querySelector('.status-bar .status')?.textContent ?? null
+    if (wavExportPref === null) localStorage.removeItem('wavExport')
+    else localStorage.setItem('wavExport', wavExportPref)
 
     // A drum track with a starter pattern from the drum grid.
     button('+ Drums')?.click()
@@ -365,7 +380,7 @@ async function runSmokeTest(win: BrowserWindow): Promise<void> {
   const pdfFile = join(app.getPath('temp'), 'GameMusicApp-smoke-test.pdf')
   if (pdf) await writeFile(pdfFile, pdf)
   result.pageView.pdf = pdf ? { file: pdfFile, bytes: pdf.length, header: pdf.subarray(0, 5).toString('latin1'), pages: pdf.toString('latin1').match(/\/Type\s*\/Page\b(?!s)/g)?.length ?? 0 } : null
-  // The stems: one stereo WAV file per picked track, all the same length.
+  // The stems: the mix and one stereo WAV file per stem (the first two picked tracks share one), all the same length.
   const stemWavs = (result.stems.files as string[]).map((name) => {
     const data = saved.find((file) => file.name === name)?.data
     return data ? { name, header: data.subarray(0, 4).toString('latin1'), channels: data.readUInt16LE(22), bytes: data.readUInt32LE(40) } : null
@@ -373,7 +388,7 @@ async function runSmokeTest(win: BrowserWindow): Promise<void> {
   result.stems.wavs = stemWavs
   const stemsOk =
     result.stems.picked > 0 &&
-    stemWavs.length === result.stems.picked &&
+    stemWavs.length === 1 + Math.max(1, result.stems.picked - 1) &&
     stemWavs.every((wav) => wav?.header === 'RIFF' && wav.channels === 2 && wav.bytes > 0 && wav.bytes === stemWavs[0]?.bytes)
   // The new sound effect's WAV file: mono, ending soon after its note.
   const effectWav = saved.find((file) => file.name === `${result.effects.name}.wav`)?.data

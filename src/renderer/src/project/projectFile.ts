@@ -172,6 +172,8 @@ function checkTrack(track: Track, where: string): void {
   if ((track.mute !== undefined && typeof track.mute !== 'boolean') || (track.solo !== undefined && typeof track.solo !== 'boolean')) {
     fail(`${where} has invalid mute/solo settings`)
   }
+  // A stem name that isn't text is dropped: the track gets its own stem again.
+  if (track.stem !== undefined && typeof track.stem !== 'string') delete track.stem
   track.instrument = checkInstrument(track.instrument, where)
   if (track.originalInstrument !== undefined) track.originalInstrument = checkInstrument(track.originalInstrument, `${where} (original sound)`)
   if (!Array.isArray(track.bars) || track.bars.length === 0) fail(`${where} has no bars`)
