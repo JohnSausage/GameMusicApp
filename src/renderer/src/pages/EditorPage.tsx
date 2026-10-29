@@ -3,8 +3,10 @@ import type { GetEngine } from '../App'
 import { HomeIcon, MenuIcon, RedoIcon, UndoIcon } from '../components/icons'
 import { Menu } from '../components/Menu'
 import { updateSong } from '../model/edit'
+import { keyName, songKey } from '../model/keySignature'
 import { MidiPanel } from '../panels/MidiPanel'
 import { ShortcutsDialog } from '../panels/ShortcutsDialog'
+import { SongDialog } from '../panels/SongDialog'
 import { TabEditor } from '../panels/TabEditor'
 import type { Project } from '../project/useProject'
 import { setThemeChoice, THEME_CHOICES, useThemeChoice } from '../theme'
@@ -29,6 +31,7 @@ export function EditorPage({ project, getEngine, saveStatus, onSave, onHome }: P
   const [page, setPage] = useState<Page>('editor')
   const themeChoice = useThemeChoice()
   const [shortcuts, setShortcuts] = useState(false)
+  const [songDialog, setSongDialog] = useState(false)
   const [transport, setTransport] = useState<HTMLElement | null>(null)
   const [actions, setActions] = useState<HTMLElement | null>(null)
   const { song, cursor } = project
@@ -61,7 +64,9 @@ export function EditorPage({ project, getEngine, saveStatus, onSave, onHome }: P
             }}
           />
         </label>
-        <span className="muted" title="Time signature">{song.timeSignature.join('/')}</span>
+        <button className="song-properties" title="Song properties: title, author, tempo, key" onClick={() => setSongDialog(true)}>
+          {song.timeSignature.join('/')} · {keyName(songKey(song))}
+        </button>
 
         {page === 'editor' ? (
           <div className="header-group" ref={setTransport} />
@@ -96,6 +101,7 @@ export function EditorPage({ project, getEngine, saveStatus, onSave, onHome }: P
           items={[
             { label: 'Save as…', shortcut: 'Ctrl+Shift+S', onSelect: () => onSave(true) },
             'separator',
+            { label: 'Song properties…', title: 'Title, author, tempo, key', onSelect: () => setSongDialog(true) },
             { label: 'MIDI keyboard and audio latency', onSelect: () => setPage('midi') },
             { label: 'Keyboard shortcuts', shortcut: '?', onSelect: showShortcuts },
             'separator',
@@ -110,6 +116,17 @@ export function EditorPage({ project, getEngine, saveStatus, onSave, onHome }: P
         {page === 'midi' && <MidiPanel getEngine={getEngine} />}
       </main>
       {shortcuts && <ShortcutsDialog onClose={() => setShortcuts(false)} />}
+      {songDialog && (
+        <SongDialog
+          song={song}
+          cursor={cursor}
+          onApply={(result) => {
+            project.apply(result)
+            setSongDialog(false)
+          }}
+          onClose={() => setSongDialog(false)}
+        />
+      )}
     </div>
   )
 }

@@ -9,9 +9,11 @@ export interface DetectedNote {
 }
 
 const NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
+const FLAT_NAMES = ['C', 'Db', 'D', 'Eb', 'E', 'F', 'Gb', 'G', 'Ab', 'A', 'Bb', 'B']
 
-export function noteName(pitch: number): string {
-  return `${NAMES[pitch % 12]}${Math.floor(pitch / 12) - 1}`
+/** E.g. 61 → "C#4", or "Db4" with `flats` (in a key with flats). */
+export function noteName(pitch: number, flats = false): string {
+  return `${(flats ? FLAT_NAMES : NAMES)[pitch % 12]}${Math.floor(pitch / 12) - 1}`
 }
 
 const CHORD_WINDOW = 0.05

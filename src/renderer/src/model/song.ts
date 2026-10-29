@@ -138,10 +138,21 @@ export interface SoundEffect {
   color?: number
 }
 
+/** A key signature (PRJ-03), see model/keySignature.ts. */
+export interface KeySignature {
+  /** Sharps (1 to 7) or flats (−1 to −7) in the score. */
+  fifths: number
+  minor: boolean
+}
+
 export interface Song {
   title: string
+  /** Who wrote it; shown under the title in the score. Absent = nobody named. */
+  author?: string
   tempo: number
   timeSignature: [number, number]
+  /** Absent = C major (no sharps or flats). */
+  key?: KeySignature
   tracks: Track[]
   sections: Section[]
   /**

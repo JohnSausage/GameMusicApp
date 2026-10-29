@@ -122,7 +122,7 @@ export function TuningDialog({ track, getEngine, onApply, onClose }: Props): Rea
           </button>
           {capo > 0 && (
             <span className="muted small">
-              With the capo, the open strings sound {[...sounding].reverse().map(noteName).join(' ')}. Frets in the tab count from the capo (0 = the capo).
+              With the capo, the open strings sound {[...sounding].reverse().map((pitch) => noteName(pitch)).join(' ')}. Frets in the tab count from the capo (0 = the capo).
             </span>
           )}
         </div>

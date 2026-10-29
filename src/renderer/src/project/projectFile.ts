@@ -3,6 +3,7 @@
 import { strFromU8, strToU8, unzipSync, zipSync, type Zippable } from 'fflate'
 import { decodeWav16, encodeWav16 } from '../audio/wav'
 import { fixPartColors, PART_COLORS, writeOut } from '../model/arrangement'
+import { MAX_FIFTHS } from '../model/keySignature'
 import { MASTER_DEFAULTS, NOTE_VALUES, type Bar, type Instrument, type MasterSettings, type ProjectAudio, type Song, type SoundEffect, type TakeInfo, type Track } from '../model/song'
 import { normalizePatch, PATCH_LIMITS } from '../model/synth'
 import { MAX_CAPO } from '../model/tuning'
@@ -199,6 +200,9 @@ function checkSong(value: unknown): Song {
   if (typeof song.title !== 'string') fail('missing title')
   if (typeof song.tempo !== 'number' || song.tempo < 20 || song.tempo > 400) fail('invalid tempo')
   if (!Array.isArray(song.timeSignature) || song.timeSignature.length !== 2 || !song.timeSignature.every(isInt)) fail('invalid time signature')
+  // An author that isn't text, or a key signature the app doesn't know, is dropped (C major).
+  if (song.author !== undefined && (typeof song.author !== 'string' || !song.author.trim())) delete song.author
+  if (song.key !== undefined && !(isInt(song.key?.fifths) && Math.abs(song.key.fifths) <= MAX_FIFTHS && typeof song.key.minor === 'boolean')) delete song.key
   if (!Array.isArray(song.tracks) || song.tracks.length === 0) fail('no tracks')
 
   const bars = song.tracks[0].bars?.length

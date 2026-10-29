@@ -725,6 +725,47 @@ label.inline {
   flex-direction: row;
 }
 
+/* Song properties (SongDialog.tsx) and its button in the top bar. */
+.song-properties {
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  background: transparent;
+  border-color: transparent;
+  white-space: nowrap;
+}
+
+.song-properties:hover {
+  color: var(--text);
+  border-color: var(--border);
+}
+
+.song-dialog,
+.transpose-dialog {
+  width: min(560px, 100%);
+}
+
+.song-dialog label.grow {
+  flex: 1;
+  min-width: 180px;
+}
+
+.song-time-signature {
+  padding: 6px 2px;
+  font-size: 14px;
+  color: var(--text);
+}
+
+.transpose-amount {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.transpose-amount input {
+  width: 70px;
+}
+
 /* The tuning dialog (TuningDialog.tsx): the strings from the lowest, each tuned in semitones. */
 .tuning-dialog {
   width: min(620px, 100%);

@@ -744,9 +744,11 @@ export function restoreSounds(song: Song, cursor: Cursor): EditResult {
   })!
 }
 
-export function updateSong(song: Song, cursor: Cursor, patch: Partial<Pick<Song, 'title' | 'tempo'>>): EditResult {
+/** Changes song properties; an empty author is taken out. */
+export function updateSong(song: Song, cursor: Cursor, patch: Partial<Pick<Song, 'title' | 'tempo' | 'author' | 'key'>>): EditResult {
   return edit(song, cursor, (draft) => {
     Object.assign(draft, patch)
+    if (draft.author !== undefined && !draft.author.trim()) delete draft.author
   })!
 }
 

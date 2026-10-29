@@ -1,10 +1,11 @@
 import * as alphaTab from '@coderline/alphatab'
 import { partStarts } from '../model/arrangement'
 import { strengthOf } from '../model/drums'
+import { songKey } from '../model/keySignature'
 import type { NoteValue, Song } from '../model/song'
 import { isStandardTuning, tuningPreset } from '../model/tuning'
 
-const { AccentuationType, Automation, SlideOutType, Bar, Beat, Clef, Duration, MasterBar, Note, Ottavia, Score, Section, Track, Tuning, Voice } = alphaTab.model
+const { AccentuationType, Automation, SlideOutType, Bar, Beat, Clef, Duration, KeySignatureType, MasterBar, Note, Ottavia, Score, Section, Track, Tuning, Voice } = alphaTab.model
 
 export interface BeatRef {
   trackIndex: number
@@ -38,6 +39,9 @@ const DURATIONS: Record<NoteValue, alphaTab.model.Duration> = {
 export function songToAlphaTab(song: Song, settings: alphaTab.Settings, tabOnly = false): ConvertedScore {
   const score = new Score()
   score.title = song.title
+  // Shown under the title as "Music by …".
+  score.music = song.author ?? ''
+  const key = songKey(song)
   const barCount = Math.max(1, ...song.tracks.map((t) => t.bars.length))
 
   for (let i = 0; i < barCount; i++) {
@@ -101,6 +105,11 @@ export function songToAlphaTab(song: Song, settings: alphaTab.Settings, tabOnly 
       const bar = new Bar()
       bar.clef = clef
       bar.clefOttava = drums || keys ? Ottavia.Regular : Ottavia._8vb
+      // Drums have no key; the other staves show the song's sharps or flats, and alphaTab writes the notes in that key.
+      if (!drums) {
+        bar.keySignature = key.fifths as alphaTab.model.KeySignature
+        bar.keySignatureType = key.minor ? KeySignatureType.Minor : KeySignatureType.Major
+      }
       staff.addBar(bar)
       const voice = new Voice()
       bar.addVoice(voice)

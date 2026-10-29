@@ -23,7 +23,8 @@ const GROUPS: { title: string; rows: Row[] }[] = [
       [['/'], 'Triplet: three notes in the time of two'],
       [['R'], 'Make the beat a rest'],
       [['Del'], 'Remove the note (on a rest: the rest)'],
-      [['Shift+Del'], 'Remove the beat; the rest of the bar moves up']
+      [['Shift+Del'], 'Remove the beat; the rest of the bar moves up'],
+      [['Alt+↑', 'Alt+↓'], 'Transpose the selection (or the beat) a semitone up / down; Edit → Transpose… for more']
     ]
   },
   {

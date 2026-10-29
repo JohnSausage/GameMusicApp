@@ -39,9 +39,11 @@ import {
 import { barCount, DRUM_PIECES, isFretted, rowPitch, MAX_FRET, NOTE_VALUES, notePitch, stringPitch, type Beat, type NoteValue, type Track } from '../model/song'
 import type { MidiNoteMessage } from '../midi/midiInput'
 import { quantizeNotes, writeRoll, type TimedNote } from '../model/keys'
+import { songKey, usesFlats } from '../model/keySignature'
 import { stepAdvance, stepEnter } from '../model/stepEntry'
 import { legatoTarget, toggleLegato, toggleTie, type Legato } from '../model/techniques'
 import { barSeconds, buildTimeline, secondsPerQuarter } from '../model/timing'
+import { transpose, transposeMessage } from '../model/transpose'
 import { secondsPerClick } from '../audio/analysis'
 import { readPref, writePref } from '../prefs'
 import { showTrack, shownTracks, ZOOM_STEPS } from '../project/layout'
@@ -50,6 +52,7 @@ import { ScoreView, type ScoreTarget } from '../score/ScoreView'
 import { noteName } from '../transcription/notes'
 import { DrumGrid } from './DrumGrid'
 import { PianoRoll } from './PianoRoll'
+import { TransposeDialog } from './TransposeDialog'
 import type { Playback } from './usePlayback'
 
 const VALUE_LABELS: Record<NoteValue, { short: string; long: string }> = {
@@ -149,6 +152,7 @@ export function ScoreEditor(props: Props): React.JSX.Element {
   const [gridTrackId, setGridTrackId] = useState<string | null>(null)
   const [stepInput, setStepInput] = useState(() => readPref(STEP_INPUT_KEY, false))
   const [recording, setRecording] = useState(false)
+  const [transposing, setTransposing] = useState(false)
   const recordingRef = useRef<MidiRecording | null>(null)
   /** Keys of the chord being step-entered, and its undo key. */
   const stepChord = useRef<{ held: Set<number>; id: string } | null>(null)
@@ -414,6 +418,17 @@ export function ScoreEditor(props: Props): React.JSX.Element {
     })
   }
 
+  /** Alt+↑ / Alt+↓: the selection, or the beat at the cursor, a semitone up or down (strings kept). */
+  const nudgePitch = (semitones: number): void => {
+    const result = transpose(song, cursor, { kind: 'selection', selection: selection ?? selectionBetween(cursor.track, cursor, cursor) }, semitones, 'keep')
+    if (!result) {
+      setMessage(drums ? 'Drums are not transposed.' : 'No notes here to transpose.')
+      return
+    }
+    edit(result.result)
+    setMessage(transposeMessage(result, semitones, 'keep'))
+  }
+
   const copy = (cut = false): void => {
     const beats = selection ? selectionBeats(song, selection) : structuredClone(track.bars[cursor.bar].beats)
     setClipboard({ beats, drums })
@@ -502,7 +517,8 @@ export function ScoreEditor(props: Props): React.JSX.Element {
     } else if (/^[0-9]$/.test(key) && !ctrl && !event.altKey) {
       setAnchor(null)
       enterDigit(Number(key))
-    } else if (key === 'ArrowRight') moveCursor(ctrl ? moveBar(song, cursor, 1) : moveBeat(song, cursor, 1), shift)
+    } else if (event.altKey && !ctrl && (key === 'ArrowUp' || key === 'ArrowDown')) nudgePitch(key === 'ArrowUp' ? 1 : -1)
+    else if (key === 'ArrowRight') moveCursor(ctrl ? moveBar(song, cursor, 1) : moveBeat(song, cursor, 1), shift)
     else if (key === 'ArrowLeft') moveCursor(ctrl ? moveBar(song, cursor, -1) : moveBeat(song, cursor, -1), shift)
     else if (key === 'ArrowUp') ctrl ? moveCursor(nextTrack(-1)) : project.setCursor(moveString(song, cursor, -1))
     else if (key === 'ArrowDown') ctrl ? moveCursor(nextTrack(1)) : project.setCursor(moveString(song, cursor, 1))
@@ -571,12 +587,14 @@ export function ScoreEditor(props: Props): React.JSX.Element {
   const describeCursor = (): string => {
     // The string as it sounds at fret 0 (on the capo, if there is one).
     const open = noteName(stringPitch(track, cursor.string, 0))
+    // Notes are named as the score writes them: B♭ in a key with flats, A♯ otherwise.
+    const flats = usesFlats(songKey(song))
     const what = drums
       ? noteOnString ? 'hit' : beat.notes.length === 0 ? 'rest' : 'no hit'
       : keys
         ? noteOnString ? `note${noteOnString.tie ? ' · held from the note before' : ''}` : beat.notes.length === 0 ? 'rest' : 'not on this key'
-      : noteOnString ? `fret ${noteOnString.fret} (${noteName(notePitch(track, noteOnString))})${techniqueText()}` : beat.notes.length === 0 ? 'rest' : 'empty string'
-    const spot = drums ? DRUM_PIECES[cursor.string - 1]?.name : keys ? noteName(rowPitch(cursor.string)) : `string ${cursor.string} (${open})`
+      : noteOnString ? `fret ${noteOnString.fret} (${noteName(notePitch(track, noteOnString), flats)})${techniqueText()}` : beat.notes.length === 0 ? 'rest' : 'empty string'
+    const spot = drums ? DRUM_PIECES[cursor.string - 1]?.name : keys ? noteName(rowPitch(cursor.string), flats) : `string ${cursor.string} (${open})`
     const where = `${track.name} · bar ${cursor.bar + 1} of ${barCount(song)} · beat ${cursor.beat + 1} · ${spot} · ${what}`
     if (!selection) return where
     const bars = selection.start.bar === selection.end.bar ? `bar ${selection.start.bar + 1}` : `bars ${selection.start.bar + 1}–${selection.end.bar + 1}`
@@ -659,6 +677,7 @@ export function ScoreEditor(props: Props): React.JSX.Element {
             { label: 'Paste', shortcut: 'Ctrl+V', title: 'At the cursor or the start of the selection, overwriting what’s there', onSelect: paste },
             'separator',
             { label: 'Delete beat', shortcut: 'Shift+Del', title: 'The rest of the bar moves up', onSelect: removeBeat },
+            { label: 'Transpose…', shortcut: 'Alt+↑ / ↓', title: 'Move notes up or down by semitones (Alt+↑ / Alt+↓: the selection a semitone)', onSelect: () => setTransposing(true) },
             { label: part ? `Select the whole ${pieceName}` : 'Select whole track', shortcut: 'Ctrl+A', onSelect: selectAll }
           ]}
         />
@@ -800,6 +819,28 @@ export function ScoreEditor(props: Props): React.JSX.Element {
           </button>
         )}
       </div>
+      {transposing && (
+        <TransposeDialog
+          song={song}
+          cursor={cursor}
+          selection={selection}
+          piece={part}
+          onApply={(result, semitones, fingering) => {
+            setTransposing(false)
+            edit(result.result)
+            setMessage(transposeMessage(result, semitones, fingering))
+          }}
+          onNothing={() => {
+            setTransposing(false)
+            setMessage(drums ? 'Drums are not transposed.' : 'No notes there to transpose.')
+            focus()
+          }}
+          onClose={() => {
+            setTransposing(false)
+            focus()
+          }}
+        />
+      )}
     </div>
   )
 }

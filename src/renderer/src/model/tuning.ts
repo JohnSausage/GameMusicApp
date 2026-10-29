@@ -121,14 +121,24 @@ export function retuneTrack(song: Song, cursor: Cursor, index: number, tuning: n
 
 /** Frets the notes of a beat for the open strings `after`, sounding as with `before`. */
 function refretBeat(notes: Note[], before: number[], after: number[]): { moved: number; changed: number } {
+  return placeNotes(notes, notes.map((note) => before[note.string - 1] + note.fret), after)
+}
+
+/**
+ * Frets the notes of a beat so they sound `pitches` (one per note) with the open
+ * strings `after`: on their own string if it reaches the pitch, otherwise on a
+ * free string of the beat, as close to their own as can be. A note no free
+ * string reaches stays as it was (`changed`).
+ */
+export function placeNotes(notes: Note[], pitches: number[], after: number[]): { moved: number; changed: number } {
   const reaches = (string: number, pitch: number): boolean => {
     const fret = pitch - after[string - 1]
     return fret >= 0 && fret <= MAX_FRET
   }
   const taken = new Set<number>()
   const homeless: { note: Note; pitch: number }[] = []
-  for (const note of notes) {
-    const pitch = before[note.string - 1] + note.fret
+  for (const [i, note] of notes.entries()) {
+    const pitch = pitches[i]
     if (reaches(note.string, pitch)) {
       note.fret = pitch - after[note.string - 1]
       taken.add(note.string)

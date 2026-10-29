@@ -68,3 +68,11 @@ describe('General MIDI sounds', () => {
     expect(new Midi(songToMidi(song)).tracks[0].instrument.number).toBe(4)
   })
 })
+
+describe('MIDI export', () => {
+  it('writes the key signature', () => {
+    expect(new Midi(songToMidi(createDemoSong())).header.keySignatures[0]).toMatchObject({ key: 'C', scale: 'major' })
+    const dMinor = { ...createDemoSong(), key: { fifths: -1, minor: true } }
+    expect(new Midi(songToMidi(dMinor)).header.keySignatures[0]).toMatchObject({ key: 'F', scale: 'minor' })
+  })
+})
