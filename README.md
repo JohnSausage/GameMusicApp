@@ -74,3 +74,9 @@ npm run smoke
 ```
 
 Starts the last build headless, checks that the UI and score render without errors, and quits.
+
+```bash
+npm run licenses
+```
+
+Writes `THIRD_PARTY_LICENSES`, the licenses of every library, font and sound the app contains; it is packaged next to the app. Run it after adding or updating a dependency (`npm test` fails when one the app imports isn't listed there in its installed version).

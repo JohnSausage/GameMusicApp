@@ -16,6 +16,7 @@
     "test": "vitest run",
     "dist:linux": "electron-vite build && electron-builder --linux --publish never",
     "dist:win": "electron-vite build && electron-builder --win --publish never",
+    "licenses": "node scripts/third-party-licenses.mjs",
     "smoke": "electron . --smoke-test --ozone-platform=headless --ozone-override-screen-size=1600,1000"
   },
   "devDependencies": {

@@ -5,6 +5,9 @@ directories:
 files:
   - out/**
   - package.json
+# Next to the app, as electron-builder puts Electron's and Chromium's licenses.
+extraFiles:
+  - THIRD_PARTY_LICENSES
 artifactName: ${productName}-${version}-${arch}.${ext}
 linux:
   target:
