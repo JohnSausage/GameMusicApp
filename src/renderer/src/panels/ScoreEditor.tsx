@@ -45,6 +45,7 @@ import { legatoTarget, toggleLegato, toggleTie, type Legato } from '../model/tec
 import { barSeconds, buildTimeline, secondsPerQuarter } from '../model/timing'
 import { transpose, transposeMessage } from '../model/transpose'
 import { moveToString } from '../model/tuning'
+import { fitBars, wrongBars, wrongBy, type WrongBar } from '../model/barCheck'
 import { secondsPerClick } from '../audio/analysis'
 import { readPref, writePref } from '../prefs'
 import { showTrack, shownTracks, ZOOM_STEPS } from '../project/layout'
@@ -172,6 +173,9 @@ export function ScoreEditor(props: Props): React.JSX.Element {
   // A part on its own is always shown; in the song, tracks can be left out of the score.
   const shown = part ? song.tracks.map((_, i) => i) : shownTracks(song, project.layout)
   const shownKey = shown.join(',')
+  const wrong = useMemo(() => wrongBars(song), [song])
+  const shownWrong = useMemo(() => wrong.filter((w) => shownKey.split(',').includes(String(w.track))), [wrong, shownKey])
+  const cursorWrong = wrong.find((w) => w.track === cursor.track && w.bar === cursor.bar)
   const drumTracks = song.tracks.flatMap((t, i) => (t.kind === 'drums' ? [i] : []))
   // The drum grid shows the drum track at the cursor, else the one shown last, else the first one.
   const gridTrack = drums ? cursor.track : (drumTracks.find((i) => song.tracks[i].id === gridTrackId) ?? drumTracks[0] ?? null)
@@ -452,6 +456,22 @@ export function ScoreEditor(props: Props): React.JSX.Element {
     setMessage(`Moved to string ${result.cursor.string}, fret ${note?.fret}.`)
   }
 
+  /** Fits bars to the time signature (EDIT-07): `only` that one, else all that need it. */
+  const fitWrongBars = (only?: WrongBar): void => {
+    const fitted = fitBars(song, cursor, only)
+    if (!fitted) {
+      setMessage('Every bar fits the time signature.')
+      return
+    }
+    edit(fitted.result)
+    const plural = (n: number, what: string): string => `${n} ${what}${n === 1 ? '' : 's'}`
+    const lost = [
+      fitted.removed > 0 && `${plural(fitted.removed, 'note')} past the end left out`,
+      fitted.shortened > 0 && `${plural(fitted.shortened, 'note')} cut short`
+    ].filter(Boolean)
+    setMessage(`Fitted ${plural(fitted.fitted, 'bar')} to the time signature.${lost.length ? ` ${lost.join(', ')}.` : ''}`)
+  }
+
   const copy = (cut = false): void => {
     const beats = selection ? selectionBeats(song, selection) : structuredClone(track.bars[cursor.bar].beats)
     setClipboard({ beats, drums })
@@ -716,6 +736,7 @@ export function ScoreEditor(props: Props): React.JSX.Element {
                   { label: 'Insert bar before', shortcut: 'Insert', onSelect: () => edit(insertBarBefore(song, cursor)) },
                   { label: 'Duplicate bar', shortcut: 'Ctrl+D', onSelect: () => edit(duplicateBar(song, cursor)) },
                   { label: 'Clear bar', onSelect: () => edit(clearBar(song, cursor)) },
+                  { label: 'Fit bars to the time signature', title: 'Fill bars that are too short with rests, cut bars that are too long', disabled: wrong.length === 0, onSelect: () => fitWrongBars() },
                   { label: 'Delete bar', shortcut: 'Ctrl+Del', onSelect: () => edit(deleteBar(song, cursor), lastBarMessage) },
                   'separator',
                   { label: 'Add a bar at the end', onSelect: addBar }
@@ -724,6 +745,7 @@ export function ScoreEditor(props: Props): React.JSX.Element {
                   { label: 'Insert bar before', shortcut: 'Insert', onSelect: () => edit(insertBarBefore(song, cursor)) },
                   { label: 'Duplicate bar', shortcut: 'Ctrl+D', onSelect: () => edit(duplicateBar(song, cursor)) },
                   { label: 'Clear bar in this track', onSelect: () => edit(clearBar(song, cursor)) },
+                  { label: 'Fit bars to the time signature', title: 'Fill bars that are too short with rests, cut bars that are too long', disabled: wrong.length === 0, onSelect: () => fitWrongBars() },
                   { label: 'Delete bar in all tracks', shortcut: 'Ctrl+Del', onSelect: () => edit(deleteBar(song, cursor), lastBarMessage) },
                   'separator',
                   section === null
@@ -745,6 +767,26 @@ export function ScoreEditor(props: Props): React.JSX.Element {
         )}
       </div>
 
+      {wrong.length > 0 && (
+        <div className="bar-check" role="status">
+          <span className="warning">
+            {cursorWrong
+              ? `Bar ${cursor.bar + 1} ${wrongBy(cursorWrong)} for ${song.timeSignature.join('/')}.${wrong.length > 1 ? ` ${wrong.length - 1} more bar${wrong.length === 2 ? '' : 's'} don’t fit either.` : ''}`
+              : `${wrong.length} bar${wrong.length === 1 ? ' doesn’t' : 's don’t'} fit the time signature ${song.timeSignature.join('/')}${shownWrong.length > 0 ? ' (marked)' : ''}.`}
+          </span>
+          {cursorWrong ? (
+            <button onClick={() => fitWrongBars(cursorWrong)}>{cursorWrong.length < cursorWrong.expected ? 'Fill with rests' : 'Cut to fit'}</button>
+          ) : (
+            shownWrong.length > 0 && <button onClick={() => moveCursor({ ...switchTrack(song, cursor, shownWrong[0].track), bar: shownWrong[0].bar, beat: 0 })}>Go to bar {shownWrong[0].bar + 1}</button>
+          )}
+          {(wrong.length > 1 || !cursorWrong) && (
+            <button onClick={() => fitWrongBars()} title="Fill bars that are too short with rests, cut bars that are too long">
+              Fit all
+            </button>
+          )}
+        </div>
+      )}
+
       <ScoreView
         song={song}
         staveMode={staves}
@@ -754,6 +796,7 @@ export function ScoreEditor(props: Props): React.JSX.Element {
         positionRef={positionRef}
         editCursor={cursor}
         selection={selection}
+        wrongBars={shownWrong}
         onSelectArea={onSelectArea}
         onScoreClick={onScoreClick}
         endActions={

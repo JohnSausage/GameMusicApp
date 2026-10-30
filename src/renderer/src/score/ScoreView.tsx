@@ -30,6 +30,8 @@ interface Props {
   editCursor?: Cursor | null
   /** Selected beats, highlighted per bar. */
   selection?: Selection | null
+  /** Bars too short or too long for the time signature (EDIT-07), marked. */
+  wrongBars?: { track: number; bar: number }[]
   /** `extend` is true for Shift+click (extend the selection). */
   onScoreClick?: (target: ScoreTarget, extend: boolean) => void
   /** Called after dragging a rectangle over the score, with the beats inside it. */
@@ -194,6 +196,20 @@ function drawSelection(container: HTMLElement, api: alphaTab.AlphaTabApi, conver
   }
 }
 
+/** A box over each bar of the wrong length, in the tracks shown. */
+function drawWrongBars(container: HTMLElement, api: alphaTab.AlphaTabApi, wrongBars: { track: number; bar: number }[], mapY: MapY): void {
+  for (const { track, bar } of wrongBars) {
+    const bounds = api.boundsLookup?.findMasterBarByIndex(bar)?.bars.filter((b) => b.bar.staff.track.index === track).map((b) => b.realBounds) ?? []
+    const staves = trackStavesY(api, bar, track)
+    if (bounds.length === 0 || !staves) continue
+    const x = Math.min(...bounds.map((b) => b.x))
+    const box = document.createElement('div')
+    box.className = 'score-wrong-bar'
+    place(box, { x, y: mapY(staves.top) - 4, w: Math.max(...bounds.map((b) => b.x + b.w)) - x, h: staves.bottom - staves.top + 8 })
+    container.appendChild(box)
+  }
+}
+
 function place(element: HTMLElement, box: Box | null): void {
   if (!box) {
     element.style.display = 'none'
@@ -226,7 +242,7 @@ function stringBox(api: alphaTab.AlphaTabApi, converted: ConvertedScore, cursor:
 }
 
 export function ScoreView(props: Props): React.JSX.Element {
-  const { song, staveMode, tracks, zoom = 1, pageView = false, positionRef, editCursor, selection, onScoreClick, onSelectArea, endActions } = props
+  const { song, staveMode, tracks, zoom = 1, pageView = false, positionRef, editCursor, selection, wrongBars, onScoreClick, onSelectArea, endActions } = props
   const scrollRef = useRef<HTMLDivElement>(null)
   const wrapperRef = useRef<HTMLDivElement>(null)
   const pagesLayerRef = useRef<HTMLDivElement>(null)
@@ -366,10 +382,11 @@ export function ScoreView(props: Props): React.JSX.Element {
         const visible = box ?? (staves ? { x: 0, y: staves.top, w: 0, h: staves.bottom - staves.top } : null)
         if (visible && editCursor) keepVisible(viewBox(visible)!, `${editCursor.track}/${editCursor.bar}/${editCursor.beat}`)
 
-        const selectionKey = `${renderVersionRef.current}|${JSON.stringify(selection ?? null)}`
+        const selectionKey = `${renderVersionRef.current}|${JSON.stringify(selection ?? null)}|${JSON.stringify(wrongBars ?? [])}`
         if (selectionKey !== drawnSelectionRef.current) {
           drawnSelectionRef.current = selectionKey
           drawSelection(selectionLayerRef.current!, api, converted, song, selection, viewY)
+          drawWrongBars(selectionLayerRef.current!, api, wrongBars ?? [], viewY)
         }
 
         const lastBar = api.boundsLookup.staffSystems.at(-1)?.bars.at(-1)?.realBounds
@@ -398,7 +415,7 @@ export function ScoreView(props: Props): React.JSX.Element {
 
     frame = requestAnimationFrame(tick)
     return () => cancelAnimationFrame(frame)
-  }, [timeline, positionRef, editCursor, selection, song, shown])
+  }, [timeline, positionRef, editCursor, selection, wrongBars, song, shown])
 
   // Dragging a rectangle selects the beats under it (in the track where the drag started).
   const relative = (event: React.PointerEvent<HTMLDivElement>): { x: number; y: number } => {

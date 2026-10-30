@@ -38,7 +38,7 @@ export interface TimeSignatureChange {
 const ticksOf = (timeSignature: [number, number]): number => barTicks({ timeSignature } as Song)
 
 /** Whether `ties` hold notes over a bar line: not for drum hits, which don't ring on. */
-const holds = (track: Track): boolean => track.kind !== 'drums'
+export const holds = (track: Track): boolean => track.kind !== 'drums'
 
 /** Bars of music laid out again in bars of `to` ticks (they were `from` ticks), every note at the same time. */
 export function flowBars(bars: Bar[], from: number, to: number, ties: boolean): Bar[] {
@@ -46,7 +46,7 @@ export function flowBars(bars: Bar[], from: number, to: number, ties: boolean): 
 }
 
 /** One bar made `to` ticks long: its notes stay from its start; longer, it ends with rests; shorter, what doesn't fit goes. */
-function fitBar(bar: Bar, to: number, ties: boolean, counts: { removed: number; shortened: number }): Bar {
+export function fitBar(bar: Bar, to: number, ties: boolean, counts: { removed: number; shortened: number }): Bar {
   const spans: Span[] = []
   for (const span of barSpans([bar])) {
     if (span.start >= to) counts.removed += span.notes.length

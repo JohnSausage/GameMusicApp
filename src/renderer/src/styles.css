@@ -2070,6 +2070,21 @@ button.arr-label:hover:not(:disabled) {
   border-radius: 4px;
 }
 
+.bar-check {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0;
+}
+
+.score-wrong-bar {
+  position: absolute;
+  background: rgba(220, 38, 38, 0.1);
+  border: 1px dashed rgba(220, 38, 38, 0.7);
+  border-radius: 4px;
+}
+
 .score-marquee {
   position: absolute;
   display: none;
