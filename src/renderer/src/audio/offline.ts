@@ -1,10 +1,11 @@
 import { MIDIControllers, SoundBankLoader, SpessaSynthProcessor } from 'spessasynth_core'
 import { effectSeconds, effectSong, finishEffectAudio, type EffectWavOptions } from '../model/effects'
 import { audibleTracks, type Song, type SoundEffect } from '../model/song'
-import { buildTimeline, exportFrameCount, notesBetween, type ExportEnding, type NoteEvent, type TimeRange } from '../model/timing'
+import { buildTimeline, exportFrameCount, foldLoop, LOOP_TAIL_SECONDS, notesBetween, type ExportEnding, type NoteEvent, type TimeRange } from '../model/timing'
 import { createBitcrusher, createChipSynth, createTrackBus, crushActive, loadSynthWorklet } from './mixer'
 import { BEND_RANGE, pitchWheelSteps } from './bends'
 import { channelForTrack, loadSoundFont, panToMidi } from './soundfont'
+import { bufferChannels } from './wav'
 
 const GATE = 0.92
 const BLOCK = 128
@@ -72,7 +73,8 @@ export interface RenderOptions {
   range?: TimeRange
   /**
    * 'tail' lets notes ring out after the end; 'cut' ends exactly at the end of
-   * the range with a short fade, so the file loops without a gap (EXP-05).
+   * the range with a short fade, so the file loops without a gap (EXP-05);
+   * 'loop' also ends there, with what rings on mixed back onto the start (EXP-10).
    */
   ending?: ExportEnding
 }
@@ -91,7 +93,9 @@ export async function renderSongOffline(song: Song, sampleRate = 48000, options:
   const ending = options.ending ?? 'tail'
   const audible = audibleTracks(song)
   const timeline = { notes: notesBetween(all.notes, range.start, range.end).filter((n) => audible[n.trackIndex]) }
-  const frameCount = Math.max(1, exportFrameCount(range, sampleRate, ending))
+  const loopFrames = Math.max(1, exportFrameCount(range, sampleRate, ending))
+  // A loop is rendered on past its end, and the rest is folded back onto its start.
+  const frameCount = ending === 'loop' ? loopFrames + Math.round(LOOP_TAIL_SECONDS * sampleRate) : loopFrames
   const offline = new OfflineAudioContext(2, frameCount, sampleRate)
   await loadSynthWorklet(offline)
   const master = offline.createGain()
@@ -136,7 +140,11 @@ export async function renderSongOffline(song: Song, sampleRate = 48000, options:
 
   const buffer = await offline.startRendering()
   if (ending === 'cut') fadeOut(buffer, CUT_FADE_SECONDS)
-  return buffer
+  if (ending !== 'loop') return buffer
+  const folded = foldLoop(bufferChannels(buffer), loopFrames)
+  const loop = new AudioBuffer({ length: loopFrames, numberOfChannels: folded.length, sampleRate })
+  folded.forEach((channel, c) => loop.copyToChannel(channel, c))
+  return loop
 }
 
 /** Rendered after a sound effect's last note: longer than any sound rings on (the longest release is 4 s). */

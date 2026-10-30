@@ -1,8 +1,10 @@
 import { Midi } from '@tonejs/midi'
 import { readFileSync } from 'node:fs'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { songToMidi } from '../src/renderer/src/audio/midiExport'
-import { encodeWav16 } from '../src/renderer/src/audio/wav'
+import { decodeWav, encodeWav, encodeWav16 } from '../src/renderer/src/audio/wav'
+import { encodeOgg } from '../src/renderer/src/audio/ogg'
+import { foldLoop } from '../src/renderer/src/model/timing'
 import { beatMap, beatMapFileName, beatMapJson } from '../src/renderer/src/model/beatMap'
 import { emptyBar, type Cursor } from '../src/renderer/src/model/edit'
 import { audibleTracks, createDemoSong, createTrack, type Song } from '../src/renderer/src/model/song'
@@ -27,6 +29,93 @@ describe('encodeWav16', () => {
 
     const samples = Array.from({ length: 6 }, (_, i) => view.getInt16(44 + i * 2, true))
     expect(samples).toEqual([0, 16383, 32767, -16384, -32768, 32767]) // clipped at ±1
+  })
+})
+
+describe('encodeWav', () => {
+  const text = (bytes: Uint8Array, offset: number): string => String.fromCharCode(...bytes.slice(offset, offset + 4))
+
+  it('writes 24-bit PCM that reads back within one step', () => {
+    const left = new Float32Array([0, 0.5, -0.25, 1, -1])
+    const bytes = encodeWav([left], 44100, 'pcm24')
+    const view = new DataView(bytes.buffer)
+    expect(view.getUint16(20, true)).toBe(1) // PCM
+    expect(view.getUint16(34, true)).toBe(24)
+    expect(view.getUint32(28, true)).toBe(44100 * 3) // bytes per second
+    expect(view.getUint32(40, true)).toBe(5 * 3)
+    expect(bytes.length).toBe(44 + 16) // 15 bytes of data, padded to even
+    expect(view.getUint32(4, true)).toBe(bytes.length - 8)
+
+    const back = decodeWav(bytes)
+    expect(back.sampleRate).toBe(44100)
+    for (let i = 0; i < left.length; i++) expect(Math.abs(back.channels[0][i] - left[i])).toBeLessThan(1 / 0x7fffff)
+  })
+
+  it('writes 32-bit float with the longer format chunk and a fact chunk, keeping samples above 0 dB', () => {
+    const left = new Float32Array([0, 1.5, -0.125])
+    const right = new Float32Array([0.25, -2, 1])
+    const bytes = encodeWav([left, right], 48000, 'float32')
+    const view = new DataView(bytes.buffer)
+    expect(view.getUint32(16, true)).toBe(18) // fmt size
+    expect(view.getUint16(20, true)).toBe(3) // IEEE float
+    expect(view.getUint16(34, true)).toBe(32)
+    expect(view.getUint16(36, true)).toBe(0) // no extra format bytes
+    expect(text(bytes, 38)).toBe('fact')
+    expect(view.getUint32(46, true)).toBe(3) // frames
+    expect(text(bytes, 50)).toBe('data')
+    expect(view.getUint32(54, true)).toBe(3 * 2 * 4)
+    expect(bytes.length).toBe(58 + 24)
+
+    const back = decodeWav(bytes)
+    expect(Array.from(back.channels[0])).toEqual([0, 1.5, -0.125])
+    expect(Array.from(back.channels[1])).toEqual([0.25, -2, 1])
+  })
+
+  it('reads 16-bit files as before', () => {
+    const back = decodeWav(encodeWav16([new Float32Array([0, 0.5, -1])], 22050))
+    expect(back.channels[0][2]).toBe(-1)
+    expect(back.channels[0][1]).toBeCloseTo(0.5, 4)
+  })
+})
+
+describe('foldLoop', () => {
+  it('adds what rings past the loop end onto its start, wrapping round as often as needed', () => {
+    const channel = new Float32Array([1, 2, 3, 4, 10, 20, 30, 40, 100])
+    const [folded] = foldLoop([channel], 4)
+    expect(Array.from(folded)).toEqual([111, 22, 33, 44])
+  })
+
+  it('keeps a loop without a tail as it is', () => {
+    const [folded] = foldLoop([new Float32Array([1, 2, 3])], 3)
+    expect(Array.from(folded)).toEqual([1, 2, 3])
+  })
+})
+
+describe('encodeOgg', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('writes an OGG Vorbis file as long as the audio', async () => {
+    const wasm = readFileSync('node_modules/wasm-media-encoders/wasm/ogg.wasm')
+    vi.stubGlobal('fetch', async () => new Response(wasm))
+    const rate = 44100
+    const frames = Math.round(rate * 2.5) // more than one chunk
+    const tone = (f: number): Float32Array => Float32Array.from({ length: frames }, (_, i) => 0.3 * Math.sin((2 * Math.PI * f * i) / rate))
+    const progress: number[] = []
+    const bytes = await encodeOgg([tone(440), tone(660)], rate, 3, (done) => progress.push(done))
+
+    const text = (offset: number, length = 4): string => String.fromCharCode(...bytes.slice(offset, offset + length))
+    expect(text(0)).toBe('OggS')
+    expect(text(29, 6)).toBe('vorbis') // identification header
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+    expect(view.getUint8(39)).toBe(2) // channels
+    expect(view.getUint32(40, true)).toBe(rate)
+    expect(progress.at(-1)).toBe(1)
+
+    // The last page's granule position is the number of frames.
+    const last = Array.from(bytes.keys()).findLast((i) => text(i) === 'OggS')!
+    expect(view.getUint8(last + 5) & 4).toBe(4) // end of stream
+    expect(Number(view.getBigUint64(last + 6, true))).toBe(frames)
+    expect(bytes.length).toBeLessThan(frames * 4 * 0.2) // far smaller than 16-bit WAV
   })
 })
 
@@ -166,6 +255,10 @@ describe('beat map', () => {
     expect(later.firstBar).toBe(3)
     expect(later.sections).toEqual([{ name: 'Loop', bar: 0, bars: 2, start: 0, end: 4 }])
     expect(beatMapFileName(song, 'bars 3-4')).toBe('Demo song - bars 3-4.json')
+    // A seamless loop is exactly as long as the range, and loops.
+    const loop = beatMap(song, { start: 0, end: 2, name: 'bars 1-2' }, { sampleRate: 44100, ending: 'loop', mix: null, stems: [] })
+    expect(loop).toMatchObject({ loops: true, tailSeconds: 0, samples: 4 * 44100 })
+    expect(stemsOf(song, 'bars 1-2', [0], false, '.ogg').stems[0].fileName).toBe('Demo song - bars 1-2 - Acoustic guitar.ogg')
   })
 
   it('counts beats in the time signature: eighths in 6/8', () => {

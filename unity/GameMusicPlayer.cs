@@ -1,9 +1,9 @@
 // GameMusicPlayer: plays music exported from GameMusicApp in Unity.
 //
-// 1. Export the music as stems (Export → WAV… → "One file per track"), ideally
-//    with "Cut at the end" (to loop) and "Also a beat map (JSON)".
-// 2. Put the WAV files and the .json into your Assets folder, and this script too.
-// 3. Add GameMusicPlayer to a GameObject. Drag the WAV files into "Layers" and the
+// 1. Export the music as stems (Export → Audio… → "One file per track"), as WAV
+//    or OGG, ideally with "Loop seamlessly" and "Also a beat map (JSON)".
+// 2. Put the audio files and the .json into your Assets folder, and this script too.
+// 3. Add GameMusicPlayer to a GameObject. Drag the audio files into "Layers" and the
 //    .json into "Beat Map".
 //
 // All layers start at the same moment and stay in sync. From your scripts, fade
@@ -40,12 +40,12 @@ public class GameMusicPlayer : MonoBehaviour
         [NonSerialized] public double fadeAt;
     }
 
-    [Tooltip("The exported WAV files: the stems, or the mix.")]
+    [Tooltip("The exported audio files (WAV or OGG): the stems, or the mix.")]
     public Layer[] layers = new Layer[0];
     [Tooltip("The beat map (.json) exported with them: for OnBeat, OnBar and the sections. Optional.")]
     public TextAsset beatMap;
     public bool playOnStart = true;
-    [Tooltip("Repeat the music. Export it with \"Cut at the end\" so it loops without a gap.")]
+    [Tooltip("Repeat the music. Export it with \"Loop seamlessly\" so it loops without a gap.")]
     public bool loop = true;
     [Tooltip("Mixer group for all layers. Optional.")]
     public AudioMixerGroup output;

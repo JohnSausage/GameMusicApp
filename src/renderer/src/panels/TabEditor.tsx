@@ -61,7 +61,7 @@ const SPEEDS = [0.25, 0.5, 0.6, 0.7, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2]
 const VIEW_TABS: Record<MainView, { label: string; title: string }> = {
   score: { label: 'Score', title: 'The notes, bar by bar (Ctrl+Tab switches)' },
   arrangement: { label: 'Arrangement', title: 'The song’s sections, and the part each track plays in them (Ctrl+Tab switches)' },
-  effects: { label: 'Sound effects', title: 'The game’s sound effects, each with its own sound and notes, exported one WAV file each (Ctrl+Tab switches)' }
+  effects: { label: 'Sound effects', title: 'The game’s sound effects, each with its own sound and notes, exported one file each (Ctrl+Tab switches)' }
 }
 
 interface TrackListProps {
@@ -672,8 +672,8 @@ export function TabEditor({ project, getEngine, headerSlots, onShowShortcuts }: 
               align="right"
               items={[
                 {
-                  label: 'WAV…',
-                  title: 'The song, a section or some bars, loopable for Unity',
+                  label: 'Audio (WAV, OGG)…',
+                  title: 'The song, a section or some bars, as WAV or OGG, loopable for Unity',
                   onSelect: () => {
                     stop()
                     setExportDialog(true)
@@ -683,8 +683,8 @@ export function TabEditor({ project, getEngine, headerSlots, onShowShortcuts }: 
                 { label: 'PDF', title: 'The score on A4 pages, as in the page view (the tracks shown in the score)', onSelect: () => void exportPdf() },
                 'separator',
                 {
-                  label: 'Sound effects (WAV)…',
-                  title: effects.length > 0 ? 'The sound effects, one WAV file each' : 'Make sound effects in the Sound effects tab first',
+                  label: 'Sound effects (WAV, OGG)…',
+                  title: effects.length > 0 ? 'The sound effects, one WAV or OGG file each' : 'Make sound effects in the Sound effects tab first',
                   disabled: effects.length === 0,
                   onSelect: () => {
                     stop()

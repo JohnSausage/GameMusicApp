@@ -1,6 +1,6 @@
 import { strToU8, unzipSync, zipSync } from 'fflate'
 import { describe, expect, it } from 'vitest'
-import { decodeWav16, encodeWav16 } from '../src/renderer/src/audio/wav'
+import { decodeWav, encodeWav16 } from '../src/renderer/src/audio/wav'
 import { addBars, addTrack, createSong } from '../src/renderer/src/model/edit'
 import { createDemoSong, type Song, type TakeInfo } from '../src/renderer/src/model/song'
 import { DEFAULT_LAYOUT, sameLayout, showTrack, shownTracks, type Layout } from '../src/renderer/src/project/layout'
@@ -107,18 +107,18 @@ describe('project file', () => {
   })
 })
 
-describe('decodeWav16', () => {
+describe('decodeWav', () => {
   it('reads back what encodeWav16 wrote', () => {
     const left = new Float32Array([0, 0.5, -0.5, 1])
     const right = new Float32Array([0.25, -1, 0, 0.75])
-    const { channels, sampleRate } = decodeWav16(encodeWav16([left, right], 44100))
+    const { channels, sampleRate } = decodeWav(encodeWav16([left, right], 44100))
     expect(sampleRate).toBe(44100)
     expect(Array.from(channels[0])).toEqual([0, 16383 / 32767, -0.5, 1].map(Math.fround))
     expect(Array.from(channels[1])).toEqual([8191 / 32767, -1, 0, 24575 / 32767].map(Math.fround))
   })
 
   it('rejects other files', () => {
-    expect(() => decodeWav16(new Uint8Array(20))).toThrow('Not a WAV file')
+    expect(() => decodeWav(new Uint8Array(20))).toThrow('Not a WAV file')
   })
 })
 

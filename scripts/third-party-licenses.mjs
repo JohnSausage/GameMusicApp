@@ -19,8 +19,16 @@ const NOTES = {
     'soundfont/sonivox.sf2: "SONiVOX EAS GM Wavetable Ver. 2.10" by Sonic Network\n' +
     'Inc., from https://musical-artifacts.com/artifacts/1517, licensed under the\n' +
     'Creative Commons Attribution 3.0 license\n' +
-    '(https://creativecommons.org/licenses/by/3.0/).'
+    '(https://creativecommons.org/licenses/by/3.0/).',
+  'wasm-media-encoders/wasm/ogg.wasm':
+    'wasm/ogg.wasm: the Ogg Vorbis encoder, built from libvorbis (Copyright (c)\n' +
+    '2002-2020 Xiph.org Foundation) and libogg (Copyright (c) 2002, Xiph.org\n' +
+    'Foundation), licensed under the BSD 3-Clause License; its text is at the end of\n' +
+    'this file.'
 }
+
+/** NOTES that point to the BSD 3-Clause License text at the end of the file. */
+const BSD_NOTES = ['wasm-media-encoders/wasm/ogg.wasm']
 
 const MIT = `Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -185,6 +193,7 @@ async function main() {
   const rows = []
   const sections = []
   let integrated = false
+  let bsd = false
   for (const name of [...packages.keys()].sort()) {
     const { dir, files } = packages.get(name)
     const pkg = JSON.parse(read(path.join(dir, 'package.json')))
@@ -234,6 +243,7 @@ async function main() {
         body.push(`${path.relative(dir, path.join(folder, f))}:\n\n${text}`)
       }
       if (NOTES[specifier]) body.push(NOTES[specifier])
+      if (BSD_NOTES.includes(specifier)) bsd = true
     }
     sections.push([rule('='), `${name} ${pkg.version} (${license})`, sourceUrl(pkg, name), rule('='), '', body.join('\n\n'), ''].join('\n'))
   }
@@ -244,9 +254,11 @@ async function main() {
   const versionWidth = Math.max('Version'.length, ...rows.map(([, version]) => version.length)) + 2
   const table = rows.map(([name, version, license]) => `${name.padEnd(nameWidth)}${version.padEnd(versionWidth)}${license}`)
   const appendix = [[rule('='), 'Apache License 2.0', rule('='), '', apache].join('\n')]
-  if (integrated) {
-    appendix.push([rule('='), 'MIT License', '(for the libraries alphaTab integrates, with their copyrights listed there)', rule('='), '', MIT].join('\n'))
-    appendix.push([rule('='), 'BSD 3-Clause License', '(for libvorbis, in alphaTab, with its copyright listed there)', rule('='), '', BSD_3_CLAUSE].join('\n'))
+  if (integrated) appendix.push([rule('='), 'MIT License', '(for the libraries alphaTab integrates, with their copyrights listed there)', rule('='), '', MIT].join('\n'))
+  if (integrated || bsd) {
+    const users = [integrated && 'libvorbis in alphaTab', bsd && 'libvorbis and libogg in wasm-media-encoders'].filter(Boolean)
+    const title = ['BSD 3-Clause License', ...users.map((user, i) => `${i === 0 ? '(for' : 'and for'} ${user},`), 'with their copyrights listed there)']
+    appendix.push([rule('='), ...title, rule('='), '', BSD_3_CLAUSE].join('\n'))
   }
 
   const text = [

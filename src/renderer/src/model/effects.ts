@@ -268,9 +268,9 @@ export function finishEffectAudio(channels: Float32Array[], sampleRate: number, 
 }
 
 /**
- * The WAV file names of effects: their names made safe for files, numbered when
+ * The file names of effects (.wav or .ogg): their names made safe for files, numbered when
  * two would be the same (also only by upper and lower case, as on Windows and macOS).
  */
-export function effectFileNames(effects: Pick<SoundEffect, 'name'>[]): string[] {
-  return uniqueFileNames(effects.map((e) => e.name), 'Effect', '.wav')
+export function effectFileNames(effects: Pick<SoundEffect, 'name'>[], extension = '.wav'): string[] {
+  return uniqueFileNames(effects.map((e) => e.name), 'Effect', extension)
 }

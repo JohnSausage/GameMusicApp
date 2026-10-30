@@ -39,12 +39,36 @@ export interface TimeRange {
   end: number
 }
 
-/** How an exported WAV ends: 'cut' exactly at the end (loopable), or 'tail' to let notes ring out. */
-export type ExportEnding = 'cut' | 'tail'
+/**
+ * How an exported file ends: 'loop' exactly at the end with the notes still
+ * ringing there mixed back onto the start (EXP-10), 'cut' exactly at the end
+ * (loopable, ringing notes cut off), or 'tail' to let notes ring out.
+ */
+export type ExportEnding = 'loop' | 'cut' | 'tail'
 
 export const EXPORT_TAIL_SECONDS = 1.5
 
-/** Samples per channel of an exported range; a cut export is exactly as long as the range. */
+/** How long after a loop's end notes are rendered, to mix them back onto its start (the longest synth release is 4 s). */
+export const LOOP_TAIL_SECONDS = 5
+
+/** Whether files with this ending loop: exactly as long as the music. */
+export const loops = (ending: ExportEnding): boolean => ending !== 'tail'
+
+/**
+ * Mixes what rings on after `frames` back onto the start, wrapping round as
+ * often as needed (a loop shorter than the tail): the end of each round flows
+ * into the start of the next without a gap. Returns channels `frames` long.
+ */
+export function foldLoop(channels: Float32Array[], frames: number): Float32Array<ArrayBuffer>[] {
+  return channels.map((channel) => {
+    const out = new Float32Array(frames)
+    out.set(channel.subarray(0, frames))
+    for (let i = frames; i < channel.length; i++) out[i % frames] += channel[i]
+    return out
+  })
+}
+
+/** Samples per channel of an exported range; a loop or cut export is exactly as long as the range. */
 export function exportFrameCount(range: TimeRange, sampleRate: number, ending: ExportEnding): number {
   return Math.round((range.end - range.start + (ending === 'tail' ? EXPORT_TAIL_SECONDS : 0)) * sampleRate)
 }

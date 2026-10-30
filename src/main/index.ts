@@ -103,7 +103,7 @@ async function runSmokeTest(win: BrowserWindow): Promise<void> {
     return '(smoke test folder)'
   })
   // Start page → most recent project (or the demo song if there is none) → editor with a rendered score
-  // → add drums with a pattern → the arrangement → a sound effect exported as WAV → retro sounds and playback → import a generated WAV in the record/import dialog and transcribe it with Basic Pitch.
+  // → add drums with a pattern → the arrangement → a sound effect exported as WAV and OGG → retro sounds and playback → import a generated WAV in the record/import dialog and transcribe it with Basic Pitch.
   // alphaTab only renders into a visible, non-zero-size container: run headless with
   // --ozone-platform=headless --ozone-override-screen-size=1600,1000 (see package.json "smoke").
   const result = await win.webContents.executeJavaScript(`(async () => {
@@ -163,14 +163,19 @@ async function runSmokeTest(win: BrowserWindow): Promise<void> {
     await waitFor(() => /PDF saved|PDF could not/.test(document.querySelector('.status-bar .status')?.textContent ?? ''), 15000)
     pageView.pdfMessage = document.querySelector('.status-bar .status')?.textContent ?? null
 
-    // Stems: Export → WAV…, one file per track (at least one track picked), the first two sharing a stem, and the mix
+    // Stems: Export → Audio… as 16-bit WAV, one file per track (at least one track picked), the first two sharing a stem, and the mix
     // next to them; all the same length. The dialog's remembered settings are put back afterwards.
     const wavExportPref = localStorage.getItem('wavExport')
     document.querySelector('.editor-header .menu-button[title="Export"]')?.click()
     await sleep(200)
-    ;[...document.querySelectorAll('.menu-list [role=menuitem]')].find((item) => item.textContent.startsWith('WAV'))?.click()
+    ;[...document.querySelectorAll('.menu-list [role=menuitem]')].find((item) => item.textContent.startsWith('Audio'))?.click()
     await sleep(300)
     const stemDialog = document.querySelector('.export-dialog')
+    const formatSelect = [...(stemDialog?.querySelectorAll('select') ?? [])].find((select) => [...select.options].some((o) => o.value === 'pcm16'))
+    if (formatSelect && formatSelect.value !== 'pcm16') {
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(formatSelect, 'pcm16')
+      formatSelect.dispatchEvent(new Event('change', { bubbles: true }))
+    }
     stemDialog?.querySelectorAll('input[name="files"]')[1]?.click()
     await sleep(200)
     const stemBox = (row) => row.querySelector('input[type="checkbox"]')
@@ -296,12 +301,28 @@ async function runSmokeTest(win: BrowserWindow): Promise<void> {
     const effectHead = document.querySelector('.effect-head')
     if (effectHead) button('Vary', effectHead)?.click()
     await sleep(500)
-    button('Export WAV…', effectList())?.click()
+    button('Export…', effectList())?.click()
     await sleep(300)
     const effectDialog = document.querySelector('.export-dialog')
     if (effectDialog) button('Export…', effectDialog)?.click()
     await waitFor(() => !document.querySelector('.export-dialog'), 15000)
     effects.message = document.querySelector('.effect-head .status')?.textContent ?? null
+    // Again as OGG (the encoder's .wasm loads from the app's files); the dialog's remembered settings are put back.
+    const effectExportPref = localStorage.getItem('effectExport')
+    button('Export…', effectList())?.click()
+    await sleep(300)
+    const oggDialog = document.querySelector('.export-dialog')
+    const oggSelect = [...(oggDialog?.querySelectorAll('select') ?? [])].find((select) => [...select.options].some((o) => o.value === 'ogg'))
+    if (oggSelect) {
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(oggSelect, 'ogg')
+      oggSelect.dispatchEvent(new Event('change', { bubbles: true }))
+      await sleep(200)
+      button('Export…', oggDialog)?.click()
+    }
+    await waitFor(() => !document.querySelector('.export-dialog'), 15000)
+    effects.oggMessage = document.querySelector('.effect-head .status')?.textContent ?? null
+    if (effectExportPref === null) localStorage.removeItem('effectExport')
+    else localStorage.setItem('effectExport', effectExportPref)
     viewTab('Score')?.click()
     await sleep(1500)
 
@@ -415,13 +436,16 @@ async function runSmokeTest(win: BrowserWindow): Promise<void> {
   result.effects.wav = effectWav
     ? { header: effectWav.subarray(0, 4).toString('latin1'), channels: effectWav.readUInt16LE(22), seconds: effectWav.readUInt32LE(40) / 2 / effectWav.readUInt16LE(22) / effectWav.readUInt32LE(24) }
     : null
+  // The same effect as OGG Vorbis.
+  const effectOgg = saved.find((file) => file.name === `${result.effects.name}.ogg`)?.data
+  result.effects.ogg = effectOgg ? { header: effectOgg.subarray(0, 4).toString('latin1'), vorbis: effectOgg.subarray(29, 35).toString('latin1'), bytes: effectOgg.length } : null
   // The edits above are unsaved, so a recovery copy is kept; the smoke test throws it away again.
   const recovery = ownRecoveryCopies()
   result.recoveryCopy = recovery.files.length === 1 && existsSync(recovery.files[0])
   recovery.discard()
   result.recoveryCopyRemoved = !existsSync(recovery.files[0] ?? '')
   const passed =
-    errors.length === 0 && result.recoveryCopy && result.recoveryCopyRemoved && result.startPage && result.theme !== null && result.scoreRenderMs !== null && result.preloadBridge && result.drumHits > 0 && result.pianoRoll && result.hiddenTrack.hidden && result.hiddenTrack.shownAgain && result.tuning.after?.includes('Drop D · capo 2') && result.tuning.undone && result.pageView.pages > 0 && result.pageView.screenAgain && result.pageView.pdf?.header === '%PDF-' && result.pageView.pdf.pages > 0 && stemsOk && result.arrangement.cells > 0 && result.arrangement.paletteParts > 0 && result.arrangement.afterDuplicate === result.arrangement.sections + 1 && result.arrangement.newPart && result.arrangement.partScore && result.arrangement.duplicated && result.effects.added && result.effects.name?.startsWith('Coin') && result.effects.colored && result.effects.recolored && result.effects.overSong?.heard > 0 && result.effects.overSong.songPlays && result.effects.wav?.header === 'RIFF' && result.effects.wav.channels === 1 && result.effects.wav.seconds > 0 && result.effects.wav.seconds < 2 && result.soundWindow.categories >= 17 && result.playing && transcribed
+    errors.length === 0 && result.recoveryCopy && result.recoveryCopyRemoved && result.startPage && result.theme !== null && result.scoreRenderMs !== null && result.preloadBridge && result.drumHits > 0 && result.pianoRoll && result.hiddenTrack.hidden && result.hiddenTrack.shownAgain && result.tuning.after?.includes('Drop D · capo 2') && result.tuning.undone && result.pageView.pages > 0 && result.pageView.screenAgain && result.pageView.pdf?.header === '%PDF-' && result.pageView.pdf.pages > 0 && stemsOk && result.arrangement.cells > 0 && result.arrangement.paletteParts > 0 && result.arrangement.afterDuplicate === result.arrangement.sections + 1 && result.arrangement.newPart && result.arrangement.partScore && result.arrangement.duplicated && result.effects.added && result.effects.name?.startsWith('Coin') && result.effects.colored && result.effects.recolored && result.effects.overSong?.heard > 0 && result.effects.overSong.songPlays && result.effects.wav?.header === 'RIFF' && result.effects.wav.channels === 1 && result.effects.wav.seconds > 0 && result.effects.wav.seconds < 2 && result.effects.ogg?.header === 'OggS' && result.effects.ogg.vorbis === 'vorbis' && result.soundWindow.categories >= 17 && result.playing && transcribed
   console.log('SMOKE_TEST_RESULT ' + JSON.stringify({ ...result, userData: app.getPath('userData'), errors }))
   app.exit(passed ? 0 : 1)
 }

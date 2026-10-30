@@ -2,7 +2,7 @@ import { sectionRanges, type BarRange } from './edit'
 import { uniqueFileNames } from './fileNames'
 import { tempoAt, timeSignatureAt, type Song } from './song'
 import { exportFilePrefix, type Stem } from './stems'
-import { barSeconds, barStartSeconds, EXPORT_TAIL_SECONDS, exportFrameCount, secondsPerQuarter, type ExportEnding } from './timing'
+import { barSeconds, barStartSeconds, EXPORT_TAIL_SECONDS, exportFrameCount, loops, secondsPerQuarter, type ExportEnding } from './timing'
 
 /**
  * The beat map (REQUIREMENTS.md EXP-11): a JSON file next to exported WAV files
@@ -97,7 +97,7 @@ export function beatMap(song: Song, range: BarRange & { name: string | null }, f
     bars: range.end - range.start,
     barTimes,
     seconds: round(seconds.end - seconds.start),
-    loops: files.ending === 'cut',
+    loops: loops(files.ending),
     tailSeconds: files.ending === 'tail' ? EXPORT_TAIL_SECONDS : 0,
     sampleRate: files.sampleRate,
     samples: exportFrameCount(seconds, files.sampleRate, files.ending),

@@ -1,7 +1,7 @@
 // The .gmsong project file (REQUIREMENTS.md PRJ-02, PRJ-07): a zip archive with
 // song.json and one audio/<take id>.wav per recorded or imported take.
 import { strFromU8, strToU8, unzipSync, zipSync, type Zippable } from 'fflate'
-import { decodeWav16, encodeWav16 } from '../audio/wav'
+import { decodeWav, encodeWav16 } from '../audio/wav'
 import { fixPartColors, PART_COLORS, writeOut } from '../model/arrangement'
 import { MAX_FIFTHS } from '../model/keySignature'
 import { MASTER_DEFAULTS, NOTE_VALUES, type Bar, type Instrument, type MasterSettings, type ProjectAudio, type Song, type SoundEffect, type TakeInfo, type Track } from '../model/song'
@@ -71,7 +71,7 @@ export function parseProject(data: Uint8Array): ProjectData {
     const file = files[takeFile(take.id)]
     if (!file) continue
     try {
-      audio.set(take.id, decodeWav16(file).channels[0])
+      audio.set(take.id, decodeWav(file).channels[0])
     } catch {
       throw new ProjectFileError(`The project file is damaged: the audio of take "${take.name}" can't be read.`)
     }

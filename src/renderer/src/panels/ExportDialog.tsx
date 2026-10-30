@@ -1,11 +1,12 @@
 import { Fragment, useEffect, useState } from 'react'
+import { encodeOgg, OGG_QUALITIES } from '../audio/ogg'
 import { renderSongOffline } from '../audio/offline'
-import { audioBufferToWav16 } from '../audio/wav'
+import { audioBufferToWav, bufferChannels, WAV_FORMATS, type WavFormat } from '../audio/wav'
 import { beatMap, beatMapFileName, beatMapJson } from '../model/beatMap'
 import { sectionRanges, type BarRange } from '../model/edit'
 import { audibleTracks, barCount, type Song } from '../model/song'
 import { mixFileName, stemName, stemsOf, stemSong, tracksWithNotes, type Stem } from '../model/stems'
-import { barTime, EXPORT_TAIL_SECONDS, exportFrameCount, type ExportEnding } from '../model/timing'
+import { barTime, EXPORT_TAIL_SECONDS, exportFrameCount, loops, type ExportEnding } from '../model/timing'
 import { saveFile, saveFiles, type NamedFile } from '../platform'
 import { readPref, writePref } from '../prefs'
 
@@ -22,17 +23,22 @@ interface Props {
 
 const RATES = [48000, 44100]
 
-/** Remembered for the next export: the mix or stems, the mix next to the stems, and a beat map with them. */
+/** A WAV sample format (EXP-04), or OGG Vorbis. */
+type AudioFormat = WavFormat | 'ogg'
+
+/** Remembered for the next export: the mix or stems, the mix next to the stems, a beat map with them, and the file format. */
 interface Settings {
   stems: boolean
   withMix: boolean
   withBeatMap: boolean
+  format: AudioFormat
+  oggQuality: number
 }
 
 const SETTINGS_KEY = 'wavExport'
-const DEFAULT_SETTINGS: Settings = { stems: false, withMix: false, withBeatMap: false }
+const DEFAULT_SETTINGS: Settings = { stems: false, withMix: false, withBeatMap: false, format: 'pcm16', oggQuality: 5 }
 
-/** WAV export of the whole song, a section or a bar range, as the mix or one file per track (REQUIREMENTS.md EXP-01…05, EXP-09). */
+/** Audio export of the whole song, a section or a bar range, as the mix or one file per track (REQUIREMENTS.md EXP-01…05, EXP-09, EXP-10). */
 export function ExportDialog({ song, bars, section, onStemName, onClose }: Props): React.JSX.Element {
   const sections = sectionRanges(song)
   const total = barCount(song)
@@ -43,10 +49,13 @@ export function ExportDialog({ song, bars, section, onStemName, onClose }: Props
   const [from, setFrom] = useState(bars.start + 1)
   const [to, setTo] = useState(bars.end)
   const [rate, setRate] = useState(48000)
-  /** Until chosen by hand: ring out for the whole song, cut (loopable) for parts of it. */
+  /** Until chosen by hand: ring out for the whole song, a seamless loop for parts of it. */
   const [ending, setEnding] = useState<ExportEnding | null>(null)
   const [settings, setSettings] = useState<Settings>(() => ({ ...DEFAULT_SETTINGS, ...readPref<Partial<Settings>>(SETTINGS_KEY, {}) }))
-  const { stems, withMix, withBeatMap } = settings
+  const { stems, withMix, withBeatMap, format, oggQuality } = settings
+  const ogg = format === 'ogg'
+  const extension = ogg ? '.ogg' : '.wav'
+  const kind = ogg ? 'OGG' : 'WAV'
   const change = (next: Partial<Settings>): void => setSettings((s) => ({ ...s, ...next }))
   /** The tracks picked for stems, by id; until changed by hand: the ones heard in the mix that play in the range. */
   const [picked, setPicked] = useState<Set<string> | null>(null)
@@ -60,7 +69,7 @@ export function ExportDialog({ song, bars, section, onStemName, onClose }: Props
       : choice === 'bars'
         ? { start: Math.min(from, to) - 1, end: Math.max(from, to), name: from === to ? `bar ${from}` : `bars ${Math.min(from, to)}-${Math.max(from, to)}` }
         : sections[Number(choice.slice(8))]
-  const end: ExportEnding = ending ?? (choice === 'song' ? 'tail' : 'cut')
+  const end: ExportEnding = ending ?? (choice === 'song' ? 'tail' : 'loop')
   const seconds = { start: barTime(song, range.start), end: barTime(song, range.end) }
   const frames = exportFrameCount(seconds, rate, end)
   const barsValid = choice !== 'bars' || (from >= 1 && to >= 1 && from <= total && to <= total)
@@ -69,7 +78,7 @@ export function ExportDialog({ song, bars, section, onStemName, onClose }: Props
   const playing = tracksWithNotes(song, seconds)
   const pickedIds = picked ?? new Set(song.tracks.filter((_, i) => heard[i] && playing[i]).map((t) => t.id))
   const stemTracks = song.tracks.flatMap((track, i) => (pickedIds.has(track.id) ? [i] : []))
-  const planned = stemsOf(song, range.name, stemTracks, withMix)
+  const planned = stemsOf(song, range.name, stemTracks, withMix, extension)
   /** The files of a stem export, with the tracks of stems that join several. */
   const stemFiles = [
     ...(planned.mixFileName ? [{ name: planned.mixFileName, note: 'the mix' }] : []),
@@ -96,26 +105,32 @@ export function ExportDialog({ song, bars, section, onStemName, onClose }: Props
     return () => window.removeEventListener('keydown', onKey)
   })
 
-  const exportWav = async (): Promise<void> => {
+  /** A rendered file in the chosen format; `what` names it while OGG encodes ("Encoding 2 of 5"). */
+  const encode = async (buffer: AudioBuffer, what = 'Encoding'): Promise<Uint8Array> => {
+    if (!ogg) return audioBufferToWav(buffer, format)
+    return encodeOgg(bufferChannels(buffer), rate, oggQuality, (done) => setBusy(`${what}… ${Math.round(done * 100)} %`))
+  }
+
+  const exportMix = async (): Promise<void> => {
     setBusy('Rendering…')
     setError('')
     try {
-      const buffer = await renderSongOffline(song, rate, { range: seconds, ending: end })
+      const data = await encode(await renderSongOffline(song, rate, { range: seconds, ending: end }))
       writePref(SETTINGS_KEY, settings)
       if (withBeatMap) {
-        // The WAV and its beat map belong together: into a folder.
-        const mix = mixFileName(song, range.name)
-        const where = await saveFiles([{ name: mix, data: audioBufferToWav16(buffer) }, beatMapFile(mix, [])])
-        if (where) onClose(`WAV and beat map saved in ${where}.`)
+        // The file and its beat map belong together: into a folder.
+        const mix = mixFileName(song, range.name, extension)
+        const where = await saveFiles([{ name: mix, data }, beatMapFile(mix, [])])
+        if (where) onClose(`${kind} and beat map saved in ${where}.`)
         else setBusy(null)
         return
       }
       const name = range.name ? `${song.title} - ${range.name}` : song.title
-      const path = await saveFile(`${name}.wav`, audioBufferToWav16(buffer))
-      if (path) onClose(`WAV saved: ${path}`)
+      const path = await saveFile(`${name}${extension}`, data)
+      if (path) onClose(`${kind} saved: ${path}`)
       else setBusy(null)
     } catch (e) {
-      setError(`WAV export failed: ${e instanceof Error ? e.message : String(e)}`)
+      setError(`${kind} export failed: ${e instanceof Error ? e.message : String(e)}`)
       setBusy(null)
     }
   }
@@ -132,7 +147,7 @@ export function ExportDialog({ song, bars, section, onStemName, onClose }: Props
       for (const [n, render] of renders.entries()) {
         setBusy(`Rendering ${n + 1} of ${renders.length}…`)
         const buffer = await renderSongOffline(render.song, rate, { range: seconds, ending: end })
-        files.push({ name: render.fileName, data: audioBufferToWav16(buffer) })
+        files.push({ name: render.fileName, data: await encode(buffer, `Encoding ${n + 1} of ${renders.length}`) })
       }
       if (withBeatMap) files.push(beatMapFile(planned.mixFileName, planned.stems))
       writePref(SETTINGS_KEY, settings)
@@ -143,7 +158,7 @@ export function ExportDialog({ song, bars, section, onStemName, onClose }: Props
       if (where) onClose(`${saved.length > 1 ? `${saved.slice(0, -1).join(', ')} and ${saved.at(-1)}` : saved[0]} saved in ${where}.`)
       else setBusy(null)
     } catch (e) {
-      setError(`WAV export failed: ${e instanceof Error ? e.message : String(e)}`)
+      setError(`${kind} export failed: ${e instanceof Error ? e.message : String(e)}`)
       setBusy(null)
     }
   }
@@ -155,11 +170,11 @@ export function ExportDialog({ song, bars, section, onStemName, onClose }: Props
 
   return (
     <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && close()}>
-      <div className="modal export-dialog" role="dialog" aria-modal="true" aria-label="Export WAV">
+      <div className="modal export-dialog" role="dialog" aria-modal="true" aria-label="Export audio">
         <button className="icon modal-close" aria-label="Close" title="Close (Esc)" onClick={close} disabled={busy !== null}>
           ×
         </button>
-        <h2>Export WAV</h2>
+        <h2>Export audio</h2>
 
         <div className="form-row">
           <label>
@@ -186,15 +201,45 @@ export function ExportDialog({ song, bars, section, onStemName, onClose }: Props
               </label>
             </>
           )}
+        </div>
+        <div className="form-row">
+          <label>
+            Format
+            <select value={format} onChange={(e) => change({ format: e.target.value as AudioFormat })}>
+              {WAV_FORMATS.map((f) => (
+                <option key={f.format} value={f.format}>WAV, {f.label}</option>
+              ))}
+              <option value="ogg">OGG Vorbis (compressed)</option>
+            </select>
+          </label>
+          {ogg && (
+            <label>
+              Quality
+              <select value={oggQuality} onChange={(e) => change({ oggQuality: Number(e.target.value) })}>
+                {OGG_QUALITIES.map((q) => (
+                  <option key={q.quality} value={q.quality}>{q.label}</option>
+                ))}
+              </select>
+            </label>
+          )}
           <label>
             Sample rate
             <select value={rate} onChange={(e) => setRate(Number(e.target.value))}>
               {RATES.map((r) => (
-                <option key={r} value={r}>{r / 1000} kHz, 16-bit</option>
+                <option key={r} value={r}>{r / 1000} kHz</option>
               ))}
             </select>
           </label>
         </div>
+        <p className="muted small">
+          {ogg
+            ? 'OGG files are about a tenth of the size of WAV, and Unity imports them as they are (Vorbis).'
+            : format === 'pcm16'
+              ? '16-bit is what games ship; 24-bit and 32-bit float keep more detail for editing or mastering later.'
+              : format === 'pcm24'
+                ? '24-bit keeps more detail than 16-bit, e.g. for mastering later; Unity reads it too.'
+                : '32-bit float keeps every detail, also peaks louder than full scale; Unity reads it too.'}
+        </p>
 
         <fieldset className="choice-group">
           <legend>Files</legend>
@@ -216,7 +261,7 @@ export function ExportDialog({ song, bars, section, onStemName, onClose }: Props
             <input type="checkbox" checked={withBeatMap} onChange={(e) => change({ withBeatMap: e.target.checked })} />
             <span>
               <strong>Also a beat map (JSON)</strong> with the tempo, the time signature and where the sections are, in seconds and bars, for game scripts that follow
-              the music (e.g. Export → Unity player script).{!stems && ' The WAV and the beat map go into a folder you choose.'}
+              the music (e.g. Export → Unity player script).{!stems && ` The ${kind} and the beat map go into a folder you choose.`}
             </span>
           </label>
         </fieldset>
@@ -257,10 +302,17 @@ export function ExportDialog({ song, bars, section, onStemName, onClose }: Props
         <fieldset className="choice-group">
           <legend>Ending</legend>
           <label className="checkbox">
+            <input type="radio" name="ending" checked={end === 'loop'} onChange={() => setEnding('loop')} />
+            <span>
+              <strong>Loop seamlessly.</strong> Ends exactly at the last bar line, and notes still ringing there are mixed back onto the start, so they carry on into the
+              next round as they would in the song (in Unity: tick <em>Loop</em> on the AudioSource). The first round starts with them too.
+            </span>
+          </label>
+          <label className="checkbox">
             <input type="radio" name="ending" checked={end === 'cut'} onChange={() => setEnding('cut')} />
             <span>
-              <strong>Cut at the end, for looping.</strong> Ends exactly at the last bar line with a tiny fade, so it loops without a gap (in Unity: tick <em>Loop</em> on
-              the AudioSource). Notes still ringing at the end are cut off.
+              <strong>Cut at the end.</strong> Ends exactly at the last bar line with a tiny fade; notes still ringing there are cut off. Loops too, but long sounds stop at
+              the loop point.
             </span>
           </label>
           <label className="checkbox">
@@ -272,7 +324,7 @@ export function ExportDialog({ song, bars, section, onStemName, onClose }: Props
         </fieldset>
 
         <p className="muted small">
-          {barCountText(range.end - range.start)} · {(seconds.end - seconds.start).toFixed(2)} s{end === 'tail' ? ` + ${EXPORT_TAIL_SECONDS} s` : ''} · {frames.toLocaleString('en-US')} samples per
+          {barCountText(range.end - range.start)} · {(seconds.end - seconds.start).toFixed(2)} s{loops(end) ? '' : ` + ${EXPORT_TAIL_SECONDS} s`} · {frames.toLocaleString('en-US')} samples per
           channel, stereo
           {stems
             ? stemFiles.length > 0 && (
@@ -294,7 +346,7 @@ export function ExportDialog({ song, bars, section, onStemName, onClose }: Props
                   {withBeatMap && (
                     <>
                       {' '}
-                      · Files: <span className="stem-file">{mixFileName(song, range.name)}</span>, <span className="stem-file">{beatMapFileName(song, range.name)}</span> (beat map)
+                      · Files: <span className="stem-file">{mixFileName(song, range.name, extension)}</span>, <span className="stem-file">{beatMapFileName(song, range.name)}</span> (beat map)
                     </>
                   )}
                 </>
@@ -309,7 +361,7 @@ export function ExportDialog({ song, bars, section, onStemName, onClose }: Props
             className="active"
             disabled={busy !== null || !barsValid || (stems && stemTracks.length === 0)}
             title={stems && stemTracks.length === 0 ? 'Tick the tracks to export' : undefined}
-            onClick={() => void (stems ? exportStems() : exportWav())}
+            onClick={() => void (stems ? exportStems() : exportMix())}
           >
             {busy ?? 'Export…'}
           </button>

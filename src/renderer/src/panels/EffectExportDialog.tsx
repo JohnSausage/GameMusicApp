@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
+import { encodeOgg } from '../audio/ogg'
 import { renderEffect } from '../audio/offline'
-import { encodeWav16 } from '../audio/wav'
+import { encodeWav, WAV_FORMATS, type WavFormat } from '../audio/wav'
 import { effectFileNames, effectSeconds } from '../model/effects'
 import type { SoundEffect } from '../model/song'
 import { saveFile, saveFiles, type NamedFile } from '../platform'
@@ -19,23 +20,29 @@ interface Settings {
   rate: number
   mono: boolean
   normalize: boolean
+  /** A WAV sample format (EXP-04), or OGG Vorbis. */
+  format: WavFormat | 'ogg'
 }
 
 const SETTINGS_KEY = 'effectExport'
-const DEFAULT_SETTINGS: Settings = { rate: 48000, mono: true, normalize: false }
+const DEFAULT_SETTINGS: Settings = { rate: 48000, mono: true, normalize: false, format: 'pcm16' }
 
-/** The sound effects as WAV files: all of them into a folder, or one (REQUIREMENTS.md SYN-37). */
+/** OGG quality for sound effects: high, as they are short. */
+const EFFECT_OGG_QUALITY = 6
+
+/** The sound effects as WAV or OGG files: all of them into a folder, or one (REQUIREMENTS.md SYN-37). */
 export function EffectExportDialog({ effects, selected, onClose }: Props): React.JSX.Element {
   const one = effects.find((e) => e.id === selected) ?? null
   const [which, setWhich] = useState<'all' | 'one'>('all')
   const [settings, setSettings] = useState<Settings>(() => ({ ...DEFAULT_SETTINGS, ...readPref<Partial<Settings>>(SETTINGS_KEY, {}) }))
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
-  const { rate, mono, normalize } = settings
+  const { rate, mono, normalize, format } = settings
+  const kind = format === 'ogg' ? 'OGG' : 'WAV'
   const change = (next: Partial<Settings>): void => setSettings((s) => ({ ...s, ...next }))
 
   // The same effect always gets the same file name, whether exported alone or with the others.
-  const names = effectFileNames(effects)
+  const names = effectFileNames(effects, format === 'ogg' ? '.ogg' : '.wav')
   const chosen = which === 'one' && one ? [one] : effects
   const withNotes = chosen.filter((e) => effectSeconds(e) > 0)
   const withoutNotes = chosen.filter((e) => effectSeconds(e) === 0).map((e) => e.name)
@@ -57,7 +64,10 @@ export function EffectExportDialog({ effects, selected, onClose }: Props): React
       const silent: string[] = [...withoutNotes]
       for (const effect of withNotes) {
         const audio = await renderEffect(effect, rate, { mono, normalize })
-        if (audio) files.push({ name: names[effects.indexOf(effect)], data: encodeWav16(audio, rate) })
+        if (audio) {
+          const data = format === 'ogg' ? await encodeOgg(audio, rate, EFFECT_OGG_QUALITY) : encodeWav(audio, rate, format)
+          files.push({ name: names[effects.indexOf(effect)], data })
+        }
         else silent.push(effect.name)
       }
       if (files.length === 0) {
@@ -71,10 +81,10 @@ export function EffectExportDialog({ effects, selected, onClose }: Props): React
         setBusy(false)
         return
       }
-      const saved = which === 'one' ? `WAV saved: ${where}` : `${files.length} sound ${files.length === 1 ? 'effect' : 'effects'} saved as WAV in ${where}.`
+      const saved = which === 'one' ? `${kind} saved: ${where}` : `${files.length} sound ${files.length === 1 ? 'effect' : 'effects'} saved as ${kind} in ${where}.`
       onClose(silent.length > 0 ? `${saved} Left out, they make no sound: ${silent.join(', ')}.` : saved)
     } catch (e) {
-      setError(`WAV export failed: ${e instanceof Error ? e.message : String(e)}`)
+      setError(`${kind} export failed: ${e instanceof Error ? e.message : String(e)}`)
       setBusy(false)
     }
   }
@@ -92,7 +102,7 @@ export function EffectExportDialog({ effects, selected, onClose }: Props): React
           <label className="checkbox">
             <input type="radio" name="which" checked={which === 'all'} onChange={() => setWhich('all')} />
             <span>
-              <strong>All {effects.length} sound effects,</strong> one WAV file each, into a folder you choose. Files there with the same names are replaced, so exporting
+              <strong>All {effects.length} sound effects,</strong> one {kind} file each, into a folder you choose. Files there with the same names are replaced, so exporting
               again updates them in your game.
             </span>
           </label>
@@ -106,11 +116,22 @@ export function EffectExportDialog({ effects, selected, onClose }: Props): React
 
         <div className="form-row">
           <label>
+            Format
+            <select value={format} onChange={(e) => change({ format: e.target.value as Settings['format'] })}>
+              {WAV_FORMATS.map((f) => (
+                <option key={f.format} value={f.format}>
+                  WAV, {f.label}
+                </option>
+              ))}
+              <option value="ogg">OGG Vorbis (compressed)</option>
+            </select>
+          </label>
+          <label>
             Sample rate
             <select value={rate} onChange={(e) => change({ rate: Number(e.target.value) })}>
               {RATES.map((r) => (
                 <option key={r} value={r}>
-                  {r / 1000} kHz, 16-bit
+                  {r / 1000} kHz
                 </option>
               ))}
             </select>

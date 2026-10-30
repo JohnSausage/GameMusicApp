@@ -267,8 +267,8 @@ export function EffectList({ project, getEngine, playing, songPlaying, playingEf
             ▶ Play all
           </button>
         )}
-        <button title="Save the sound effects as WAV files, one per effect, named after it" disabled={effects.length === 0} onClick={onExport}>
-          Export WAV…
+        <button title="Save the sound effects as WAV or OGG files, one per effect, named after it" disabled={effects.length === 0} onClick={onExport}>
+          Export…
         </button>
       </div>
       {effects.length > 0 && (
