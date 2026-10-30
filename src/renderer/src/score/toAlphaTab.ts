@@ -27,7 +27,8 @@ const DURATIONS: Record<NoteValue, alphaTab.model.Duration> = {
   4: Duration.Quarter,
   8: Duration.Eighth,
   16: Duration.Sixteenth,
-  32: Duration.ThirtySecond
+  32: Duration.ThirtySecond,
+  64: Duration.SixtyFourth
 }
 
 /**

@@ -1,3 +1,4 @@
+import * as alphaTab from '@coderline/alphatab'
 import { describe, expect, it } from 'vitest'
 import {
   addBars,
@@ -37,6 +38,8 @@ import {
   type Cursor
 } from '../src/renderer/src/model/edit'
 import { barCount, type Bar, type Song, type TakeInfo } from '../src/renderer/src/model/song'
+import { parseProject, serializeProject } from '../src/renderer/src/project/projectFile'
+import { songToAlphaTab } from '../src/renderer/src/score/toAlphaTab'
 
 const QUARTER = { value: 4, dotted: false } as const
 const start: Cursor = { track: 0, bar: 0, beat: 0, string: 1 }
@@ -162,6 +165,20 @@ describe('setDuration', () => {
     expect(shape(stepDuration(song, start, 'shorter')!.song.tracks[0].bars[0])[0]).toBe('8:1/0')
     expect(shape(stepDuration(song, start, 'longer')!.song.tracks[0].bars[0])[0]).toBe('2:1/0')
     expect(shape(toggleDotted(song, start)!.song.tracks[0].bars[0])[0]).toBe('4.:1/0')
+  })
+
+  it('goes down to sixty-fourth notes (EDIT-02)', () => {
+    expect([64, 32].map((value) => beatTicks({ value: value as 64 | 32, dotted: false }))).toEqual([60, 120])
+    expect(beatTicks({ value: 64, dotted: true })).toBe(90)
+    expect(beatTicks({ value: 64, dotted: false, triplet: true })).toBe(40)
+    let song = setDuration(withQuarters(), start, { value: 32, dotted: false })!.song
+    song = stepDuration(song, start, 'shorter')!.song
+    expect(shape(song.tracks[0].bars[0]).slice(0, 2)).toEqual(['64:1/0', '64'])
+    expect(stepDuration(song, start, 'shorter')).toBeNull()
+    expectFullBars(song)
+    const { score } = songToAlphaTab(song, new alphaTab.Settings())
+    expect(score.tracks[0].staves[0].bars[0].voices[0].beats[0].duration).toBe(alphaTab.model.Duration.SixtyFourth)
+    expect(parseProject(serializeProject(song)).song.tracks[0].bars[0].beats[0].value).toBe(64)
   })
 })
 

@@ -4,9 +4,9 @@ import { factoryPreset, type DrumSound, type SynthPatch } from './synth'
 export type { DrumSound, SynthPatch }
 
 /** Note value: 1 = whole, 4 = quarter, 16 = sixteenth. */
-export type NoteValue = 1 | 2 | 4 | 8 | 16 | 32
+export type NoteValue = 1 | 2 | 4 | 8 | 16 | 32 | 64
 
-export const NOTE_VALUES: NoteValue[] = [1, 2, 4, 8, 16, 32]
+export const NOTE_VALUES: NoteValue[] = [1, 2, 4, 8, 16, 32, 64]
 
 export interface Note {
   /** Fretted tracks: 1 = highest-pitched string (top line of the tab). */

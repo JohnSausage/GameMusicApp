@@ -61,7 +61,8 @@ const VALUE_LABELS: Record<NoteValue, { short: string; long: string }> = {
   4: { short: '1/4', long: 'Quarter note' },
   8: { short: '1/8', long: 'Eighth note' },
   16: { short: '1/16', long: 'Sixteenth note' },
-  32: { short: '1/32', long: 'Thirty-second note' }
+  32: { short: '1/32', long: 'Thirty-second note' },
+  64: { short: '1/64', long: 'Sixty-fourth note' }
 }
 
 /** Two digits typed within this time on the same spot make one fret (1 then 2 → 12). */

@@ -106,7 +106,7 @@ function tabStaff(api: alphaTab.AlphaTabApi, barIndex: number, trackIndex: numbe
 }
 
 /** SMuFL rest symbols (alphaTab's Bravura font), by alphaTab duration value. */
-const REST_GLYPHS: Record<number, string> = { 1: '\uE4E3', 2: '\uE4E4', 4: '\uE4E5', 8: '\uE4E6', 16: '\uE4E7', 32: '\uE4E8' }
+const REST_GLYPHS: Record<number, string> = { 1: '\uE4E3', 2: '\uE4E4', 4: '\uE4E5', 8: '\uE4E6', 16: '\uE4E7', 32: '\uE4E8', 64: '\uE4E9' }
 const AUGMENTATION_DOT = '\uE1E7'
 
 /** Where something on alphaTab's long sheet is shown (moved onto pages in the page view). */
