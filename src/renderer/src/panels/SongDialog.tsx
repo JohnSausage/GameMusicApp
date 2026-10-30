@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react'
-import { updateSong, type Cursor, type EditResult } from '../model/edit'
+import { useEffect, useMemo, useState } from 'react'
+import { barTicks, updateSong, type Cursor, type EditResult } from '../model/edit'
 import { ALL_KEYS, keyAccidentals, keyName, keyShift, sameKey, songKey, type KeySignature } from '../model/keySignature'
 import type { Song } from '../model/song'
+import { changeTimeSignature, TIME_SIGNATURES, type Rebar } from '../model/timeSignature'
 import { describeShift, transpose } from '../model/transpose'
 
 interface Props {
@@ -16,18 +17,37 @@ const keyValue = (key: KeySignature): string => `${key.fifths}:${key.minor ? 'mi
 /** C first, then the keys with sharps, then the ones with flats (as key signatures are usually listed). */
 const keyOrder = (key: KeySignature): number => (key.fifths >= 0 ? key.fifths : 7 - key.fifths)
 
-/** Song properties (REQUIREMENTS.md PRJ-03): title, author, tempo and key signature. */
+const signatureValue = ([beats, unit]: [number, number]): string => `${beats}/${unit}`
+const plural = (n: number, word: string): string => `${n} ${word}${n === 1 ? '' : 's'}`
+
+/** Song properties (REQUIREMENTS.md PRJ-03): title, author, tempo, time signature and key signature. */
 export function SongDialog({ song, cursor, onApply, onClose }: Props): React.JSX.Element {
   const [title, setTitle] = useState(song.title)
   const [author, setAuthor] = useState(song.author ?? '')
   const [tempo, setTempo] = useState(String(song.tempo))
   const [key, setKey] = useState(songKey(song))
   const [moveNotes, setMoveNotes] = useState(true)
+  const [signature, setSignature] = useState<[number, number]>(song.timeSignature)
+  const [chosenRebar, setRebar] = useState<Rebar | null>(null)
   const tempoValue = Number(tempo)
   const validTempo = Number.isFinite(tempoValue) && tempoValue >= 20 && tempoValue <= 400
   const shift = keyShift(songKey(song), key)
   const melodic = song.tracks.some((t) => t.kind !== 'drums' && t.bars.some((bar) => bar.beats.some((b) => b.notes.length > 0)))
-  const changed = title !== song.title || author.trim() !== (song.author ?? '') || (validTempo && tempoValue !== song.tempo) || !sameKey(key, songKey(song))
+  const withNotes = song.tracks.some((t) => t.bars.some((bar) => bar.beats.some((b) => b.notes.length > 0)))
+  const newSignature = signatureValue(signature) !== signatureValue(song.timeSignature)
+  const signatures = TIME_SIGNATURES.some((ts) => signatureValue(ts) === signatureValue(song.timeSignature)) ? TIME_SIGNATURES : [...TIME_SIGNATURES, song.timeSignature]
+  const from = barTicks(song)
+  const to = barTicks({ ...song, timeSignature: signature })
+  // What each way of laying out the bars would do, to show before applying.
+  const previews = useMemo(
+    () => (newSignature && from !== to ? { flow: changeTimeSignature(song, cursor, signature, 'flow')!, bars: changeTimeSignature(song, cursor, signature, 'bars')! } : null),
+    [signatureValue(signature)]
+  )
+  // Moving the bar lines loses nothing; keeping the bars suits a beat more or less per bar, unless notes would go.
+  const lossy = previews !== null && previews.bars.removed + previews.bars.shortened > 0
+  const rebar: Rebar = chosenRebar ?? (lossy || to % from === 0 || from % to === 0 ? 'flow' : 'bars')
+  const changed =
+    title !== song.title || author.trim() !== (song.author ?? '') || (validTempo && tempoValue !== song.tempo) || !sameKey(key, songKey(song)) || newSignature
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
@@ -38,10 +58,10 @@ export function SongDialog({ song, cursor, onApply, onClose }: Props): React.JSX
   })
 
   const apply = (): void => {
-    // The notes move first (that moves the key too), then the key is set as picked (e.g. C♯ rather than D♭ major).
-    const moved = moveNotes && shift !== 0 ? transpose(song, cursor, { kind: 'song' }, shift, 'keep')?.result : null
-    const from = moved ?? { song, cursor }
-    onApply(updateSong(from.song, from.cursor, { title, author: author.trim(), key, ...(validTempo && { tempo: tempoValue }) }))
+    // The bars first, then the notes move (that moves the key too), then the key is set as picked (e.g. C♯ rather than D♭ major).
+    const rebarred = (newSignature && changeTimeSignature(song, cursor, signature, rebar)?.result) || { song, cursor }
+    const moved = (moveNotes && shift !== 0 && transpose(rebarred.song, rebarred.cursor, { kind: 'song' }, shift, 'keep')?.result) || rebarred
+    onApply(updateSong(moved.song, moved.cursor, { title, author: author.trim(), key, ...(validTempo && { tempo: tempoValue }) }))
   }
 
   return (
@@ -69,9 +89,13 @@ export function SongDialog({ song, cursor, onApply, onClose }: Props): React.JSX
           </label>
           <label>
             Time signature
-            <span className="song-time-signature" title="Chosen when the project is created">
-              {song.timeSignature.join('/')}
-            </span>
+            <select value={signatureValue(signature)} onChange={(e) => setSignature(signatures.find((ts) => signatureValue(ts) === e.target.value) ?? signature)}>
+              {signatures.map((ts) => (
+                <option key={signatureValue(ts)} value={signatureValue(ts)}>
+                  {signatureValue(ts)}
+                </option>
+              ))}
+            </select>
           </label>
           <label className="grow">
             Key
@@ -91,6 +115,31 @@ export function SongDialog({ song, cursor, onApply, onClose }: Props): React.JSX
           </label>
         </div>
         <p className="muted small">The key sets the sharps or flats in the score. Notes sound the same, and are written in the key.</p>
+
+        {previews && withNotes && (
+          <fieldset className="choice-group">
+            <legend>The bars, now {signatureValue(signature)}</legend>
+            <label className="checkbox">
+              <input type="radio" name="rebar" checked={rebar === 'flow'} onChange={() => setRebar('flow')} />
+              <span>
+                <strong>Move the bar lines.</strong> Every note stays where it is in time; a note across a new bar line is held over into the next bar.
+                {previews.flow.padded > 0 && ` ${plural(previews.flow.padded, 'section')} no longer fill${previews.flow.padded === 1 ? 's' : ''} whole bars and end${previews.flow.padded === 1 ? 's' : ''} with rests.`}
+                {previews.flow.copied > 0 && ` ${plural(previews.flow.copied, 'repeated part')} get${previews.flow.copied === 1 ? 's' : ''} a copy for a section, so the repeats still follow each other.`}
+              </span>
+            </label>
+            <label className="checkbox">
+              <input type="radio" name="rebar" checked={rebar === 'bars'} onChange={() => setRebar('bars')} />
+              <span>
+                <strong>Keep the bars.</strong> Each bar keeps its notes from its start, and sections keep their number of bars.
+                {to > from
+                  ? ' The bars end with rests.'
+                  : lossy
+                    ? ` What no longer fits is left out: ${[previews.bars.removed > 0 && `${plural(previews.bars.removed, 'note')} go`, previews.bars.shortened > 0 && `${plural(previews.bars.shortened, 'note')} get${previews.bars.shortened === 1 ? 's' : ''} shorter`].filter(Boolean).join(', ')}.`
+                    : ' Nothing is lost: the end of every bar is empty.'}
+              </span>
+            </label>
+          </fieldset>
+        )}
 
         {melodic && shift !== 0 && (
           <fieldset className="choice-group">

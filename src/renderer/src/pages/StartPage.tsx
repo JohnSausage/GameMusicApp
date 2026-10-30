@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { ThemeSwitch } from '../components/ThemeSwitch'
 import type { NewSongOptions } from '../model/edit'
 import type { TrackKind } from '../model/song'
+import { TIME_SIGNATURES } from '../model/timeSignature'
 import type { RecentProject, RecoveryEntry } from '../platform'
 import type { ProjectStorage } from '../project/storage'
 
@@ -14,12 +15,8 @@ interface Props {
   onRestore: (entry: RecoveryEntry) => void
 }
 
-const TIME_SIGNATURES: [number, number][] = [
-  [4, 4],
-  [3, 4],
-  [2, 4],
-  [6, 8]
-]
+/** New songs start in 4/4 unless another time signature is picked. */
+const FOUR_FOUR = TIME_SIGNATURES.findIndex(([beats, unit]) => beats === 4 && unit === 4)
 
 function fileName(path: string): string {
   if (path.startsWith('browser:')) return 'Stored in this browser'
@@ -36,7 +33,7 @@ function formatDate(iso: string): string {
 function NewProjectForm({ onCreate, onCancel }: { onCreate: (options: NewSongOptions) => void; onCancel: () => void }): React.JSX.Element {
   const [title, setTitle] = useState('Untitled')
   const [tempo, setTempo] = useState(120)
-  const [signature, setSignature] = useState(0)
+  const [signature, setSignature] = useState(FOUR_FOUR)
   const [firstTrack, setFirstTrack] = useState<TrackKind>('guitar')
 
   const submit = (event: React.FormEvent): void => {

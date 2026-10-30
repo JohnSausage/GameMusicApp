@@ -499,17 +499,18 @@ export function deleteSelection(song: Song, cursor: Cursor, sel: Selection): Edi
   })!
 }
 
-interface Span {
+export interface Span {
   /** Ticks from the start of the song. */
   start: number
   length: number
   notes: Note[]
 }
 
-function trackSpans(track: Track): Span[] {
+/** The beats of bars in time order, with where each starts. */
+export function barSpans(bars: Bar[]): Span[] {
   const spans: Span[] = []
   let start = 0
-  for (const bar of track.bars) {
+  for (const bar of bars) {
     for (const beat of bar.beats) {
       spans.push({ start, length: beatTicks(beat), notes: beat.notes })
       start += beatTicks(beat)
@@ -518,24 +519,33 @@ function trackSpans(track: Track): Span[] {
   return spans
 }
 
+const trackSpans = (track: Track): Span[] => barSpans(track.bars)
+
+const withoutLegato = ({ hammer: _h, slide: _s, ...note }: Note): Note => note
+
 /**
- * Lays spans (in time order, no overlaps) out into full bars. Gaps become rests;
- * a span crossing a bar line keeps its notes only in the first part (no ties yet).
+ * Lays spans (in time order, no overlaps) out into full bars. Gaps become rests.
+ * A span that needs several beats (e.g. across a bar line) has its notes in the
+ * first; with `ties`, the others hold them (and the last one keeps a hammer-on
+ * or slide into the next note), else they are rests.
  */
-function barsFromSpans(spans: Span[], barLength: number, count: number): Bar[] {
+export function barsFromSpans(spans: Span[], barLength: number, count: number, ties = false): Bar[] {
   const bars: Bar[] = Array.from({ length: count }, () => ({ beats: [] }))
   const place = (start: number, length: number, notes: Note[]): void => {
+    const pieces: { bar: number; beat: Beat }[] = []
     while (length > 0) {
       const bar = Math.floor(start / barLength)
       const part = Math.min(length, (bar + 1) * barLength - start)
-      restsFor(part).forEach((beat, i) => {
-        if (i === 0) beat.notes = notes
-        bars[bar].beats.push(beat)
-      })
+      for (const beat of restsFor(part)) pieces.push({ bar, beat })
       start += part
       length -= part
-      notes = []
     }
+    const held = ties && pieces.length > 1
+    pieces.forEach(({ bar, beat }, i) => {
+      if (i === 0) beat.notes = held ? notes.map(withoutLegato) : notes
+      else if (held) beat.notes = notes.map((n) => ({ ...(i === pieces.length - 1 ? n : withoutLegato(n)), tie: true }))
+      bars[bar].beats.push(beat)
+    })
   }
   let position = 0
   for (const span of spans) {
