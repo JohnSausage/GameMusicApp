@@ -183,3 +183,67 @@ export function placeNotes(notes: Note[], pitches: number[], after: number[]): {
   notes.sort((a, b) => a.string - b.string)
   return { moved, changed }
 }
+
+/** A beat of a track, by bar and beat index. */
+interface BeatAt {
+  bar: number
+  beat: number
+}
+
+/**
+ * Moves the note at the cursor to another string, keeping its pitch
+ * (REQUIREMENTS.md EDIT-09): to the nearest string above (-1, towards string 1)
+ * or below (1) that is free and reaches it. A held note moves with the notes
+ * it is held from and into, so it keeps sounding; a hammer-on or slide into or
+ * out of it ends, as it no longer is on the same string. The cursor follows the
+ * note. Null if there is no note at the cursor or no string to move it to.
+ */
+export function moveToString(song: Song, cursor: Cursor, direction: -1 | 1): EditResult | null {
+  const track = song.tracks[cursor.track]
+  if (!track || !isFretted(track)) return null
+  const positions: BeatAt[] = track.bars.flatMap((bar, b) => bar.beats.map((_, beat) => ({ bar: b, beat })))
+  const at = positions.findIndex((p) => p.bar === cursor.bar && p.beat === cursor.beat)
+  const noteAt = (i: number): Note | undefined => {
+    const p = positions[i]
+    return p && track.bars[p.bar].beats[p.beat].notes.find((n) => n.string === cursor.string)
+  }
+  if (at < 0 || !noteAt(at)) return null
+  // The held chain: back while a note is held from the one before, on while the next is held from it.
+  let first = at
+  while (noteAt(first)?.tie && noteAt(first - 1)) first--
+  let last = at
+  while (noteAt(last + 1)?.tie) last++
+
+  const tuning = soundingTuning(track)
+  const pitch = tuning[cursor.string - 1] + noteAt(at)!.fret
+  const fits = (string: number): boolean =>
+    pitch - tuning[string - 1] >= 0 &&
+    pitch - tuning[string - 1] <= MAX_FRET &&
+    positions.slice(first, last + 1).every((p) => !track.bars[p.bar].beats[p.beat].notes.some((n) => n.string === string))
+  let target = cursor.string + direction
+  while (target >= 1 && target <= tuning.length && !fits(target)) target += direction
+  if (target < 1 || target > tuning.length) return null
+
+  return edit(song, cursor, (draft) => {
+    const bars = draft.tracks[cursor.track].bars
+    const noteIn = (p: BeatAt | undefined, string: number): Note | undefined => p && bars[p.bar].beats[p.beat].notes.find((n) => n.string === string)
+    // The note before on the old string no longer leads into this one.
+    const before = noteIn(positions[first - 1], cursor.string)
+    if (before) {
+      delete before.hammer
+      delete before.slide
+    }
+    for (const p of positions.slice(first, last + 1)) {
+      const beat = bars[p.bar].beats[p.beat]
+      const note = beat.notes.find((n) => n.string === cursor.string)!
+      note.string = target
+      note.fret = pitch - tuning[target - 1]
+      beat.notes.sort((a, b) => a.string - b.string)
+    }
+    // Nor does the last one lead into the next note on its old string.
+    const end = noteIn(positions[last], target)!
+    delete end.hammer
+    delete end.slide
+    return { ...cursor, string: target }
+  })
+}

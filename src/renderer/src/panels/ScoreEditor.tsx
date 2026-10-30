@@ -44,6 +44,7 @@ import { stepAdvance, stepEnter } from '../model/stepEntry'
 import { legatoTarget, toggleLegato, toggleTie, type Legato } from '../model/techniques'
 import { barSeconds, buildTimeline, secondsPerQuarter } from '../model/timing'
 import { transpose, transposeMessage } from '../model/transpose'
+import { moveToString } from '../model/tuning'
 import { secondsPerClick } from '../audio/analysis'
 import { readPref, writePref } from '../prefs'
 import { showTrack, shownTracks, ZOOM_STEPS } from '../project/layout'
@@ -431,6 +432,26 @@ export function ScoreEditor(props: Props): React.JSX.Element {
     setMessage(transposeMessage(result, semitones, 'keep'))
   }
 
+  /** The note at the cursor to the next string up (-1) or down (1) that can play it (EDIT-09). */
+  const changeString = (direction: -1 | 1): void => {
+    if (!fretted) {
+      setMessage('Only guitar and bass notes can move to another string.')
+      return
+    }
+    if (!beat.notes.some((n) => n.string === cursor.string)) {
+      setMessage('Put the cursor on a note to move it to another string.')
+      return
+    }
+    const result = moveToString(song, cursor, direction)
+    if (!result) {
+      setMessage(`No string ${direction < 0 ? 'above' : 'below'} is free and reaches this note.`)
+      return
+    }
+    edit(result)
+    const note = result.song.tracks[cursor.track].bars[result.cursor.bar].beats[result.cursor.beat].notes.find((n) => n.string === result.cursor.string)
+    setMessage(`Moved to string ${result.cursor.string}, fret ${note?.fret}.`)
+  }
+
   const copy = (cut = false): void => {
     const beats = selection ? selectionBeats(song, selection) : structuredClone(track.bars[cursor.bar].beats)
     setClipboard({ beats, drums })
@@ -522,6 +543,7 @@ export function ScoreEditor(props: Props): React.JSX.Element {
     } else if (event.altKey && !ctrl && (key === 'ArrowUp' || key === 'ArrowDown')) nudgePitch(key === 'ArrowUp' ? 1 : -1)
     else if (key === 'ArrowRight') moveCursor(ctrl ? moveBar(song, cursor, 1) : moveBeat(song, cursor, 1), shift)
     else if (key === 'ArrowLeft') moveCursor(ctrl ? moveBar(song, cursor, -1) : moveBeat(song, cursor, -1), shift)
+    else if (shift && !ctrl && fretted && (key === 'ArrowUp' || key === 'ArrowDown')) changeString(key === 'ArrowUp' ? -1 : 1)
     else if (key === 'ArrowUp') ctrl ? moveCursor(nextTrack(-1)) : project.setCursor(moveString(song, cursor, -1))
     else if (key === 'ArrowDown') ctrl ? moveCursor(nextTrack(1)) : project.setCursor(moveString(song, cursor, 1))
     else if (key === 'Escape' && selection) setAnchor(null)
@@ -679,6 +701,8 @@ export function ScoreEditor(props: Props): React.JSX.Element {
             { label: 'Paste', shortcut: 'Ctrl+V', title: 'At the cursor or the start of the selection, overwriting what’s there', onSelect: paste },
             'separator',
             { label: 'Delete beat', shortcut: 'Shift+Del', title: 'The rest of the bar moves up', onSelect: removeBeat },
+            { label: 'Move note to the string above', shortcut: 'Shift+↑', title: 'Same pitch, on the next string up that reaches it', onSelect: () => changeString(-1) },
+            { label: 'Move note to the string below', shortcut: 'Shift+↓', title: 'Same pitch, on the next string down that reaches it', onSelect: () => changeString(1) },
             { label: 'Transpose…', shortcut: 'Alt+↑ / ↓', title: 'Move notes up or down by semitones (Alt+↑ / Alt+↓: the selection a semitone)', onSelect: () => setTransposing(true) },
             { label: part ? `Select the whole ${pieceName}` : 'Select whole track', shortcut: 'Ctrl+A', onSelect: selectAll }
           ]}

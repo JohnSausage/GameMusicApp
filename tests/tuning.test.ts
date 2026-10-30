@@ -4,7 +4,7 @@ import { arrange, syncArrangement } from '../src/renderer/src/model/arrangement'
 import { addTrack, createSong, setFret, setSection, type Cursor } from '../src/renderer/src/model/edit'
 import { createDemoSong, GUITAR_STANDARD, notePitch, type Note, type Song } from '../src/renderer/src/model/song'
 import { fretFor } from '../src/renderer/src/model/stepEntry'
-import { isStandardTuning, retuneTrack, soundingTuning, stringLetters, TUNING_PRESETS, tuningLabel, tuningPreset } from '../src/renderer/src/model/tuning'
+import { isStandardTuning, moveToString, retuneTrack, soundingTuning, stringLetters, TUNING_PRESETS, tuningLabel, tuningPreset } from '../src/renderer/src/model/tuning'
 import { parseProject, serializeProject } from '../src/renderer/src/project/projectFile'
 import { songToAlphaTab } from '../src/renderer/src/score/toAlphaTab'
 
@@ -132,5 +132,73 @@ describe('tuning and capo in the score and the file', () => {
     expect(loaded.tracks[0]).toMatchObject({ tuning: DROP_D, capo: 4 })
     song.tracks[0].capo = 40
     expect(() => parseProject(serializeProject(song))).toThrow('invalid capo')
+  })
+})
+
+describe('moving a note to another string (EDIT-09)', () => {
+  const noteOn = (song: Song, bar: number, string: number): Note | undefined => song.tracks[0].bars[bar].beats[0].notes.find((n) => n.string === string)
+
+  it('moves to the next string that reaches the pitch, and the cursor follows', () => {
+    const song = guitarSong([1, 5]) // A4
+    const down = moveToString(song, at(0, 1), 1)!
+    expect(noteOn(down.song, 0, 1)).toBeUndefined()
+    expect(noteOn(down.song, 0, 2)?.fret).toBe(10)
+    expect(down.cursor).toEqual(at(0, 2))
+    expect(pitches(down.song)).toEqual(pitches(song))
+    const back = moveToString(down.song, down.cursor, -1)!
+    expect(noteOn(back.song, 0, 1)?.fret).toBe(5)
+  })
+
+  it('skips strings that are taken or cannot reach the pitch', () => {
+    let song = guitarSong([1, 10]) // D5
+    song = setFret(song, at(0, 2), 3, WHOLE)!.song
+    const moved = moveToString(song, at(0, 1), 1)!
+    expect(noteOn(moved.song, 0, 3)?.fret).toBe(19)
+    expect(moved.song.tracks[0].bars[0].beats[0].notes.map((n) => n.string)).toEqual([2, 3])
+    // Low E open: no higher string goes that low, and string 6 is the last.
+    expect(moveToString(guitarSong([6, 0]), at(0, 6), -1)).toBeNull()
+    expect(moveToString(guitarSong([6, 0]), at(0, 6), 1)).toBeNull()
+    // Fret 24 on string 1 is beyond the last fret on every lower string.
+    expect(moveToString(guitarSong([1, 24]), at(0, 1), 1)).toBeNull()
+    expect(moveToString(guitarSong([1, 5]), at(0, 2), 1)).toBeNull() // no note at the cursor
+  })
+
+  it('counts frets from the capo', () => {
+    const song = guitarSong([1, 3])
+    song.tracks[0].capo = 2
+    const moved = moveToString(song, at(0, 1), 1)!
+    expect(noteOn(moved.song, 0, 2)?.fret).toBe(8)
+    expect(pitches(moved.song)).toEqual(pitches(song))
+  })
+
+  it('moves a held note with the notes it is held from and into', () => {
+    const song = guitarSong([1, 5], [1, 5], [1, 5], [1, 7])
+    noteOn(song, 1, 1)!.tie = true
+    noteOn(song, 2, 1)!.tie = true
+    const moved = moveToString(song, at(1, 1), 1)!
+    expect([0, 1, 2].map((bar) => noteOn(moved.song, bar, 2))).toEqual([
+      { string: 2, fret: 10, velocity: expect.any(Number) },
+      { string: 2, fret: 10, velocity: expect.any(Number), tie: true },
+      { string: 2, fret: 10, velocity: expect.any(Number), tie: true }
+    ])
+    expect(noteOn(moved.song, 3, 1)?.fret).toBe(7) // not held: stays
+    // The whole chain needs the string free.
+    const blocked = setFret(song, at(2, 2), 0, WHOLE)!.song
+    expect(noteOn(moveToString(blocked, at(0, 1), 1)!.song, 0, 3)?.fret).toBe(14)
+  })
+
+  it('ends a hammer-on or slide into or out of the note', () => {
+    const song = guitarSong([1, 3], [1, 5], [1, 7])
+    noteOn(song, 0, 1)!.hammer = true
+    noteOn(song, 1, 1)!.slide = true
+    const moved = moveToString(song, at(1, 1), 1)!
+    expect(noteOn(moved.song, 0, 1)?.hammer).toBeUndefined()
+    expect(noteOn(moved.song, 1, 2)?.slide).toBeUndefined()
+    expect(noteOn(moved.song, 2, 1)?.fret).toBe(7)
+  })
+
+  it('leaves drum tracks alone', () => {
+    const song = addTrack(guitarSong([1, 0]), at(0), 'drums').song
+    expect(moveToString(song, { ...at(0), track: 1 }, 1)).toBeNull()
   })
 })
