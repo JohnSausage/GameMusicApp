@@ -13,8 +13,8 @@
 //     music.SetLayerOnNextBar("Lead", 0f);       // the lead stops at the next bar line
 //
 // With the beat map, OnBeat and OnBar tell your scripts when a beat or a bar
-// starts (e.g. to make things pulse with the music), and CurrentSection says
-// which section is playing.
+// starts (e.g. to make things pulse with the music), also where the tempo or the
+// time signature changes, and CurrentSection says which section is playing.
 //
 // Layer names come from the files: "My song - Drums.wav" is the layer "Drums".
 // The mix alone works too, as a single layer.
@@ -151,13 +151,41 @@ public class GameMusicPlayer : MonoBehaviour
     /// <summary>The bar playing, from 0 (needs the beat map).</summary>
     public int CurrentBar
     {
-        get { return Map == null ? 0 : (int)Math.Floor(Position / Map.secondsPerBar); }
+        get { return Map == null ? 0 : BarAt(Position); }
     }
 
     /// <summary>The beat playing in its bar, from 0 (needs the beat map).</summary>
     public int CurrentBeat
     {
-        get { return Map == null ? 0 : (int)Math.Floor((Position - CurrentBar * Map.secondsPerBar) / Map.secondsPerBeat); }
+        get
+        {
+            if (Map == null) return 0;
+            int bar = CurrentBar;
+            double secondsPerBeat = HasBarTimes && bar < Map.barTimes.Length ? Map.barTimes[bar].secondsPerBeat : Map.secondsPerBeat;
+            return secondsPerBeat > 0 ? (int)Math.Floor((Position - BarStart(bar)) / secondsPerBeat + 1e-9) : 0;
+        }
+    }
+
+    /// <summary>Beat maps from version 2 on list every bar, so tempo and time-signature changes are followed.</summary>
+    bool HasBarTimes
+    {
+        get { return Map != null && Map.barTimes != null && Map.barTimes.Length > 0; }
+    }
+
+    /// <summary>The bar at a position in seconds from the start of the files.</summary>
+    int BarAt(double position)
+    {
+        if (!HasBarTimes) return Map.secondsPerBar > 0 ? (int)Math.Floor(position / Map.secondsPerBar + 1e-9) : 0;
+        int bar = 0;
+        while (bar + 1 < Map.barTimes.Length && Map.barTimes[bar + 1].start <= position + 1e-9) bar++;
+        return bar;
+    }
+
+    /// <summary>Where a bar starts, in seconds from the start of the files (the bar after the last: where the music ends).</summary>
+    double BarStart(int bar)
+    {
+        if (!HasBarTimes) return bar * Map.secondsPerBar;
+        return bar < Map.barTimes.Length ? Map.barTimes[bar].start : Map.seconds;
     }
 
     /// <summary>The name of the section playing, or null (needs the beat map).</summary>
@@ -179,8 +207,10 @@ public class GameMusicPlayer : MonoBehaviour
     public double NextBarTime()
     {
         if (Map == null || !IsPlaying || Map.secondsPerBar <= 0) return AudioSettings.dspTime;
-        double bars = Math.Floor(Elapsed / Map.secondsPerBar) + 1;
-        return startTime + bars * Map.secondsPerBar;
+        // The bar after the one playing, in this round of the loop.
+        double length = LoopLength;
+        double round = loop && length > 0 ? Math.Floor(Elapsed / length) * length : 0;
+        return startTime + round + BarStart(BarAt(Elapsed - round) + 1);
     }
 
     /// <summary>How long one round of the music is: the beat map's length when it loops, else the first clip's.</summary>
@@ -225,11 +255,15 @@ public class GameMusicPlayer : MonoBehaviour
         if (IsPlaying && !loop && LoopLength > 0 && Elapsed >= LoopLength) IsPlaying = false;
 
         if (Map == null || !IsPlaying || now < startTime || Map.secondsPerBeat <= 0) return;
-        long beat = (long)Math.Floor(Elapsed / Map.secondsPerBeat);
+        // A number that changes with every beat: the round of the loop, the bar and the beat in it.
+        double length = LoopLength;
+        long round = loop && length > 0 ? (long)Math.Floor(Elapsed / length) : 0;
+        int bar = CurrentBar;
+        int beatInBar = CurrentBeat;
+        long beat = (round * 1000000L + bar) * 1000L + beatInBar;
         if (beat == lastBeat) return;
         lastBeat = beat;
-        int beatInBar = CurrentBeat;
-        if (beatInBar == 0 && OnBar != null) OnBar(CurrentBar);
+        if (beatInBar == 0 && OnBar != null) OnBar(bar);
         if (OnBeat != null) OnBeat(beatInBar);
     }
 }
@@ -251,6 +285,8 @@ public class BeatMapData
     public double secondsPerBeat;
     public double secondsPerBar;
     public int bars;
+    /// <summary>Every bar: where it starts, its beats and their length (version 2 on; they change with the tempo or time signature).</summary>
+    public BarTimeData[] barTimes;
     /// <summary>How long the music is, without the ring-out.</summary>
     public double seconds;
     /// <summary>True when the files end exactly at the end of the music, to loop.</summary>
@@ -272,6 +308,15 @@ public class BeatMapData
         public int bars;
         public double start;
         public double end;
+    }
+
+    [Serializable]
+    public class BarTimeData
+    {
+        /// <summary>Seconds from the start of the files.</summary>
+        public double start;
+        public int beats;
+        public double secondsPerBeat;
     }
 
     [Serializable]

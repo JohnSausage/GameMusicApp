@@ -3,6 +3,7 @@ import type { GetEngine } from '../App'
 import { detectFirstOnset, secondsPerClick } from '../audio/analysis'
 import { recordingLatency } from '../audio/latency'
 import { importAudioFile, MicRecorder, samplesToBuffer } from '../audio/recorder'
+import { meterAt } from '../model/meter'
 import { barsHaveNotes, removeTake, writeBars } from '../model/edit'
 import { isFretted, newId, takeSeconds, type Song, type TakeInfo } from '../model/song'
 import { soundingTuning } from '../model/tuning'
@@ -69,8 +70,10 @@ export function TakeDialog({ project, getEngine, onClose }: Props): React.JSX.El
   const stopAudio = useRef<(() => void) | null>(null)
   const [audioPlaying, setAudioPlaying] = useState(false)
 
-  const clicksPerBar = song.timeSignature[0]
-  const clickSeconds = secondsPerClick(take?.info.tempo ?? song.tempo, song.timeSignature)
+  // Takes are recorded in the tempo and time signature of the cursor's bar, where they usually go (PRJ-04).
+  const here = useMemo(() => meterAt(song, cursor.bar), [song, cursor.bar])
+  const clicksPerBar = here.timeSignature[0]
+  const clickSeconds = secondsPerClick(take?.info.tempo ?? here.tempo, here.timeSignature)
   const track = song.tracks[targetTrack]
 
   const stopPlaying = (): void => {
@@ -112,7 +115,7 @@ export function TakeDialog({ project, getEngine, onClose }: Props): React.JSX.El
     id: newId(),
     name,
     sampleRate,
-    tempo: song.tempo,
+    tempo: here.tempo,
     firstDownbeat,
     createdAt: new Date().toISOString()
   })
@@ -133,7 +136,7 @@ export function TakeDialog({ project, getEngine, onClose }: Props): React.JSX.El
       input.refresh() // names appear once access is granted
       const recordStart = engine.ctx.currentTime
       const clickStart = recordStart + 0.3
-      const songClick = secondsPerClick(song.tempo, song.timeSignature)
+      const songClick = secondsPerClick(here.tempo, here.timeSignature)
       const countIn = clicksPerBar * songClick
       // Where the first downbeat lands in the recording: later by the recording latency (REC-07). It can be moved in the next step.
       const latency = recordingLatency(engine.ctx).seconds
@@ -207,7 +210,7 @@ export function TakeDialog({ project, getEngine, onClose }: Props): React.JSX.El
     const start = engine.ctx.currentTime + 0.15
     const stops = [engine.playBuffer(buffer, () => setAudioPlaying(false), start)]
     if (options.clicks) {
-      const seconds = secondsPerClick(info.tempo, song.timeSignature)
+      const seconds = secondsPerClick(info.tempo, here.timeSignature)
       const before = Math.floor(info.firstDownbeat / seconds)
       const firstClick = info.firstDownbeat - before * seconds
       const count = Math.ceil((buffer.duration - firstClick) / seconds)
@@ -265,18 +268,18 @@ export function TakeDialog({ project, getEngine, onClose }: Props): React.JSX.El
       tempo: take.info.tempo,
       firstDownbeat: take.info.firstDownbeat,
       stepsPerQuarter,
-      timeSignature: song.timeSignature,
+      timeSignature: here.timeSignature,
       tuning,
       preferredFret
     })
-  }, [step, take, sensitivity, stepsPerQuarter, preferredFret, track, song.timeSignature])
+  }, [step, take, sensitivity, stepsPerQuarter, preferredFret, track, here.timeSignature])
 
   const previewSong = useMemo<Song | null>(
     () =>
       transcription && take
-        ? { title: '', tempo: take.info.tempo, timeSignature: song.timeSignature, sections: [], takes: [], tracks: [{ ...track, bars: transcription.bars }] }
+        ? { title: '', tempo: take.info.tempo, timeSignature: here.timeSignature, sections: [], takes: [], tracks: [{ ...track, bars: transcription.bars }] }
         : null,
-    [transcription, take, track, song.timeSignature]
+    [transcription, take, track, here.timeSignature]
   )
 
   const insert = (): void => {
@@ -332,7 +335,7 @@ export function TakeDialog({ project, getEngine, onClose }: Props): React.JSX.El
             <InputSelect {...input} />
             <label className="checkbox">
               <input type="checkbox" checked={metronome} onChange={(e) => setMetronome(e.target.checked)} />
-              Metronome with a 1-bar count-in ({song.tempo} BPM, {song.timeSignature.join('/')})
+              Metronome with a 1-bar count-in ({here.tempo} BPM, {here.timeSignature.join('/')})
             </label>
             <button className="active" onClick={() => void startRecording()}>● Record</button>
             <button className={tuner ? 'active' : ''} aria-pressed={tuner} title="Tune your instrument first, with this input" onClick={() => setTuner(!tuner)}>

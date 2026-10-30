@@ -9,6 +9,7 @@ import {
   MASTER_DEFAULTS,
   MAX_FRET,
   NOTE_VALUES,
+  timeSignatureAt,
   type Bar,
   type Beat,
   type MasterSettings,
@@ -48,9 +49,17 @@ export function beatTicks(beat: Duration): number {
   return beat.triplet ? (ticks * 2) / 3 : ticks
 }
 
-export function barTicks(song: Song): number {
-  const [beats, unit] = song.timeSignature
+/** How long a bar is, by the time signature at it (the first bar's by default). */
+export function barTicks(song: Pick<Song, 'timeSignature' | 'changes'>, bar = 0): number {
+  const [beats, unit] = timeSignatureAt(song, bar)
   return (beats * TICKS_PER_QUARTER * 4) / unit
+}
+
+/** Where bars 0…count start in ticks from the start of the song (count + 1 entries: the last is where bar `count` would start). */
+export function barStartTicks(song: Pick<Song, 'timeSignature' | 'changes'>, count: number): number[] {
+  const starts = [0]
+  for (let bar = 0; bar < count; bar++) starts.push(starts[bar] + barTicks(song, bar))
+  return starts
 }
 
 const byLength = (options: Duration[]): (Duration & { ticks: number })[] => options.map((d) => ({ ...d, ticks: beatTicks(d) })).sort((a, b) => b.ticks - a.ticks)
@@ -144,8 +153,9 @@ function completeGroup(position: number, value: NoteValue): Beat[] {
   return []
 }
 
-export function emptyBar(song: Song): Bar {
-  return { beats: restsFor(barTicks(song)) }
+/** A bar of rests, as long as the time signature at `bar` asks for. */
+export function emptyBar(song: Pick<Song, 'timeSignature' | 'changes'>, bar = 0): Bar {
+  return { beats: restsFor(barTicks(song, bar)) }
 }
 
 export interface NewSongOptions {
@@ -159,7 +169,7 @@ export interface NewSongOptions {
 /** A new project: one track with a few empty bars. */
 export function createSong(options: NewSongOptions): Song {
   const song: Song = { title: options.title, tempo: options.tempo, timeSignature: options.timeSignature, tracks: [], sections: [], takes: [] }
-  const bars = Array.from({ length: options.bars ?? 4 }, () => emptyBar(song))
+  const bars = Array.from({ length: options.bars ?? 4 }, (_, bar) => emptyBar(song, bar))
   song.tracks.push(createTrack(options.firstTrack, bars))
   return song
 }
@@ -320,8 +330,10 @@ export function toggleTriplet(song: Song, cursor: Cursor): EditResult | null {
 
 // ---------------------------------------------------------------- bars
 
+/** Sections and tempo or time-signature changes from `fromBar` on move by `by` bars. */
 function shiftSections(song: Song, fromBar: number, by: number): void {
   for (const section of song.sections) if (section.bar >= fromBar) section.bar += by
+  for (const change of song.changes ?? []) if (change.bar >= fromBar) change.bar += by
 }
 
 /** "Section A", "Section B"…: the letter after the number of sections, or the next one not taken. */
@@ -346,7 +358,7 @@ export function appendBars(draft: Song, count: number): void {
   const last = arrangement.at(-1)
   const shared = last && Object.values(last.parts).some((id) => arrangement.some((s) => s !== last && Object.values(s.parts).includes(id)))
   if (shared && !draft.sections.some((s) => s.bar === first)) draft.sections.push({ bar: first, name: nextSectionName(draft) })
-  for (const track of draft.tracks) for (let i = 0; i < count; i++) track.bars.push(emptyBar(draft))
+  for (const track of draft.tracks) for (let i = 0; i < count; i++) track.bars.push(emptyBar(draft, first + i))
 }
 
 /**
@@ -365,7 +377,7 @@ export function addBars(song: Song, cursor: Cursor, count: number, sectionName?:
 /** Inserts an empty bar before the cursor's bar, in every track. At a section's first bar, the new bar starts that section. */
 export function insertBarBefore(song: Song, cursor: Cursor): EditResult {
   return edit(song, cursor, (draft, c) => {
-    for (const track of draft.tracks) track.bars.splice(c.bar, 0, emptyBar(draft))
+    for (const track of draft.tracks) track.bars.splice(c.bar, 0, emptyBar(draft, c.bar))
     shiftSections(draft, c.bar + 1, 1)
     return { ...c, beat: 0 }
   })!
@@ -390,6 +402,13 @@ export function deleteBar(song: Song, cursor: Cursor): EditResult | null {
     draft.sections = draft.sections
       .map((s) => ({ ...s, bar: s.bar > c.bar ? s.bar - 1 : s.bar }))
       .filter((s, i, all) => s.bar < remaining && all.findLastIndex((o) => o.bar === s.bar) === i)
+    // Likewise a change of tempo or time signature: the next bar's own change wins.
+    if (draft.changes) {
+      draft.changes = draft.changes
+        .map((ch) => ({ ...ch, bar: ch.bar > c.bar ? ch.bar - 1 : ch.bar }))
+        .filter((ch, i, all) => ch.bar > 0 && ch.bar < remaining && all.findLastIndex((o) => o.bar === ch.bar) === i)
+      if (draft.changes.length === 0) delete draft.changes
+    }
     return { ...c, bar: Math.min(c.bar, remaining - 1), beat: 0 }
   })
 }
@@ -397,7 +416,7 @@ export function deleteBar(song: Song, cursor: Cursor): EditResult | null {
 /** Replaces the cursor's bar in the current track with an empty bar. */
 export function clearBar(song: Song, cursor: Cursor): EditResult {
   return edit(song, cursor, (draft, c) => {
-    draft.tracks[c.track].bars[c.bar] = emptyBar(draft)
+    draft.tracks[c.track].bars[c.bar] = emptyBar(draft, c.bar)
     return { ...c, beat: 0 }
   })!
 }
@@ -462,8 +481,8 @@ function withoutTrailingRests(beats: Beat[]): Beat[] {
  */
 export function setSelectionDuration(song: Song, cursor: Cursor, sel: Selection, change: (beat: Beat) => Duration): EditResult | null {
   const draft = structuredClone(song)
-  const T = barTicks(draft)
   for (const { bar, from, to } of selectedRanges(draft, sel)) {
+    const T = barTicks(draft, bar)
     const target = draft.tracks[sel.track].bars[bar]
     const head = [...target.beats.slice(0, from), ...target.beats.slice(from, to + 1).map((b) => withDuration(b, change(b)))]
     const tail = withoutTrailingRests(target.beats.slice(to + 1))
@@ -489,8 +508,8 @@ export function clearSelection(song: Song, cursor: Cursor, sel: Selection): Edit
 /** Removes the selected beats; each bar closes the gap and refills with rests at the end. */
 export function deleteSelection(song: Song, cursor: Cursor, sel: Selection): EditResult {
   return edit(song, cursor, (draft) => {
-    const T = barTicks(draft)
     for (const { bar, from, to } of selectedRanges(draft, sel)) {
+      const T = barTicks(draft, bar)
       const target = draft.tracks[sel.track].bars[bar]
       const kept = withoutTrailingRests([...target.beats.slice(0, from), ...target.beats.slice(to + 1)])
       target.beats = [...kept, ...restsFor(T - ticksOf(kept))]
@@ -527,15 +546,30 @@ const withoutLegato = ({ hammer: _h, slide: _s, ...note }: Note): Note => note
  * Lays spans (in time order, no overlaps) out into full bars. Gaps become rests.
  * A span that needs several beats (e.g. across a bar line) has its notes in the
  * first; with `ties`, the others hold them (and the last one keeps a hammer-on
- * or slide into the next note), else they are rests.
+ * or slide into the next note), else they are rests. `barLength` is the
+ * ticks of every bar, or of each bar (e.g. with time-signature changes).
  */
-export function barsFromSpans(spans: Span[], barLength: number, count: number, ties = false): Bar[] {
+export function barsFromSpans(spans: Span[], barLength: number | number[], count: number, ties = false): Bar[] {
   const bars: Bar[] = Array.from({ length: count }, () => ({ beats: [] }))
+  const starts = [0]
+  for (let b = 0; b < count; b++) starts.push(starts[b] + (typeof barLength === 'number' ? barLength : barLength[b]))
+  /** The bar a tick is in (the last bar for ticks past the end). */
+  const barAt = (tick: number): number => {
+    let lo = 0
+    let hi = count - 1
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1
+      if (starts[mid] <= tick) lo = mid
+      else hi = mid - 1
+    }
+    return lo
+  }
   const place = (start: number, length: number, notes: Note[]): void => {
     const pieces: { bar: number; beat: Beat }[] = []
     while (length > 0) {
-      const bar = Math.floor(start / barLength)
-      const part = Math.min(length, (bar + 1) * barLength - start)
+      const bar = barAt(start)
+      const part = Math.min(length, starts[bar + 1] - start)
+      if (part <= 0) break // past the last bar
       for (const beat of restsFor(part)) pieces.push({ bar, beat })
       start += part
       length -= part
@@ -553,7 +587,7 @@ export function barsFromSpans(spans: Span[], barLength: number, count: number, t
     place(span.start, span.length, span.notes)
     position = span.start + span.length
   }
-  place(position, count * barLength - position, [])
+  place(position, starts[count] - position, [])
   return bars
 }
 
@@ -565,12 +599,14 @@ export function barsFromSpans(spans: Span[], barLength: number, count: number, t
 export function pasteBeats(song: Song, cursor: Cursor, beats: Beat[]): EditResult | null {
   if (beats.length === 0) return null
   return edit(song, cursor, (draft, c) => {
-    const T = barTicks(draft)
     const track = draft.tracks[c.track]
     const strings = track.tuning.length
-    const start = c.bar * T + beatStart(track.bars[c.bar], c.beat)
+    const barStart = barStartTicks(draft, c.bar)[c.bar]
+    const start = barStart + beatStart(track.bars[c.bar], c.beat)
     const end = start + ticksOf(beats)
-    appendBars(draft, Math.ceil(end / T) - barCount(draft))
+    let count = barCount(draft)
+    while (barStartTicks(draft, count)[count] < end) count++
+    appendBars(draft, count - barCount(draft))
 
     const spans: Span[] = []
     for (const span of trackSpans(track)) {
@@ -587,8 +623,8 @@ export function pasteBeats(song: Song, cursor: Cursor, beats: Beat[]): EditResul
       at += beatTicks(beat)
     }
     spans.sort((a, b) => a.start - b.start)
-    track.bars = barsFromSpans(spans, T, barCount(draft))
-    return { ...c, beat: Math.max(0, track.bars[c.bar].beats.findIndex((_, i) => beatStart(track.bars[c.bar], i) >= start - c.bar * T)) }
+    track.bars = barsFromSpans(spans, Array.from({ length: count }, (_, b) => barTicks(draft, b)), count)
+    return { ...c, beat: Math.max(0, track.bars[c.bar].beats.findIndex((_, i) => beatStart(track.bars[c.bar], i) >= start - barStart)) }
   })
 }
 
@@ -599,7 +635,7 @@ export function pasteBeats(song: Song, cursor: Cursor, beats: Beat[]): EditResul
  * is already there. Returns null if a bar isn't full.
  */
 export function writeBars(song: Song, cursor: Cursor, trackIndex: number, startBar: number, bars: Bar[], take?: TakeInfo): EditResult | null {
-  if (bars.length === 0 || bars.some((bar) => bar.beats.reduce((sum, b) => sum + beatTicks(b), 0) !== barTicks(song))) return null
+  if (bars.length === 0 || bars.some((bar, i) => bar.beats.reduce((sum, b) => sum + beatTicks(b), 0) !== barTicks(song, startBar + i))) return null
   return edit(song, cursor, (draft) => {
     appendBars(draft, startBar + bars.length - barCount(draft))
     bars.forEach((bar, i) => {
@@ -690,7 +726,7 @@ export function sectionRangeOf(song: Song, bar: number): (BarRange & { name: str
 
 export function addTrack(song: Song, cursor: Cursor, kind: TrackKind): EditResult {
   return edit(song, cursor, (draft, c) => {
-    const bars = Array.from({ length: Math.max(1, barCount(draft)) }, () => emptyBar(draft))
+    const bars = Array.from({ length: Math.max(1, barCount(draft)) }, (_, bar) => emptyBar(draft, bar))
     draft.tracks.push(createTrack(kind, bars))
     return { ...c, track: draft.tracks.length - 1, beat: 0, string: kind === 'keys' ? keyRow(60) : 1 }
   })!

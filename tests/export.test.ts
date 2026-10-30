@@ -128,7 +128,7 @@ describe('beat map', () => {
     const map = beatMap(song, { start: 0, end: 4, name: null }, { sampleRate: 48000, ending: 'cut', mix: 'Demo song.wav', stems: [] })
     expect(map).toMatchObject({
       format: 'GameMusicApp beat map',
-      version: 1,
+      version: 2,
       title: 'Demo song',
       range: null,
       firstBar: 1,
@@ -188,5 +188,6 @@ describe('beat map', () => {
     expect(fields('BeatMapData')).toEqual(Object.keys(map).sort())
     expect(fields('SectionData')).toEqual(Object.keys(map.sections[0]).sort())
     expect(fields('StemData')).toEqual(Object.keys(map.stems[0]).sort())
+    expect(fields('BarTimeData')).toEqual(Object.keys(map.barTimes[0]).sort())
   })
 })

@@ -42,15 +42,21 @@ export function rollNotes(song: Song, track: number, from: number, to: number): 
   return notes
 }
 
+/** The ticks of bars `from`…`to - 1` (their time signatures may differ). */
+export const barLengths = (song: Pick<Song, 'timeSignature' | 'changes'>, from: number, to: number): number[] =>
+  Array.from({ length: Math.max(0, to - from) }, (_, i) => barTicks(song, from + i))
+
 /**
  * Bars that play `notes` (ticks from the start of the first bar). Beats start
  * wherever a note starts or ends or a bar begins; a note sounding through
- * several beats is held (tied) into them.
+ * several beats is held (tied) into them. `ticksPerBar` is the length of every
+ * bar, or of each bar.
  */
-export function rollToBars(notes: RollNote[], barCount: number, ticksPerBar: number): Bar[] {
-  const total = barCount * ticksPerBar
-  const cuts = new Set<number>([0, total])
-  for (let b = 1; b < barCount; b++) cuts.add(b * ticksPerBar)
+export function rollToBars(notes: RollNote[], barCount: number, ticksPerBar: number | number[]): Bar[] {
+  const starts = [0]
+  for (let b = 0; b < barCount; b++) starts.push(starts[b] + (typeof ticksPerBar === 'number' ? ticksPerBar : ticksPerBar[b]))
+  const total = starts[barCount]
+  const cuts = new Set<number>(starts)
   for (const n of notes) {
     if (n.start > 0 && n.start < total) cuts.add(n.start)
     if (n.start + n.length < total) cuts.add(n.start + n.length)
@@ -65,7 +71,7 @@ export function rollToBars(notes: RollNote[], barCount: number, ticksPerBar: num
       beat.notes = playing
         .map((n): Note => ({ string: n.row, fret: 0, velocity: n.velocity, ...((at > n.start || n.continued) && { tie: true }) }))
         .sort((a, b) => a.string - b.string)
-      bars[Math.floor(at / ticksPerBar)].beats.push(beat)
+      bars[starts.findLastIndex((s) => s <= at)].beats.push(beat)
       at += beatTicks(beat)
     }
   }
@@ -76,9 +82,8 @@ export function rollToBars(notes: RollNote[], barCount: number, ticksPerBar: num
 export function writeRoll(song: Song, cursor: Cursor, track: number, from: number, to: number, notes: RollNote[]): EditResult | null {
   if (to <= from) return null
   return edit(song, cursor, (draft) => {
-    const T = barTicks(draft)
     appendBars(draft, to - barCount(draft))
-    const bars = rollToBars(notes, to - from, T)
+    const bars = rollToBars(notes, to - from, barLengths(draft, from, to))
     bars.forEach((bar, i) => (draft.tracks[track].bars[from + i] = bar))
   })
 }
@@ -88,7 +93,7 @@ export function writeRoll(song: Song, cursor: Cursor, track: number, from: numbe
  * key that it would overlap. The note is cut at the end of the range.
  */
 export function addRollNote(song: Song, cursor: Cursor, track: number, from: number, to: number, note: RollNote): EditResult | null {
-  const end = Math.min(note.start + note.length, (to - from) * barTicks(song))
+  const end = Math.min(note.start + note.length, barLengths(song, from, to).reduce((sum, t) => sum + t, 0))
   if (end <= note.start) return null
   const notes = rollNotes(song, track, from, to).flatMap((n): RollNote[] => {
     if (n.row !== note.row || n.start + n.length <= note.start || n.start >= end) return [n]
@@ -111,9 +116,9 @@ export function removeRollNote(song: Song, cursor: Cursor, track: number, from: 
 
 /** The cursor on the beat that starts at `tick` (from the start of bar `from`), on `row`. */
 export function cursorAt(song: Song, track: number, from: number, row: number, tick: number): Cursor {
-  const T = barTicks(song)
-  const bar = from + Math.floor(tick / T)
-  let start = (bar - from) * T
+  let bar = from
+  let start = 0
+  while (bar + 1 < barCount(song) && start + barTicks(song, bar) <= tick) start += barTicks(song, bar++)
   const beats = song.tracks[track].bars[bar]?.beats ?? []
   let beat = 0
   while (beat + 1 < beats.length && start + beatTicks(beats[beat]) <= tick) start += beatTicks(beats[beat++])
@@ -129,12 +134,15 @@ export interface TimedNote {
 }
 
 /**
- * Snaps played notes to a grid of `gridTicks` (e.g. 240 = sixteenths) at
- * `secondsPerTick`: starts to the nearest grid line, lengths to at least one
- * step. Notes of the same key never overlap. Pitches outside the piano are left out.
+ * Snaps played notes to a grid of `gridTicks` (e.g. 240 = sixteenths):
+ * starts to the nearest grid line, lengths to at least one step. `toTicks`
+ * turns seconds into ticks: a number is seconds per tick (one tempo), a
+ * function follows tempo changes. Notes of the same key never overlap.
+ * Pitches outside the piano are left out.
  */
-export function quantizeNotes(notes: TimedNote[], secondsPerTick: number, gridTicks: number): RollNote[] {
-  const snap = (seconds: number): number => Math.round(seconds / secondsPerTick / gridTicks) * gridTicks
+export function quantizeNotes(notes: TimedNote[], toTicks: number | ((seconds: number) => number), gridTicks: number): RollNote[] {
+  const ticks = typeof toTicks === 'number' ? (seconds: number) => seconds / toTicks : toTicks
+  const snap = (seconds: number): number => Math.round(ticks(seconds) / gridTicks) * gridTicks
   const result = notes
     .filter((n) => n.pitch >= 21 && n.pitch <= 108)
     .map((n) => {

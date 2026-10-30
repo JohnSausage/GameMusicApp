@@ -1,8 +1,8 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { barTicks, moveBar, type EditResult } from '../model/edit'
-import { addRollNote, removeRollNote, rollNotes, type RollNote } from '../model/keys'
-import { barCount, KEYS_TUNING, keyRow, rowPitch } from '../model/song'
-import { secondsPerQuarter } from '../model/timing'
+import { barStartTicks, moveBar, type EditResult } from '../model/edit'
+import { addRollNote, barLengths, removeRollNote, rollNotes, type RollNote } from '../model/keys'
+import { barCount, KEYS_TUNING, keyRow, rowPitch, timeSignatureAt } from '../model/song'
+import { tickAtTime } from '../model/timing'
 import type { Project } from '../project/useProject'
 import { noteName } from '../transcription/notes'
 
@@ -43,8 +43,10 @@ export function PianoRoll(props: Props): React.JSX.Element {
 
   const from = cursor.bar
   const to = Math.min(barCount(song), from + BARS_SHOWN)
-  const ticksPerBar = barTicks(song)
-  const total = (to - from) * ticksPerBar
+  // The bars shown, as long as their time signatures make them.
+  const lengths = barLengths(song, from, to)
+  const barStarts = lengths.map((_, i) => lengths.slice(0, i).reduce((sum, t) => sum + t, 0))
+  const total = lengths.reduce((sum, t) => sum + t, 0)
   const steps = total / gridTicks
   const notes = rollNotes(song, trackIndex, from, to)
   const rows = KEYS_TUNING.length
@@ -73,10 +75,10 @@ export function PianoRoll(props: Props): React.JSX.Element {
   useEffect(() => {
     if (collapsed) return
     let frame = 0
-    const secondsPerTick = secondsPerQuarter(song) / 960
+    const first = barStartTicks(song, from)[from]
     const tick = (): void => {
       const position = positionRef.current
-      const at = position === null ? -1 : position / secondsPerTick - from * ticksPerBar
+      const at = position === null ? -1 : tickAtTime(song, position) - first
       const head = playheadRef.current
       if (head) {
         head.style.display = at >= 0 && at < total ? 'block' : 'none'
@@ -86,7 +88,7 @@ export function PianoRoll(props: Props): React.JSX.Element {
     }
     frame = requestAnimationFrame(tick)
     return () => cancelAnimationFrame(frame)
-  }, [collapsed, positionRef, song, from, ticksPerBar, total])
+  }, [collapsed, positionRef, song, from, total])
 
   /** Grid position under a pointer: the step's start tick and the row. */
   const cellAt = (event: React.PointerEvent): { tick: number; row: number } => {
@@ -137,9 +139,10 @@ export function PianoRoll(props: Props): React.JSX.Element {
     height: ROW_HEIGHT - 1
   })
 
-  const beatsPerBar = song.timeSignature[0]
-  const beatTicksValue = ticksPerBar / beatsPerBar
-  const lines = Array.from({ length: (to - from) * beatsPerBar }, (_, i) => ({ at: (i * beatTicksValue) / total, bar: i % beatsPerBar === 0 }))
+  const lines = lengths.flatMap((length, i) => {
+    const [beats] = timeSignatureAt(song, from + i)
+    return Array.from({ length: beats }, (_, k) => ({ at: (barStarts[i] + (k * length) / beats) / total, bar: k === 0 }))
+  })
 
   return (
     <section className={`piano-roll card ${collapsed ? 'collapsed' : ''}`}>

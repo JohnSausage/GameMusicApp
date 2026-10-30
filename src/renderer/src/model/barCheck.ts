@@ -3,9 +3,26 @@
 // too short or too long. They are marked in the score and can be fitted: a short
 // bar is filled up with rests, a long one loses what goes past its end.
 import { sectionStarts, writeOut } from './arrangement'
-import { barTicks, beatTicks, edit, restsFor, type Cursor, type EditResult } from './edit'
-import type { Bar, Song } from './song'
-import { fitBar, holds } from './timeSignature'
+import { barSpans, barsFromSpans, barTicks, beatTicks, edit, restsFor, type Cursor, type EditResult, type Span } from './edit'
+import type { Bar, Song, Track } from './song'
+
+/** Whether `ties` hold notes over a bar line: not for drum hits, which don't ring on. */
+export const holds = (track: Track): boolean => track.kind !== 'drums'
+
+/** One bar made `to` ticks long: its notes stay from its start; longer, it ends with rests; shorter, what doesn't fit goes. */
+export function fitBar(bar: Bar, to: number, ties: boolean, counts: { removed: number; shortened: number }): Bar {
+  const spans: Span[] = []
+  for (const span of barSpans([bar])) {
+    if (span.start >= to) counts.removed += span.notes.length
+    else {
+      if (span.start + span.length > to) counts.shortened += span.notes.length
+      spans.push({ ...span, length: Math.min(span.length, to - span.start) })
+    }
+  }
+  // Rests at the end are filled in again, joined with the new time.
+  while (spans.length > 0 && spans[spans.length - 1].notes.length === 0) spans.pop()
+  return barsFromSpans(spans, to, 1, ties)[0]
+}
 
 /** How long a bar's beats are together, in ticks. */
 export const barLength = (bar: Bar): number => bar.beats.reduce((sum, beat) => sum + beatTicks(beat), 0)
@@ -18,13 +35,13 @@ export interface WrongBar {
   expected: number
 }
 
-/** The bars of every track that are too short or too long. */
+/** The bars of every track that are too short or too long for the time signature at them. */
 export function wrongBars(song: Song): WrongBar[] {
-  const expected = barTicks(song)
+  const expected = Array.from({ length: Math.max(0, ...song.tracks.map((t) => t.bars.length)) }, (_, b) => barTicks(song, b))
   return song.tracks.flatMap((track, t) =>
     track.bars.flatMap((bar, b) => {
       const length = barLength(bar)
-      return length === expected ? [] : [{ track: t, bar: b, length, expected }]
+      return length === expected[b] ? [] : [{ track: t, bar: b, length, expected: expected[b] }]
     })
   )
 }
@@ -51,12 +68,14 @@ export interface FittedBars {
 }
 
 /**
- * Fits the wrong bars, or only `only`: a short bar ends with rests, a long one
- * loses what goes past its end. In an arranged song the parts are fitted, so a
- * part fits wherever it plays. Null if no bar needs it.
+ * Fits the wrong bars, or only `only` (a bar, or the bars it picks): a short
+ * bar ends with rests, a long one loses what goes past its end. In an arranged
+ * song the parts are fitted, so a part fits wherever it plays. Null if no bar
+ * needs it.
  */
-export function fitBars(song: Song, cursor: Cursor, only?: { track: number; bar: number }): FittedBars | null {
-  const wrong = wrongBars(song).filter((w) => !only || (w.track === only.track && w.bar === only.bar))
+export function fitBars(song: Song, cursor: Cursor, only?: { track: number; bar: number } | ((bar: WrongBar) => boolean)): FittedBars | null {
+  const picked = typeof only === 'function' ? only : only ? (w: WrongBar) => w.track === only.track && w.bar === only.bar : () => true
+  const wrong = wrongBars(song).filter(picked)
   if (wrong.length === 0) return null
   const counts = { removed: 0, shortened: 0 }
   let fitted = 0

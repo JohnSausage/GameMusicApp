@@ -3,6 +3,7 @@ import type { GetEngine } from '../App'
 import { COMPUTER_KEYS, MidiKeyboard } from '../midi/midiInput'
 import { updateTrack } from '../model/edit'
 import { DRUM_PIECES, isBassTrack, soundName, type Instrument } from '../model/song'
+import { barTime } from '../model/timing'
 import {
   CRUSH_RATES,
   DEFAULT_PATCH,
@@ -353,7 +354,7 @@ export function InstrumentEditor({ project, trackIndex, getEngine, playName = 's
     const span = buildStart()
     void playback.play(song, span)
   }
-  const buildStart = (): number => (60 / song.tempo) * 4 * (song.timeSignature[0] / song.timeSignature[1]) * cursor.bar
+  const buildStart = (): number => barTime(song, cursor.bar)
 
   const previewBar = (
     <div className="toolbar preview-bar">

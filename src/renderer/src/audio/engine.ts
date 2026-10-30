@@ -3,8 +3,7 @@ import { WorkletSynthesizer } from 'spessasynth_lib'
 import processorUrl from 'spessasynth_lib/dist/spessasynth_processor.min.js?url'
 import { audibleTracks, type Instrument, type MasterSettings, type Song } from '../model/song'
 import type { SynthPatch } from '../model/synth'
-import { buildTimeline, type NoteEvent, type SongTimeline, type TimeRange } from '../model/timing'
-import { secondsPerClick } from './analysis'
+import { buildTimeline, metronomeClicks, type NoteEvent, type SongTimeline, type TimeRange } from '../model/timing'
 import { BEND_RANGE, pitchWheelSteps, WHEEL_CENTER } from './bends'
 import { songPosition, startPosition, startSchedule, takeDue, validLoop, type ScheduleState } from './scheduler'
 import { peakOf, savedOutputDevice } from './meter'
@@ -209,7 +208,7 @@ export class AudioEngine {
       startTime,
       speed,
       loop,
-      schedule: startSchedule(timeline, from, startTime, loop, secondsPerClick(song.tempo, song.timeSignature), song.timeSignature[0], speed),
+      schedule: startSchedule(timeline, from, startTime, loop, metronomeClicks(song, timeline.duration), speed),
       timer: 0,
       wheel: [],
       synths,

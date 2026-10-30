@@ -24,7 +24,7 @@ import {
 } from '../model/arrangement'
 import { startRow, type BarRange, type EditResult } from '../model/edit'
 import { barCount, type ArrangementSection, type Part, type Track } from '../model/song'
-import { barSeconds } from '../model/timing'
+import { barPosition, songSeconds } from '../model/timing'
 import type { Project } from '../project/useProject'
 
 /** Narrowest a bar is drawn; longer songs scroll sideways. */
@@ -210,12 +210,11 @@ export function ArrangementView(props: Props): React.JSX.Element {
     if (!playhead) return
     playhead.style.display = 'none'
     if (!playing) return
-    const bar = barSeconds(song)
     let frame = 0
     const tick = (): void => {
       const position = positionRef.current
       playhead.style.display = position === null ? 'none' : 'block'
-      if (position !== null) playhead.style.left = `${(position / bar) * live.current.barPx}px`
+      if (position !== null) playhead.style.left = `${barPosition(song, position) * live.current.barPx}px`
       frame = requestAnimationFrame(tick)
     }
     frame = requestAnimationFrame(tick)
@@ -688,7 +687,7 @@ export function ArrangementView(props: Props): React.JSX.Element {
 
       <div className="status-bar">
         <span className="cursor-info">
-          {plural(arrangement.length, 'section')} · {plural(barCount(song), 'bar')} · {formatTime(barCount(song) * barSeconds(song))}
+          {plural(arrangement.length, 'section')} · {plural(barCount(song), 'bar')} · {formatTime(songSeconds(song))}
         </span>
         {message && <span className="status">{message}</span>}
         <span className="spacer" />

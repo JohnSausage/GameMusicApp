@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { barTicks, updateSong, type Cursor, type EditResult } from '../model/edit'
 import { ALL_KEYS, keyAccidentals, keyName, keyShift, sameKey, songKey, type KeySignature } from '../model/keySignature'
 import type { Song } from '../model/song'
-import { changeTimeSignature, TIME_SIGNATURES, type Rebar } from '../model/timeSignature'
+import { changeTimeSignature, firstOwnSignature, TIME_SIGNATURES, type Rebar } from '../model/timeSignature'
 import { describeShift, transpose } from '../model/transpose'
 
 interface Props {
@@ -45,6 +45,8 @@ export function SongDialog({ song, cursor, onApply, onClose }: Props): React.JSX
   )
   // Moving the bar lines loses nothing; keeping the bars suits a beat more or less per bar, unless notes would go.
   const lossy = previews !== null && previews.bars.removed + previews.bars.shortened > 0
+  // With time-signature changes later in the song, only the bars before the first one change, keeping their notes.
+  const ownFrom = firstOwnSignature(song)
   const rebar: Rebar = chosenRebar ?? (lossy || to % from === 0 || from % to === 0 ? 'flow' : 'bars')
   const changed =
     title !== song.title || author.trim() !== (song.author ?? '') || (validTempo && tempoValue !== song.tempo) || !sameKey(key, songKey(song)) || newSignature
@@ -83,8 +85,8 @@ export function SongDialog({ song, cursor, onApply, onClose }: Props): React.JSX
           </label>
         </div>
         <div className="form-row">
-          <label>
-            Tempo (BPM)
+          <label title={song.changes?.length ? 'The tempo from bar 1 until the first tempo change' : undefined}>
+            {song.changes?.some((c) => c.tempo !== undefined) ? 'Tempo at bar 1' : 'Tempo (BPM)'}
             <input type="number" min={20} max={400} value={tempo} onChange={(e) => setTempo(e.target.value)} />
           </label>
           <label>
@@ -116,7 +118,13 @@ export function SongDialog({ song, cursor, onApply, onClose }: Props): React.JSX
         </div>
         <p className="muted small">The key sets the sharps or flats in the score. Notes sound the same, and are written in the key.</p>
 
-        {previews && withNotes && (
+        {previews && withNotes && ownFrom !== null && (
+          <p className="muted small">
+            From bar {ownFrom + 1} on the time signature changes again, so only bars 1–{ownFrom} become {signatureValue(signature)}. Each keeps its notes from its start
+            {to > from ? '; the bars end with rests.' : lossy ? `; ${plural(previews.bars.removed + previews.bars.shortened, 'note')} no longer fit${previews.bars.removed + previews.bars.shortened === 1 ? 's' : ''} and ${previews.bars.removed + previews.bars.shortened === 1 ? 'is' : 'are'} cut.` : '.'}
+          </p>
+        )}
+        {previews && withNotes && ownFrom === null && (
           <fieldset className="choice-group">
             <legend>The bars, now {signatureValue(signature)}</legend>
             <label className="checkbox">

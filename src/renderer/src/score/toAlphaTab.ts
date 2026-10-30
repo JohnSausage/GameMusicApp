@@ -2,7 +2,7 @@ import * as alphaTab from '@coderline/alphatab'
 import { partStarts } from '../model/arrangement'
 import { strengthOf } from '../model/drums'
 import { songKey } from '../model/keySignature'
-import type { NoteValue, Song } from '../model/song'
+import { timeSignatureAt, type NoteValue, type Song } from '../model/song'
 import { isStandardTuning, tuningPreset } from '../model/tuning'
 
 const { AccentuationType, Automation, SlideOutType, Bar, Beat, Clef, Duration, KeySignatureType, MasterBar, Note, Ottavia, Score, Section, Track, Tuning, Voice } = alphaTab.model
@@ -47,9 +47,12 @@ export function songToAlphaTab(song: Song, settings: alphaTab.Settings, tabOnly 
 
   for (let i = 0; i < barCount; i++) {
     const masterBar = new MasterBar()
-    masterBar.timeSignatureNumerator = song.timeSignature[0]
-    masterBar.timeSignatureDenominator = song.timeSignature[1]
-    if (i === 0) masterBar.tempoAutomations.push(Automation.buildTempoAutomation(false, 0, song.tempo, 2))
+    // alphaTab shows a time signature where it changes, and a tempo where one is set.
+    const [beats, unit] = timeSignatureAt(song, i)
+    masterBar.timeSignatureNumerator = beats
+    masterBar.timeSignatureDenominator = unit
+    const tempo = i === 0 ? song.tempo : song.changes?.find((c) => c.bar === i)?.tempo
+    if (tempo !== undefined) masterBar.tempoAutomations.push(Automation.buildTempoAutomation(false, 0, tempo, 2))
     const sectionName = song.sections.find((s) => s.bar === i)?.name
     if (sectionName) {
       masterBar.section = new Section()

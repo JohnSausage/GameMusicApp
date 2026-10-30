@@ -193,6 +193,24 @@ function checkEffects(effects: SoundEffect[]): void {
   })
 }
 
+/** Tempo and time-signature changes (PRJ-04): sorted by bar, one per bar; empty ones and ones past the last bar are dropped. */
+function checkChanges(song: Song, bars: number): void {
+  if (song.changes === undefined) return
+  if (!Array.isArray(song.changes)) fail('invalid tempo and time-signature changes')
+  for (const change of song.changes) {
+    if (!isInt(change?.bar) || change.bar < 1) fail('a tempo or time-signature change has no valid bar')
+    if (change.tempo !== undefined && !(typeof change.tempo === 'number' && change.tempo >= 20 && change.tempo <= 400)) fail(`invalid tempo change at bar ${change.bar + 1}`)
+    const ts = change.timeSignature
+    if (ts !== undefined && !(Array.isArray(ts) && ts.length === 2 && ts.every((n) => isInt(n) && n >= 1))) fail(`invalid time-signature change at bar ${change.bar + 1}`)
+  }
+  const changes = song.changes
+    .filter((c) => c.bar < bars && (c.tempo !== undefined || c.timeSignature !== undefined))
+    .sort((a, b) => a.bar - b.bar)
+    .filter((c, i, all) => all[i + 1]?.bar !== c.bar)
+  if (changes.length > 0) song.changes = changes
+  else delete song.changes
+}
+
 /** Checks the structure we rely on, so a damaged file fails here instead of crashing the editor. */
 function checkSong(value: unknown): Song {
   const song = value as Song
@@ -212,6 +230,7 @@ function checkSong(value: unknown): Song {
     if (track.parts !== undefined) checkParts(track, t)
   })
   if (song.arrangement !== undefined) checkArrangement(song)
+  checkChanges(song, song.arrangement ? song.arrangement.reduce((sum, s) => sum + s.length, 0) : bars)
   fixPartColors(song)
   if (song.effects !== undefined) checkEffects(song.effects)
   const checked = { ...song, sections: Array.isArray(song.sections) ? song.sections : [], takes: checkTakes(song.takes), master: checkMaster(song.master) }

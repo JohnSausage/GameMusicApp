@@ -20,12 +20,12 @@ import {
   type LoopChoice
 } from '../model/edit'
 import { addEffect, effectSong, findEffect, type EffectTemplate } from '../model/effects'
-import { audibleTracks, barCount, defaultInstrument, isFretted, MASTER_DEFAULTS, soundName, type Instrument, type SoundEffect, type Track } from '../model/song'
+import { audibleTracks, defaultInstrument, isFretted, MASTER_DEFAULTS, soundName, type Instrument, type SoundEffect, type Track } from '../model/song'
 import { setStemName } from '../model/stems'
 import { MidiKeyboard, type MidiNoteMessage } from '../midi/midiInput'
 import { importMidi } from '../model/midiImport'
 import { CRUSH_RATES, eightBitKit, formatSampleRate } from '../model/synth'
-import { barSeconds, buildTimeline } from '../model/timing'
+import { barTime, buildTimeline, songSeconds } from '../model/timing'
 import { retuneTrack, tuningLabel, type Retune } from '../model/tuning'
 import { saveFile } from '../platform'
 import { scorePdf } from '../score/pdf'
@@ -376,9 +376,8 @@ export function TabEditor({ project, getEngine, headerSlots, onShowShortcuts }: 
 
   /** Plays from `from` seconds with the current (or given) loop and metronome settings. */
   const playFrom = (from: number, withLoop = loop, range: BarRange = loopRange): void => {
-    const bar = barSeconds(song)
     setHeard('song')
-    void playback.play(song, from, { loop: withLoop ? { start: range.start * bar, end: range.end * bar } : null, metronome })
+    void playback.play(song, from, { loop: withLoop ? { start: barTime(song, range.start), end: barTime(song, range.end) } : null, metronome })
   }
 
   const playFromCursor = (): void => {
@@ -389,7 +388,7 @@ export function TabEditor({ project, getEngine, headerSlots, onShowShortcuts }: 
   /** Plays the part edited in the arrangement on its own; looping repeats the whole part. */
   const playPartFrom = (from: number, withLoop = loop): void => {
     if (!part) return
-    const end = barCount(part.song) * barSeconds(part.song)
+    const end = songSeconds(part.song)
     setHeard('part')
     void playback.play(part.song, from, { loop: withLoop ? { start: 0, end } : null, metronome })
   }

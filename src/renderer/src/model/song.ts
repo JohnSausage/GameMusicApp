@@ -145,12 +145,23 @@ export interface KeySignature {
   minor: boolean
 }
 
+/** A tempo and/or time signature from a bar on, until the next change (PRJ-04, see model/meter.ts). */
+export interface MeterChange {
+  /** The bar it starts at (from 1: bar 0 has the song's own tempo and time signature). */
+  bar: number
+  tempo?: number
+  timeSignature?: [number, number]
+}
+
 export interface Song {
   title: string
   /** Who wrote it; shown under the title in the score. Absent = nobody named. */
   author?: string
+  /** The tempo and time signature from the first bar on. */
   tempo: number
   timeSignature: [number, number]
+  /** Later tempo and time-signature changes, by bar, one per bar at most. Absent = none. */
+  changes?: MeterChange[]
   /** Absent = C major (no sharps or flats). */
   key?: KeySignature
   tracks: Track[]
@@ -283,6 +294,20 @@ export function newId(): string {
 }
 
 /** Bars of a song, taken from the first track (all tracks have the same count). */
+/** The tempo at a bar: from the last change at or before it, else the song's. */
+export function tempoAt(song: Pick<Song, 'tempo' | 'changes'>, bar: number): number {
+  let tempo = song.tempo
+  for (const change of song.changes ?? []) if (change.bar <= bar && change.tempo !== undefined) tempo = change.tempo
+  return tempo
+}
+
+/** The time signature at a bar: from the last change at or before it, else the song's. */
+export function timeSignatureAt(song: Pick<Song, 'timeSignature' | 'changes'>, bar: number): [number, number] {
+  let timeSignature = song.timeSignature
+  for (const change of song.changes ?? []) if (change.bar <= bar && change.timeSignature) timeSignature = change.timeSignature
+  return timeSignature
+}
+
 export function barCount(song: Song): number {
   return song.tracks[0]?.bars.length ?? 0
 }

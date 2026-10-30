@@ -5,7 +5,7 @@ import { beatMap, beatMapFileName, beatMapJson } from '../model/beatMap'
 import { sectionRanges, type BarRange } from '../model/edit'
 import { audibleTracks, barCount, type Song } from '../model/song'
 import { mixFileName, stemName, stemsOf, stemSong, tracksWithNotes, type Stem } from '../model/stems'
-import { barSeconds, EXPORT_TAIL_SECONDS, exportFrameCount, type ExportEnding } from '../model/timing'
+import { barTime, EXPORT_TAIL_SECONDS, exportFrameCount, type ExportEnding } from '../model/timing'
 import { saveFile, saveFiles, type NamedFile } from '../platform'
 import { readPref, writePref } from '../prefs'
 
@@ -61,7 +61,7 @@ export function ExportDialog({ song, bars, section, onStemName, onClose }: Props
         ? { start: Math.min(from, to) - 1, end: Math.max(from, to), name: from === to ? `bar ${from}` : `bars ${Math.min(from, to)}-${Math.max(from, to)}` }
         : sections[Number(choice.slice(8))]
   const end: ExportEnding = ending ?? (choice === 'song' ? 'tail' : 'cut')
-  const seconds = { start: range.start * barSeconds(song), end: range.end * barSeconds(song) }
+  const seconds = { start: barTime(song, range.start), end: barTime(song, range.end) }
   const frames = exportFrameCount(seconds, rate, end)
   const barsValid = choice !== 'bars' || (from >= 1 && to >= 1 && from <= total && to <= total)
   const heard = audibleTracks(song)

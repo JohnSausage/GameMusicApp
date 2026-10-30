@@ -3,7 +3,6 @@ import type { GetEngine } from '../App'
 import { Menu } from '../components/Menu'
 import {
   addBars,
-  barTicks,
   clearBar,
   clearBeat,
   clearSelection,
@@ -36,17 +35,18 @@ import {
   type Duration,
   type EditResult
 } from '../model/edit'
-import { barCount, DRUM_PIECES, isFretted, rowPitch, MAX_FRET, NOTE_VALUES, notePitch, stringPitch, type Beat, type NoteValue, type Track } from '../model/song'
+import { barCount, DRUM_PIECES, isFretted, timeSignatureAt, rowPitch, MAX_FRET, NOTE_VALUES, notePitch, stringPitch, type Beat, type NoteValue, type Track } from '../model/song'
 import type { MidiNoteMessage } from '../midi/midiInput'
-import { quantizeNotes, writeRoll, type TimedNote } from '../model/keys'
+import { barLengths, quantizeNotes, writeRoll, type TimedNote } from '../model/keys'
 import { songKey, usesFlats } from '../model/keySignature'
 import { stepAdvance, stepEnter } from '../model/stepEntry'
 import { legatoTarget, toggleLegato, toggleTie, type Legato } from '../model/techniques'
-import { barSeconds, buildTimeline, secondsPerQuarter } from '../model/timing'
+import { barSeconds, barTime, buildTimeline, tickAtTime } from '../model/timing'
 import { transpose, transposeMessage } from '../model/transpose'
 import { moveToString } from '../model/tuning'
 import { fitBars, wrongBars, wrongBy, type WrongBar } from '../model/barCheck'
-import { secondsPerClick } from '../audio/analysis'
+import { changeAt, type MeterEdit } from '../model/meter'
+import { MeterDialog } from './MeterDialog'
 import { readPref, writePref } from '../prefs'
 import { showTrack, shownTracks, ZOOM_STEPS } from '../project/layout'
 import type { ApplyOptions, Project } from '../project/useProject'
@@ -141,6 +141,17 @@ interface Props {
  * typing frets, note lengths, techniques, selections, copy and paste, MIDI step
  * input and recording. It edits `target`, the whole song or a piece of it on its own.
  */
+/** What a tempo or time-signature change did, for the status line. */
+function meterMessage(change: MeterEdit, bar: number): string {
+  const after = changeAt(change.result.song, bar)
+  const what = after
+    ? [after.tempo !== undefined && `${after.tempo} BPM`, after.timeSignature && after.timeSignature.join('/')].filter(Boolean).join(' in ')
+    : null
+  const lost = change.removed + change.shortened
+  const fitted = change.fitted > 0 ? ` The bars got the new length${lost > 0 ? `; ${lost} note${lost === 1 ? '' : 's'} cut (Ctrl+Z undoes it)` : ''}.` : ''
+  return `${what ? `From bar ${bar + 1}: ${what}.` : `No tempo or time-signature change at bar ${bar + 1} any more.`}${fitted}`
+}
+
 export function ScoreEditor(props: Props): React.JSX.Element {
   const { target: project, piece, getEngine, playback, positionRef, onPlayFrom, message, onMessage: setMessage, clipboard, onClipboard: setClipboard } = props
   const { midiRef, midiDevices, onSharedKey, onSelectedBars, onShowShortcuts, autoFocus = false } = props
@@ -156,6 +167,8 @@ export function ScoreEditor(props: Props): React.JSX.Element {
   const [stepInput, setStepInput] = useState(() => readPref(STEP_INPUT_KEY, false))
   const [recording, setRecording] = useState(false)
   const [transposing, setTransposing] = useState(false)
+  /** The bar whose tempo and time signature are being set (PRJ-04), or null. */
+  const [meterBar, setMeterBar] = useState<number | null>(null)
   const recordingRef = useRef<MidiRecording | null>(null)
   /** Keys of the chord being step-entered, and its undo key. */
   const stepChord = useRef<{ held: Set<number>; id: string } | null>(null)
@@ -332,14 +345,15 @@ export function ScoreEditor(props: Props): React.JSX.Element {
   const startRecording = async (gridTicks: number): Promise<void> => {
     stop()
     const engine = await getEngine()
-    const bar = barSeconds(song)
+    // The count-in is a bar in the tempo and time signature of the bar recording starts at.
+    const bar = barSeconds(song, cursor.bar)
     // The recorded track is muted while recording, and there is room to play on past the end of the song.
     const backing = addBars(updateTrack(song, cursor, cursor.track, { mute: true, solo: false }).song, cursor, RECORD_EXTRA_BARS).song
     const countIn = engine.ctx.currentTime + 0.1
-    const clicks = song.timeSignature[0]
+    const [clicks] = timeSignatureAt(song, cursor.bar)
     // At the practice speed, like the playback after it.
-    engine.scheduleClicks(countIn, secondsPerClick(song.tempo, song.timeSignature) / playback.speed, clicks, clicks)
-    const rec: MidiRecording = { track: cursor.track, startBar: cursor.bar, startSeconds: cursor.bar * bar, gridTicks, notes: [], open: new Map(), started: false }
+    engine.scheduleClicks(countIn, bar / clicks / playback.speed, clicks, clicks)
+    const rec: MidiRecording = { track: cursor.track, startBar: cursor.bar, startSeconds: barTime(song, cursor.bar), gridTicks, notes: [], open: new Map(), started: false }
     recordingRef.current = rec
     setRecording(true)
     setMessage(
@@ -360,12 +374,16 @@ export function ScoreEditor(props: Props): React.JSX.Element {
     setRecording(false)
     stop()
     for (const [pitch, pressed] of rec.open) rec.notes.push({ pitch, start: pressed.start, end: Math.max(pressed.start, end), velocity: pressed.velocity })
-    const notes = quantizeNotes(rec.notes, secondsPerQuarter(song) / 960, rec.gridTicks)
+    // Ticks from the start bar, following tempo changes.
+    const startTicks = tickAtTime(song, rec.startSeconds)
+    const notes = quantizeNotes(rec.notes, (seconds) => tickAtTime(song, rec.startSeconds + seconds) - startTicks, rec.gridTicks)
     if (notes.length === 0) {
       setMessage('Nothing was recorded.')
       return
     }
-    const bars = Math.max(1, Math.ceil(Math.max(...notes.map((n) => n.start + n.length)) / barTicks(song)))
+    const last = Math.max(...notes.map((n) => n.start + n.length))
+    let bars = 1
+    while (barLengths(song, rec.startBar, rec.startBar + bars).reduce((sum, t) => sum + t, 0) < last) bars++
     project.update((s, c) => writeRoll(s, c, rec.track, rec.startBar, rec.startBar + bars, notes))
     setMessage(`Recorded ${notes.length} ${notes.length === 1 ? 'note' : 'notes'} into ${barsLabel({ start: rec.startBar, end: rec.startBar + bars })}. Ctrl+Z undoes it.`)
     focus()
@@ -745,6 +763,12 @@ export function ScoreEditor(props: Props): React.JSX.Element {
                   { label: 'Insert bar before', shortcut: 'Insert', onSelect: () => edit(insertBarBefore(song, cursor)) },
                   { label: 'Duplicate bar', shortcut: 'Ctrl+D', onSelect: () => edit(duplicateBar(song, cursor)) },
                   { label: 'Clear bar in this track', onSelect: () => edit(clearBar(song, cursor)) },
+                  {
+                    label: changeAt(song, cursor.bar) ? 'Change the tempo or time signature here…' : 'Tempo or time signature from here…',
+                    title: cursor.bar === 0 ? 'Bar 1 has the song’s own: click the time signature at the top' : 'A new tempo and/or time signature from this bar on',
+                    disabled: cursor.bar === 0,
+                    onSelect: () => setMeterBar(cursor.bar)
+                  },
                   { label: 'Fit bars to the time signature', title: 'Fill bars that are too short with rests, cut bars that are too long', disabled: wrong.length === 0, onSelect: () => fitWrongBars() },
                   { label: 'Delete bar in all tracks', shortcut: 'Ctrl+Del', onSelect: () => edit(deleteBar(song, cursor), lastBarMessage) },
                   'separator',
@@ -771,8 +795,8 @@ export function ScoreEditor(props: Props): React.JSX.Element {
         <div className="bar-check" role="status">
           <span className="warning">
             {cursorWrong
-              ? `Bar ${cursor.bar + 1} ${wrongBy(cursorWrong)} for ${song.timeSignature.join('/')}.${wrong.length > 1 ? ` ${wrong.length - 1} more bar${wrong.length === 2 ? '' : 's'} don’t fit either.` : ''}`
-              : `${wrong.length} bar${wrong.length === 1 ? ' doesn’t' : 's don’t'} fit the time signature ${song.timeSignature.join('/')}${shownWrong.length > 0 ? ' (marked)' : ''}.`}
+              ? `Bar ${cursor.bar + 1} ${wrongBy(cursorWrong)} for ${timeSignatureAt(song, cursor.bar).join('/')}.${wrong.length > 1 ? ` ${wrong.length - 1} more bar${wrong.length === 2 ? '' : 's'} don’t fit either.` : ''}`
+              : `${wrong.length} bar${wrong.length === 1 ? ' doesn’t' : 's don’t'} fit ${song.changes?.some((c) => c.timeSignature) ? 'their' : `the time signature ${song.timeSignature.join('/')}`}${shownWrong.length > 0 ? ' (marked)' : ''}.`}
           </span>
           {cursorWrong ? (
             <button onClick={() => fitWrongBars(cursorWrong)}>{cursorWrong.length < cursorWrong.expected ? 'Fill with rests' : 'Cut to fit'}</button>
@@ -906,6 +930,22 @@ export function ScoreEditor(props: Props): React.JSX.Element {
           }}
           onClose={() => {
             setTransposing(false)
+            focus()
+          }}
+        />
+      )}
+      {meterBar !== null && (
+        <MeterDialog
+          song={song}
+          cursor={cursor}
+          bar={meterBar}
+          onApply={(change) => {
+            setMeterBar(null)
+            edit(change.result)
+            setMessage(meterMessage(change, meterBar))
+          }}
+          onClose={() => {
+            setMeterBar(null)
             focus()
           }}
         />

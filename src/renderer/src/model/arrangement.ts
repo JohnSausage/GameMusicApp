@@ -7,7 +7,7 @@
 // the arrangement, and syncArrangement() runs after every edit to write changed
 // bars back into their parts, so the two never drift apart.
 import { clampCursor, emptyBar, nextSectionName, sectionRanges, type Cursor, type EditResult } from './edit'
-import { barCount, newId, type ArrangementSection, type Bar, type Part, type Song, type Track } from './song'
+import { barCount, newId, tempoAt, timeSignatureAt, type ArrangementSection, type Bar, type Part, type Song, type Track } from './song'
 
 export function hasNotes(bars: Bar[]): boolean {
   return bars.some((bar) => bar.beats.some((beat) => beat.notes.length > 0))
@@ -34,7 +34,7 @@ export function writeOut(song: Song): Song {
     const bars: Bar[] = []
     for (const section of arrangement) {
       const part = parts.get(section.parts[track.id])
-      for (let i = 0; i < section.length; i++) bars.push(part?.bars.length ? structuredClone(part.bars[i % part.bars.length]) : emptyBar(song))
+      for (let i = 0; i < section.length; i++) bars.push(part?.bars.length ? structuredClone(part.bars[i % part.bars.length]) : emptyBar(song, bars.length))
     }
     return { ...track, bars }
   })
@@ -446,8 +446,12 @@ export function partSong(song: Song, ref: PartRef): Song | null {
   const part = track?.parts?.find((p) => p.id === ref.partId)
   if (!track || !part) return null
   const { parts: _, ...rest } = track
+  // In the tempo and time signature where it first plays (PRJ-04).
+  const first = song.arrangement?.findIndex((s) => s.parts[track.id] === part.id) ?? -1
+  const bar = first >= 0 ? sectionStarts(song.arrangement!)[first] : 0
+  const meter = { tempo: tempoAt(song, bar), timeSignature: timeSignatureAt(song, bar), changes: undefined }
   // Heard on its own, whatever the mix says.
-  const result: Song = { ...song, title: '', tracks: [{ ...rest, bars: part.bars, mute: false, solo: false }], sections: [], arrangement: undefined }
+  const result: Song = { ...song, ...meter, title: '', tracks: [{ ...rest, bars: part.bars, mute: false, solo: false }], sections: [], arrangement: undefined }
   if (!partSongs.has(song)) partSongs.set(song, new Map())
   partSongs.get(song)!.set(key, result)
   return result
@@ -481,7 +485,9 @@ export function newPart(song: Song, cursor: Cursor, trackId: string, length: num
     const track = draft.tracks.find((t) => t.id === trackId)
     const section = sections.find((s) => s.id === sectionId)
     if (!track || (sectionId && !section)) return false
-    const part = addPart(draft, track, newPartName(track), Array.from({ length }, () => emptyBar(draft)))
+    // Bars as long as the time signature where it plays.
+    const start = section ? sectionStarts(sections)[sections.indexOf(section)] : 0
+    const part = addPart(draft, track, newPartName(track), Array.from({ length }, (_, i) => emptyBar(draft, start + i)))
     if (section) section.parts[track.id] = part.id
   })
 }

@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { songPosition, startPosition, startSchedule, takeDue, validLoop } from '../src/renderer/src/audio/scheduler'
 import { addBars, addTrack, createSong, deleteBar, loopBars, sectionRangeOf, sectionRanges, setFret, setSection, updateTrack, type Cursor } from '../src/renderer/src/model/edit'
 import { audibleTracks, createDemoSong, type Song } from '../src/renderer/src/model/song'
-import { barSeconds, buildTimeline, exportFrameCount, notesBetween, type NoteEvent } from '../src/renderer/src/model/timing'
+import { barSeconds, buildTimeline, exportFrameCount, metronomeClicks, notesBetween, type NoteEvent } from '../src/renderer/src/model/timing'
 import { parseProject, serializeProject } from '../src/renderer/src/project/projectFile'
 
 const cursor: Cursor = { track: 0, bar: 0, beat: 0, string: 1 }
@@ -87,9 +87,10 @@ describe('export timing', () => {
 
 describe('playback scheduling', () => {
   const timeline = buildTimeline(steadySong(2)) // notes every 0.5 s, 4 s long
+  const clicks = metronomeClicks(steadySong(2), timeline.duration) // every 0.5 s, 4 a bar
 
   it('hands out notes and clicks as they become due', () => {
-    const s = startSchedule(timeline, 0, 10, null, 0.5, 4)
+    const s = startSchedule(timeline, 0, 10, null, clicks)
     const first = takeDue(s, 10, 10.6)
     expect(first.notes.map((n) => n.when)).toEqual([10, 10.5])
     expect(first.clicks).toEqual([
@@ -105,7 +106,7 @@ describe('playback scheduling', () => {
   })
 
   it('starts in the middle without the notes before', () => {
-    const s = startSchedule(timeline, 1.25, 0, null, 0.5, 4)
+    const s = startSchedule(timeline, 1.25, 0, null, clicks)
     const due = takeDue(s, 0, 1)
     expect(due.notes.map((n) => n.note.start)).toEqual([1.5, 2])
     expect(due.notes.map((n) => n.when)).toEqual([0.25, 0.75])
@@ -114,7 +115,7 @@ describe('playback scheduling', () => {
 
   it('loops a range seamlessly', () => {
     const loop = { start: 2, end: 4 } // bar 2
-    const s = startSchedule(timeline, startPosition(0, loop), 100, loop, 0.5, 4)
+    const s = startSchedule(timeline, startPosition(0, loop), 100, loop, clicks)
     const due = takeDue(s, 100, 106)
     // Three passes of bar 2 at 100, 102 and 104, then the first note of the fourth pass at 106.
     expect(due.notes.map((n) => n.when)).toEqual([100, 100.5, 101, 101.5, 102, 102.5, 103, 103.5, 104, 104.5, 105, 105.5, 106])
@@ -123,7 +124,7 @@ describe('playback scheduling', () => {
   })
 
   it('plays slower or faster at another speed, loops included (PLAY-08)', () => {
-    const half = startSchedule(timeline, 1, 0, null, 0.5, 4, 0.5)
+    const half = startSchedule(timeline, 1, 0, null, clicks, 0.5)
     const due = takeDue(half, 0, 2)
     // Song seconds 1, 1.5 and 2 at half speed: two context seconds per song second.
     expect(due.notes.map((n) => [n.note.start, n.when])).toEqual([
@@ -133,7 +134,7 @@ describe('playback scheduling', () => {
     ])
     expect(due.clicks.map((c) => c.when)).toEqual([0, 1, 2])
     const loop = { start: 2, end: 4 }
-    const double = startSchedule(timeline, 2, 0, loop, 0.5, 4, 2)
+    const double = startSchedule(timeline, 2, 0, loop, clicks, 2)
     expect(takeDue(double, 0, 2).clicks.filter((c) => c.accent).map((c) => c.when)).toEqual([0, 1, 2])
     // Elapsed time is turned into song time before the position is found.
     expect(songPosition(2, 1.5 * 2, loop)).toBe(3)

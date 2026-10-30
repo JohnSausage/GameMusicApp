@@ -1,6 +1,6 @@
 // Which notes and metronome clicks to hand to the audio thread, and when.
 // Kept free of Web Audio so the timing (including loops) can be unit-tested.
-import type { NoteEvent, SongTimeline, TimeRange } from '../model/timing'
+import type { Click, NoteEvent, SongTimeline, TimeRange } from '../model/timing'
 
 /** Tolerance for comparing note times with loop boundaries. */
 const EPSILON = 1e-6
@@ -12,10 +12,9 @@ export interface ScheduleState {
   passFrom: number
   passStart: number
   nextNote: number
-  /** Index of the next metronome click; click 0 is at song time 0. */
+  /** The metronome's clicks in song time (see metronomeClicks), and the index of the next one. */
+  clicks: Click[]
   nextClick: number
-  secondsPerClick: number
-  clicksPerBar: number
   /** Playback speed (PLAY-08): 0.5 plays a song second in two seconds. */
   speed: number
 }
@@ -32,7 +31,11 @@ function firstNoteFrom(notes: NoteEvent[], time: number): number {
   return index < 0 ? notes.length : index
 }
 
-const firstClickFrom = (time: number, secondsPerClick: number): number => Math.ceil(time / secondsPerClick - EPSILON)
+/** Index of the first click at or after `time`. */
+function firstClickFrom(clicks: Click[], time: number): number {
+  const index = clicks.findIndex((c) => c.time >= time - EPSILON)
+  return index < 0 ? clicks.length : index
+}
 
 /** A loop must be at least this long to count. */
 export function validLoop(loop: TimeRange | null | undefined): TimeRange | null {
@@ -49,8 +52,7 @@ export function startSchedule(
   from: number,
   startTime: number,
   loop: TimeRange | null,
-  secondsPerClick: number,
-  clicksPerBar: number,
+  clicks: Click[],
   speed = 1
 ): ScheduleState {
   return {
@@ -59,9 +61,8 @@ export function startSchedule(
     passFrom: from,
     passStart: startTime,
     nextNote: firstNoteFrom(timeline.notes, from),
-    nextClick: firstClickFrom(from, secondsPerClick),
-    secondsPerClick,
-    clicksPerBar,
+    clicks,
+    nextClick: firstClickFrom(clicks, from),
     speed
   }
 }
@@ -84,17 +85,18 @@ export function takeDue(s: ScheduleState, now: number, horizon: number): DueEven
       s.nextNote++
     }
     const clicksEnd = Math.min(passEnd, s.timeline.duration - EPSILON)
-    while (s.nextClick * s.secondsPerClick < clicksEnd) {
-      const when = at(s.nextClick * s.secondsPerClick)
+    while (s.nextClick < s.clicks.length && s.clicks[s.nextClick].time < clicksEnd) {
+      const click = s.clicks[s.nextClick]
+      const when = at(click.time)
       if (when > horizon) break
-      if (when >= now - 0.01) due.clicks.push({ when, accent: s.nextClick % s.clicksPerBar === 0 })
+      if (when >= now - 0.01) due.clicks.push({ when, accent: click.accent })
       s.nextClick++
     }
     if (!s.loop || at(s.loop.end) > horizon) return due
     s.passStart = at(s.loop.end)
     s.passFrom = s.loop.start
     s.nextNote = firstNoteFrom(notes, s.loop.start)
-    s.nextClick = firstClickFrom(s.loop.start, s.secondsPerClick)
+    s.nextClick = firstClickFrom(s.clicks, s.loop.start)
   }
 }
 

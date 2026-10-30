@@ -2,7 +2,8 @@
 // another length, the music is laid out again, in one of two ways: the bar
 // lines move and every note keeps its place in time ('flow'), or every bar keeps
 // its notes from its start and gets longer or shorter at its end ('bars').
-import { barsFromSpans, barSpans, barTicks, edit, emptyBar, type Cursor, type EditResult, type Span } from './edit'
+import { fitBar, fitBars, holds } from './barCheck'
+import { barsFromSpans, barSpans, barTicks, edit, emptyBar, type Cursor, type EditResult } from './edit'
 import { newId, type Bar, type Part, type Song, type Track } from './song'
 import { writeOut } from './arrangement'
 
@@ -37,27 +38,12 @@ export interface TimeSignatureChange {
 
 const ticksOf = (timeSignature: [number, number]): number => barTicks({ timeSignature } as Song)
 
-/** Whether `ties` hold notes over a bar line: not for drum hits, which don't ring on. */
-export const holds = (track: Track): boolean => track.kind !== 'drums'
+/** The first bar with a time signature of its own (PRJ-04), or null if they all have the song's. */
+export const firstOwnSignature = (song: Song): number | null => song.changes?.find((c) => c.timeSignature)?.bar ?? null
 
 /** Bars of music laid out again in bars of `to` ticks (they were `from` ticks), every note at the same time. */
 export function flowBars(bars: Bar[], from: number, to: number, ties: boolean): Bar[] {
   return barsFromSpans(barSpans(bars), to, Math.max(1, Math.ceil((bars.length * from) / to)), ties)
-}
-
-/** One bar made `to` ticks long: its notes stay from its start; longer, it ends with rests; shorter, what doesn't fit goes. */
-export function fitBar(bar: Bar, to: number, ties: boolean, counts: { removed: number; shortened: number }): Bar {
-  const spans: Span[] = []
-  for (const span of barSpans([bar])) {
-    if (span.start >= to) counts.removed += span.notes.length
-    else {
-      if (span.start + span.length > to) counts.shortened += span.notes.length
-      spans.push({ ...span, length: Math.min(span.length, to - span.start) })
-    }
-  }
-  // Rests at the end are filled in again, joined with the new time.
-  while (spans.length > 0 && spans[spans.length - 1].notes.length === 0) spans.pop()
-  return barsFromSpans(spans, to, 1, ties)[0]
 }
 
 const sameBars = (a: Bar[], b: Bar[]): boolean => JSON.stringify(a) === JSON.stringify(b)
@@ -73,6 +59,13 @@ const tile = (bars: Bar[], length: number): Bar[] => Array.from({ length }, (_, 
  */
 export function changeTimeSignature(song: Song, cursor: Cursor, timeSignature: [number, number], rebar: Rebar): TimeSignatureChange | null {
   if (song.timeSignature[0] === timeSignature[0] && song.timeSignature[1] === timeSignature[1]) return null
+  const own = firstOwnSignature(song)
+  if (own !== null) {
+    // Bars from a time-signature change on keep theirs; the bars before it keep their notes from their start.
+    const draft: Song = { ...structuredClone(song), timeSignature: [timeSignature[0], timeSignature[1]] }
+    const fitted = fitBars(draft, cursor, (w) => w.bar < own)
+    return { result: fitted?.result ?? { song: draft, cursor }, removed: fitted?.removed ?? 0, shortened: fitted?.shortened ?? 0, padded: 0, copied: 0 }
+  }
   const from = barTicks(song)
   const to = ticksOf(timeSignature)
   const counts = { removed: 0, shortened: 0, padded: 0, copied: 0 }

@@ -2,6 +2,7 @@
 // each kit piece is a "string" whose open note is its General MIDI drum number
 // and every hit is fret 0, so timing, selection, copy/paste and playback work
 // exactly like for guitar tracks.
+import { fitBar } from './barCheck'
 import { appendBars, barTicks, beatTicks, edit, onGrid, restsFor, TICKS_PER_QUARTER, type Cursor, type EditResult } from './edit'
 import { barCount, DRUM_TUNING, type Bar, type Note, type Song, type Track } from './song'
 
@@ -34,15 +35,15 @@ export const isTripletGrid = (stepsPerQuarter: number): boolean => stepsPerQuart
 /** "1/16", or "1/8T" for triplet eighths. */
 export const gridLabel = (stepsPerQuarter: number): string => (isTripletGrid(stepsPerQuarter) ? `1/${(stepsPerQuarter / 3) * 8}T` : `1/${stepsPerQuarter * 4}`)
 
-/** Number of grid steps in a bar; `stepsPerQuarter` 2 = eighths, 4 = sixteenths, 8 = thirty-seconds, 3 and 6 triplets. */
-export function stepsInBar(song: Song, stepsPerQuarter: number): number {
-  return Math.round((barTicks(song) / TICKS_PER_QUARTER) * stepsPerQuarter)
+/** Number of grid steps in a bar (by its time signature); `stepsPerQuarter` 2 = eighths, 4 = sixteenths, 8 = thirty-seconds, 3 and 6 triplets. */
+export function stepsInBar(song: Song, stepsPerQuarter: number, bar = 0): number {
+  return Math.round((barTicks(song, bar) / TICKS_PER_QUARTER) * stepsPerQuarter)
 }
 
-/** Whether the song's bars divide into steps of the grid; for a triplet grid, into whole groups of three (3/8 doesn't). */
-export function gridFits(song: Song, stepsPerQuarter: number): boolean {
+/** Whether a bar divides into steps of the grid; for a triplet grid, into whole groups of three (3/8 doesn't). */
+export function gridFits(song: Song, stepsPerQuarter: number, bar = 0): boolean {
   const step = TICKS_PER_QUARTER / stepsPerQuarter
-  return barTicks(song) % (isTripletGrid(stepsPerQuarter) ? 3 * step : step) === 0
+  return barTicks(song, bar) % (isTripletGrid(stepsPerQuarter) ? 3 * step : step) === 0
 }
 
 /** Whether every hit of the bar is on a step of the grid. */
@@ -60,10 +61,10 @@ export function hitsOnGrid(bar: Bar, stepsPerQuarter: number): boolean {
  * coarsest grid they all are on (triplets show on a triplet grid). If none is,
  * `preferred`, where hits between the steps show at the step before them.
  */
-export function gridFor(song: Song, bar: Bar, preferred: number): number {
-  const fits = (stepsPerQuarter: number): boolean => gridFits(song, stepsPerQuarter) && hitsOnGrid(bar, stepsPerQuarter)
+export function gridFor(song: Song, bar: Bar, preferred: number, barIndex = 0): number {
+  const fits = (stepsPerQuarter: number): boolean => gridFits(song, stepsPerQuarter, barIndex) && hitsOnGrid(bar, stepsPerQuarter)
   if (fits(preferred)) return preferred
-  return DRUM_GRIDS.find(fits) ?? (gridFits(song, preferred) ? preferred : 4)
+  return DRUM_GRIDS.find(fits) ?? (gridFits(song, preferred, barIndex) ? preferred : 4)
 }
 
 /** Hits per grid step. A beat that doesn't start on a step is snapped to the step before it. */
@@ -112,10 +113,10 @@ export function stepsToBar(steps: Note[][], ticksPerStep: number): Bar {
  * with the given strength, clicking a hit with the same strength removes it.
  */
 export function toggleHit(song: Song, cursor: Cursor, track: number, bar: number, step: number, row: number, strength: HitStrength, stepsPerQuarter: number): EditResult | null {
-  const stepCount = stepsInBar(song, stepsPerQuarter)
+  const stepCount = stepsInBar(song, stepsPerQuarter, bar)
   if (step < 0 || step >= stepCount) return null
   return edit(song, cursor, (draft) => {
-    const ticksPerStep = barTicks(draft) / stepCount
+    const ticksPerStep = barTicks(draft, bar) / stepCount
     const steps = barToSteps(draft.tracks[track].bars[bar], stepCount, ticksPerStep)
     const existing = steps[step].find((n) => n.string === row)
     steps[step] = steps[step].filter((n) => n.string !== row)
@@ -129,12 +130,20 @@ export function toggleHit(song: Song, cursor: Cursor, track: number, bar: number
   })
 }
 
-/** Copies a bar of one track into the next `times` bars (DRUM-02), adding bars to the song if needed. */
+/**
+ * Copies a bar of one track into the next `times` bars (DRUM-02), adding bars
+ * to the song if needed. A bar with another time signature gets the hits that
+ * fit into it.
+ */
 export function repeatBar(song: Song, cursor: Cursor, track: number, bar: number, times: number): EditResult | null {
   if (times < 1) return null
   return edit(song, cursor, (draft) => {
     appendBars(draft, bar + times + 1 - barCount(draft))
-    for (let i = 1; i <= times; i++) draft.tracks[track].bars[bar + i] = structuredClone(draft.tracks[track].bars[bar])
+    const source = draft.tracks[track].bars[bar]
+    for (let i = 1; i <= times; i++) {
+      const length = barTicks(draft, bar + i)
+      draft.tracks[track].bars[bar + i] = length === barTicks(draft, bar) ? structuredClone(source) : fitBar(source, length, false, { removed: 0, shortened: 0 })
+    }
   })
 }
 
@@ -156,7 +165,7 @@ export const DRUM_PATTERNS: DrumPattern[] = [
 
 /** Replaces a bar of a drum track with a starter pattern. Only for bars with 16 sixteenth steps (4/4). */
 export function applyPattern(song: Song, cursor: Cursor, track: number, bar: number, pattern: DrumPattern): EditResult | null {
-  if (stepsInBar(song, 4) !== 16) return null
+  if (stepsInBar(song, 4, bar) !== 16) return null
   const steps: Note[][] = Array.from({ length: 16 }, () => [])
   for (const [note, row] of Object.entries(pattern.rows)) {
     const string = pieceRow(Number(note))
@@ -167,7 +176,7 @@ export function applyPattern(song: Song, cursor: Cursor, track: number, bar: num
   }
   steps.forEach((s) => s.sort((a, b) => a.string - b.string))
   return edit(song, cursor, (draft) => {
-    draft.tracks[track].bars[bar] = stepsToBar(steps, barTicks(draft) / 16)
+    draft.tracks[track].bars[bar] = stepsToBar(steps, barTicks(draft, bar) / 16)
   })
 }
 

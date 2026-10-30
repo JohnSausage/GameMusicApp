@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { applyPattern, barToSteps, DRUM_GRIDS, DRUM_PATTERNS, gridFits, gridFor, gridLabel, hitsOnGrid, isTripletGrid, repeatBar, stepsInBar, strengthOf, toggleHit, VELOCITY, type HitStrength } from '../model/drums'
 import { barTicks, clearBar, moveBar, type Cursor, type EditResult } from '../model/edit'
-import { barCount, DRUM_PIECES } from '../model/song'
+import { barCount, DRUM_PIECES, timeSignatureAt } from '../model/song'
+import { barTime, secondsPerQuarter } from '../model/timing'
 import type { Project } from '../project/useProject'
 
 interface Props {
@@ -39,13 +40,14 @@ export function DrumGrid({ project, trackIndex, collapsed, onToggleCollapsed, on
   const track = song.tracks[trackIndex]
   const bar = cursor.bar
   const stepsPerQuarter =
-    picked.bar === bar && gridFits(song, picked.stepsPerQuarter) ? picked.stepsPerQuarter : gridFor(song, track.bars[bar], picked.stepsPerQuarter)
-  const stepCount = stepsInBar(song, stepsPerQuarter)
-  const ticksPerStep = barTicks(song) / stepCount
+    picked.bar === bar && gridFits(song, picked.stepsPerQuarter, bar) ? picked.stepsPerQuarter : gridFor(song, track.bars[bar], picked.stepsPerQuarter, bar)
+  const stepCount = stepsInBar(song, stepsPerQuarter, bar)
+  const timeSignature = timeSignatureAt(song, bar)
+  const ticksPerStep = barTicks(song, bar) / stepCount
   const steps = barToSteps(track.bars[bar], stepCount, ticksPerStep)
-  const beatLength = barTicks(song) / song.timeSignature[0]
+  const beatLength = barTicks(song, bar) / timeSignature[0]
   const offGrid = !hitsOnGrid(track.bars[bar], stepsPerQuarter)
-  const isFourFour = stepsInBar(song, 4) === 16
+  const isFourFour = stepsInBar(song, 4, bar) === 16
   const hitCount = track.bars[bar].beats.reduce((sum, b) => sum + b.notes.length, 0)
   const drumTracks = song.tracks.flatMap((t, i) => (t.kind === 'drums' ? [{ index: i, name: t.name }] : []))
 
@@ -59,11 +61,12 @@ export function DrumGrid({ project, trackIndex, collapsed, onToggleCollapsed, on
     if (collapsed) return
     let frame = 0
     let shown = -1
-    const secondsPerStep = (60 / song.tempo) * (ticksPerStep / 960)
+    const start = barTime(song, bar)
+    const secondsPerStep = secondsPerQuarter(song, bar) * (ticksPerStep / 960)
     const tick = (): void => {
       const position = positionRef.current
-      const absolute = position === null ? -1 : Math.floor(position / secondsPerStep + 1e-6)
-      const step = absolute >= bar * stepCount && absolute < (bar + 1) * stepCount ? absolute - bar * stepCount : -1
+      const inBar = position === null ? -1 : Math.floor((position - start) / secondsPerStep + 1e-6)
+      const step = position !== null && position >= start - 1e-6 && inBar < stepCount ? inBar : -1
       if (step !== shown) {
         gridRef.current?.querySelectorAll('.drum-cell.playing').forEach((c) => c.classList.remove('playing'))
         if (step >= 0) gridRef.current?.querySelectorAll(`.drum-cell[data-step="${step}"]`).forEach((c) => c.classList.add('playing'))
@@ -73,7 +76,7 @@ export function DrumGrid({ project, trackIndex, collapsed, onToggleCollapsed, on
     }
     frame = requestAnimationFrame(tick)
     return () => cancelAnimationFrame(frame)
-  }, [collapsed, positionRef, song.tempo, ticksPerStep, stepCount, bar])
+  }, [collapsed, positionRef, song, ticksPerStep, stepCount, bar])
 
   const toggle = (event: React.MouseEvent, step: number, row: number): void => {
     const chosen: HitStrength = event.shiftKey ? 'accent' : event.altKey ? 'ghost' : strength
@@ -122,11 +125,11 @@ export function DrumGrid({ project, trackIndex, collapsed, onToggleCollapsed, on
                   <button
                     key={spq}
                     className={stepsPerQuarter === spq ? 'active' : ''}
-                    disabled={!gridFits(song, spq)}
+                    disabled={!gridFits(song, spq, bar)}
                     onClick={() => setPicked({ stepsPerQuarter: spq, bar })}
                     title={
-                      !gridFits(song, spq)
-                        ? `Triplet steps don't fill a bar of ${song.timeSignature.join('/')}`
+                      !gridFits(song, spq, bar)
+                        ? `Triplet steps don't fill a bar of ${timeSignature.join('/')}`
                         : isTripletGrid(spq)
                           ? `Grid: triplet ${spq === 3 ? 'eighths' : 'sixteenths'}, three steps where two straight ones go`
                           : 'Grid resolution'

@@ -1,8 +1,8 @@
 import { sectionRanges, type BarRange } from './edit'
 import { uniqueFileNames } from './fileNames'
-import type { Song } from './song'
+import { tempoAt, timeSignatureAt, type Song } from './song'
 import { exportFilePrefix, type Stem } from './stems'
-import { barSeconds, EXPORT_TAIL_SECONDS, exportFrameCount, type ExportEnding } from './timing'
+import { barSeconds, barStartSeconds, EXPORT_TAIL_SECONDS, exportFrameCount, secondsPerQuarter, type ExportEnding } from './timing'
 
 /**
  * The beat map (REQUIREMENTS.md EXP-11): a JSON file next to exported WAV files
@@ -18,6 +18,7 @@ export interface BeatMap {
   range: string | null
   /** The song's bar the files start with, counted from 1. */
   firstBar: number
+  /** The tempo and the beat at the files' first bar (see `barTimes` for changes later on). */
   tempo: number
   timeSignature: [number, number]
   /** A beat is a note of the time signature's lower number (a quarter in 4/4, an eighth in 6/8). */
@@ -25,6 +26,12 @@ export interface BeatMap {
   secondsPerBeat: number
   secondsPerBar: number
   bars: number
+  /**
+   * Every bar of the files: where it starts (seconds from the files' start),
+   * its beats and their length, which change with the tempo or time signature
+   * (PRJ-04).
+   */
+  barTimes: { start: number; beats: number; secondsPerBeat: number }[]
   /** How long the music is, without the ring-out. */
   seconds: number
   /** True when the files end exactly at the end of the music, to loop. */
@@ -42,7 +49,8 @@ export interface BeatMap {
   stems: { file: string; name: string; tracks: string[] }[]
 }
 
-export const BEAT_MAP_VERSION = 1
+/** 2: with `barTimes`. */
+export const BEAT_MAP_VERSION = 2
 
 /** Seconds without the float noise of the sums (to the microsecond). */
 const round = (seconds: number): number => Math.round(seconds * 1e6) / 1e6
@@ -56,28 +64,38 @@ export interface BeatMapFiles {
 
 /** The beat map of an exported range of the song and its files. */
 export function beatMap(song: Song, range: BarRange & { name: string | null }, files: BeatMapFiles): BeatMap {
-  const bar = barSeconds(song)
-  const [beatsPerBar] = song.timeSignature
-  const seconds = { start: range.start * bar, end: range.end * bar }
+  const starts = barStartSeconds(song, range.end)
+  const first = range.start
+  const bar = barSeconds(song, first)
+  const timeSignature = timeSignatureAt(song, first)
+  const [beatsPerBar] = timeSignature
+  const seconds = { start: starts[range.start], end: starts[range.end] }
+  /** Seconds from the files' start where a bar of the song starts. */
+  const at = (songBar: number): number => round(starts[songBar] - seconds.start)
   const sections = sectionRanges(song)
     .filter((s) => s.end > range.start && s.start < range.end)
     .map((s) => {
-      const start = Math.max(s.start, range.start) - range.start
-      const end = Math.min(s.end, range.end) - range.start
-      return { name: s.name, bar: start, bars: end - start, start: round(start * bar), end: round(end * bar) }
+      const start = Math.max(s.start, range.start)
+      const end = Math.min(s.end, range.end)
+      return { name: s.name, bar: start - range.start, bars: end - start, start: at(start), end: at(end) }
     })
+  const barTimes = Array.from({ length: range.end - range.start }, (_, i) => {
+    const [beats, unit] = timeSignatureAt(song, first + i)
+    return { start: at(first + i), beats, secondsPerBeat: round(secondsPerQuarter(song, first + i) * (4 / unit)) }
+  })
   return {
     format: 'GameMusicApp beat map',
     version: BEAT_MAP_VERSION,
     title: song.title,
     range: range.name,
     firstBar: range.start + 1,
-    tempo: song.tempo,
-    timeSignature: [song.timeSignature[0], song.timeSignature[1]],
+    tempo: tempoAt(song, first),
+    timeSignature: [timeSignature[0], timeSignature[1]],
     beatsPerBar,
     secondsPerBeat: round(bar / beatsPerBar),
     secondsPerBar: round(bar),
     bars: range.end - range.start,
+    barTimes,
     seconds: round(seconds.end - seconds.start),
     loops: files.ending === 'cut',
     tailSeconds: files.ending === 'tail' ? EXPORT_TAIL_SECONDS : 0,
