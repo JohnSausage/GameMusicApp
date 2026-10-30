@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { GetEngine } from '../App'
 import { detectFirstOnset, secondsPerClick } from '../audio/analysis'
+import { recordingLatency } from '../audio/latency'
 import { importAudioFile, MicRecorder, samplesToBuffer } from '../audio/recorder'
 import { barsHaveNotes, removeTake, writeBars } from '../model/edit'
 import { isFretted, newId, takeSeconds, type Song, type TakeInfo } from '../model/song'
@@ -9,6 +10,7 @@ import type { Project } from '../project/useProject'
 import { ScoreView } from '../score/ScoreView'
 import { extractNotes, runBasicPitch, type ModelOutput, type Sensitivity } from '../transcription/basicPitch'
 import { transcribeToBars } from '../transcription/toTab'
+import { LatencySetting } from './LatencySetting'
 import { InputSelect, Tuner } from './Tuner'
 import { useInputDevice } from './useInputDevice'
 import { usePlayback } from './usePlayback'
@@ -48,6 +50,7 @@ export function TakeDialog({ project, getEngine, onClose }: Props): React.JSX.El
 
   const input = useInputDevice()
   const [tuner, setTuner] = useState(false)
+  const [latencySetting, setLatencySetting] = useState(false)
   const [metronome, setMetronome] = useState(true)
   const [level, setLevel] = useState(0)
   const [clipped, setClipped] = useState(false)
@@ -132,8 +135,8 @@ export function TakeDialog({ project, getEngine, onClose }: Props): React.JSX.El
       const clickStart = recordStart + 0.3
       const songClick = secondsPerClick(song.tempo, song.timeSignature)
       const countIn = clicksPerBar * songClick
-      // Estimate of where the first downbeat lands in the recording; refine it in the next step.
-      const latency = (engine.ctx.outputLatency || 0) + engine.ctx.baseLatency
+      // Where the first downbeat lands in the recording: later by the recording latency (REC-07). It can be moved in the next step.
+      const latency = recordingLatency(engine.ctx).seconds
       const startedAt = performance.now()
       recording.current = {
         recorder,
@@ -335,7 +338,16 @@ export function TakeDialog({ project, getEngine, onClose }: Props): React.JSX.El
             <button className={tuner ? 'active' : ''} aria-pressed={tuner} title="Tune your instrument first, with this input" onClick={() => setTuner(!tuner)}>
               Tuner
             </button>
+            <button
+              className={latencySetting ? 'active' : ''}
+              aria-pressed={latencySetting}
+              title="How much later what you play arrives in the recording; measure it once so takes line up with the grid"
+              onClick={() => setLatencySetting(!latencySetting)}
+            >
+              Latency
+            </button>
           </div>
+          {latencySetting && <LatencySetting getEngine={getEngine} deviceId={input.deviceId} />}
           {tuner && <Tuner getEngine={getEngine} deviceId={input.deviceId} strings={isFretted(track) ? track.tuning : undefined} onOpened={input.refresh} />}
           <p className="muted small">Use headphones so the metronome doesn't end up in the recording. Quiet room; mic about 20–30 cm from where the neck meets the body.</p>
         </section>

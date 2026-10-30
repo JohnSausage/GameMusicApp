@@ -6,6 +6,9 @@ import { GM_ACOUSTIC_GUITAR_STEEL, type Instrument } from '../model/song'
 import { factoryPreset } from '../model/synth'
 import type { AudioLatency, SettingsState } from '../platform'
 import { noteName } from '../transcription/notes'
+import { LatencySetting } from './LatencySetting'
+import { InputSelect } from './Tuner'
+import { useInputDevice } from './useInputDevice'
 
 const INSTRUMENTS: { label: string; instrument: Instrument }[] = [
   ...['8-bit lead', '8-bit thin lead', 'Triangle bass', 'PWM lead', 'Soft pad'].map((name) => ({ label: `Synth: ${name}`, instrument: { kind: 'synth' as const, patch: factoryPreset(name) } })),
@@ -65,6 +68,20 @@ function AudioLatencySetting(): React.JSX.Element | null {
         <p className="muted small">In use now: {LATENCY_LABELS[settings.active.audioLatency]}. Changes apply after a restart.</p>
       )}
       {error && <p className="warning">{error}</p>}
+    </div>
+  )
+}
+
+/** The recording latency, measured with the recording input (REC-07). */
+function RecordingLatency({ getEngine }: { getEngine: GetEngine }): React.JSX.Element {
+  const input = useInputDevice()
+  return (
+    <div className="card">
+      <h3>Recording latency</h3>
+      <div className="form-row">
+        <InputSelect {...input} />
+      </div>
+      <LatencySetting getEngine={getEngine} deviceId={input.deviceId} />
     </div>
   )
 }
@@ -166,6 +183,7 @@ export function MidiPanel({ getEngine }: { getEngine: GetEngine }): React.JSX.El
       </div>
 
       <AudioLatencySetting />
+      <RecordingLatency getEngine={getEngine} />
     </section>
   )
 }

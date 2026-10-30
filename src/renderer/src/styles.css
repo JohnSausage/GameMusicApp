@@ -246,6 +246,10 @@ label.block input {
   color: var(--warning);
 }
 
+.success {
+  color: #16a34a;
+}
+
 .card {
   background: var(--surface);
   border: 1px solid var(--border);
