@@ -2,7 +2,7 @@ import { sectionRanges, type BarRange } from './edit'
 import { uniqueFileNames } from './fileNames'
 import { tempoAt, timeSignatureAt, type Song } from './song'
 import { exportFilePrefix, type Stem } from './stems'
-import { barSeconds, barStartSeconds, EXPORT_TAIL_SECONDS, exportFrameCount, loops, secondsPerQuarter, type ExportEnding } from './timing'
+import { barSeconds, barTime, barPasses, EXPORT_TAIL_SECONDS, exportFrameCount, loops, secondsPerQuarter, type BarPass, type ExportEnding } from './timing'
 
 /**
  * The beat map (REQUIREMENTS.md EXP-11): a JSON file next to exported WAV files
@@ -64,24 +64,34 @@ export interface BeatMapFiles {
 
 /** The beat map of an exported range of the song and its files. */
 export function beatMap(song: Song, range: BarRange & { name: string | null }, files: BeatMapFiles): BeatMap {
-  const starts = barStartSeconds(song, range.end)
   const first = range.start
   const bar = barSeconds(song, first)
   const timeSignature = timeSignatureAt(song, first)
   const [beatsPerBar] = timeSignature
-  const seconds = { start: starts[range.start], end: starts[range.end] }
-  /** Seconds from the files' start where a bar of the song starts. */
-  const at = (songBar: number): number => round(starts[songBar] - seconds.start)
+  const seconds = { start: barTime(song, range.start), end: barTime(song, range.end) }
+  // The bars in the files as they play: with repeats (EDIT-14), a bar can be in them more than once.
+  const passes: BarPass[] = []
+  for (const pass of barPasses(song)) {
+    if (pass.start >= seconds.end - 1e-9) break
+    if (pass.start >= seconds.start - 1e-9) passes.push(pass)
+  }
+  /** The bar of the files where a bar of the song first plays (the files' end after the last). */
+  const index = (songBar: number): number => {
+    const i = passes.findIndex((p) => p.bar >= songBar)
+    return i < 0 ? passes.length : i
+  }
+  /** Seconds from the files' start where a bar of the files starts. */
+  const at = (i: number): number => round((passes[i]?.start ?? seconds.end) - seconds.start)
   const sections = sectionRanges(song)
     .filter((s) => s.end > range.start && s.start < range.end)
     .map((s) => {
-      const start = Math.max(s.start, range.start)
-      const end = Math.min(s.end, range.end)
-      return { name: s.name, bar: start - range.start, bars: end - start, start: at(start), end: at(end) }
+      const start = index(Math.max(s.start, range.start))
+      const end = index(Math.min(s.end, range.end))
+      return { name: s.name, bar: start, bars: end - start, start: at(start), end: at(end) }
     })
-  const barTimes = Array.from({ length: range.end - range.start }, (_, i) => {
-    const [beats, unit] = timeSignatureAt(song, first + i)
-    return { start: at(first + i), beats, secondsPerBeat: round(secondsPerQuarter(song, first + i) * (4 / unit)) }
+  const barTimes = passes.map((pass, i) => {
+    const [beats, unit] = timeSignatureAt(song, pass.bar)
+    return { start: at(i), beats, secondsPerBeat: round(secondsPerQuarter(song, pass.bar) * (4 / unit)) }
   })
   return {
     format: 'GameMusicApp beat map',
@@ -94,7 +104,7 @@ export function beatMap(song: Song, range: BarRange & { name: string | null }, f
     beatsPerBar,
     secondsPerBeat: round(bar / beatsPerBar),
     secondsPerBar: round(bar),
-    bars: range.end - range.start,
+    bars: passes.length,
     barTimes,
     seconds: round(seconds.end - seconds.start),
     loops: loops(files.ending),

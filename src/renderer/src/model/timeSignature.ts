@@ -4,6 +4,7 @@
 // its notes from its start and gets longer or shorter at its end ('bars').
 import { fitBar, fitBars, holds } from './barCheck'
 import { barsFromSpans, barSpans, barTicks, edit, emptyBar, type Cursor, type EditResult } from './edit'
+import { storeRepeats } from './repeats'
 import { newId, type Bar, type Part, type Song, type Track } from './song'
 import { writeOut } from './arrangement'
 
@@ -88,6 +89,14 @@ export function changeTimeSignature(song: Song, cursor: Cursor, timeSignature: [
       const count = Math.max(...draft.tracks.map((t) => t.bars.length))
       for (const track of draft.tracks) while (track.bars.length < count) track.bars.push(emptyBar(draft))
       draft.sections = draft.sections.map((s) => ({ ...s, bar: Math.floor((s.bar * from) / to) })).filter((s, i, all) => all.findLastIndex((o) => o.bar === s.bar) === i)
+      // A repeat starts (or an ending begins) where its first bar's music now starts, and ends with the bar its last bar's music ends in.
+      if (draft.repeats) {
+        const moved = draft.repeats.flatMap(({ bar, times, ...signs }) => [
+          { ...signs, bar: Math.floor((bar * from) / to) },
+          ...(times ? [{ bar: Math.ceil(((bar + 1) * from) / to) - 1, times }] : [])
+        ])
+        storeRepeats(draft, moved)
+      }
       return
     }
     flowArrangement(song, draft, from, to, counts)

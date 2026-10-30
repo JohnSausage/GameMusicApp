@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { applyPattern, barToSteps, DRUM_GRIDS, DRUM_PATTERNS, gridFits, gridFor, gridLabel, hitsOnGrid, isTripletGrid, repeatBar, stepsInBar, strengthOf, toggleHit, VELOCITY, type HitStrength } from '../model/drums'
 import { barTicks, clearBar, moveBar, type Cursor, type EditResult } from '../model/edit'
 import { barCount, DRUM_PIECES, timeSignatureAt } from '../model/song'
-import { barTime, secondsPerQuarter } from '../model/timing'
+import { passAt, secondsPerQuarter } from '../model/timing'
 import type { Project } from '../project/useProject'
 
 interface Props {
@@ -61,12 +61,13 @@ export function DrumGrid({ project, trackIndex, collapsed, onToggleCollapsed, on
     if (collapsed) return
     let frame = 0
     let shown = -1
-    const start = barTime(song, bar)
     const secondsPerStep = secondsPerQuarter(song, bar) * (ticksPerStep / 960)
     const tick = (): void => {
       const position = positionRef.current
-      const inBar = position === null ? -1 : Math.floor((position - start) / secondsPerStep + 1e-6)
-      const step = position !== null && position >= start - 1e-6 && inBar < stepCount ? inBar : -1
+      // The bar may play more than once (repeats): wherever it is playing now.
+      const pass = position === null ? null : passAt(song, position)
+      const inBar = pass?.bar === bar ? Math.floor((position! - pass.start) / secondsPerStep + 1e-6) : -1
+      const step = inBar < stepCount ? inBar : -1
       if (step !== shown) {
         gridRef.current?.querySelectorAll('.drum-cell.playing').forEach((c) => c.classList.remove('playing'))
         if (step >= 0) gridRef.current?.querySelectorAll(`.drum-cell[data-step="${step}"]`).forEach((c) => c.classList.add('playing'))

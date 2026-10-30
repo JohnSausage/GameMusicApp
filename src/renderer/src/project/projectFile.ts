@@ -6,6 +6,7 @@ import { fixPartColors, PART_COLORS, writeOut } from '../model/arrangement'
 import { CONSOLES } from '../model/consoles'
 import { MAX_FIFTHS } from '../model/keySignature'
 import { MASTER_DEFAULTS, NOTE_VALUES, type Bar, type Instrument, type MasterSettings, type ProjectAudio, type Song, type SoundEffect, type TakeInfo, type Track } from '../model/song'
+import { cleanRepeats, MAX_TIMES } from '../model/repeats'
 import { normalizePatch, PATCH_LIMITS } from '../model/synth'
 import { MAX_BEND } from '../model/techniques'
 import { MAX_CAPO } from '../model/tuning'
@@ -221,6 +222,23 @@ function checkChanges(song: Song, bars: number): void {
   else delete song.changes
 }
 
+/** Repeat signs (EDIT-14): ones the app can't read fail; ones past the last bar are dropped, ones on one bar joined. */
+function checkRepeats(song: Song, bars: number): void {
+  if (song.repeats === undefined) return
+  if (!Array.isArray(song.repeats)) fail('invalid repeat signs')
+  for (const r of song.repeats) {
+    if (!isInt(r?.bar) || r.bar < 0) fail('a repeat sign has no valid bar')
+    const valid =
+      (r.start === undefined || typeof r.start === 'boolean') &&
+      (r.times === undefined || (isInt(r.times) && r.times >= 2 && r.times <= MAX_TIMES)) &&
+      (r.ending === undefined || (Array.isArray(r.ending) && r.ending.every((n) => isInt(n) && n >= 1 && n <= MAX_TIMES)))
+    if (!valid) fail(`invalid repeat sign at bar ${r.bar + 1}`)
+  }
+  const repeats = cleanRepeats(song.repeats, bars)
+  if (repeats.length > 0) song.repeats = repeats
+  else delete song.repeats
+}
+
 /** Checks the structure we rely on, so a damaged file fails here instead of crashing the editor. */
 function checkSong(value: unknown): Song {
   const song = value as Song
@@ -240,7 +258,9 @@ function checkSong(value: unknown): Song {
     if (track.parts !== undefined) checkParts(track, t)
   })
   if (song.arrangement !== undefined) checkArrangement(song)
-  checkChanges(song, song.arrangement ? song.arrangement.reduce((sum, s) => sum + s.length, 0) : bars)
+  const songBars = song.arrangement ? song.arrangement.reduce((sum, s) => sum + s.length, 0) : bars
+  checkChanges(song, songBars)
+  checkRepeats(song, songBars)
   fixPartColors(song)
   if (song.effects !== undefined) checkEffects(song.effects)
   const checked = { ...song, sections: Array.isArray(song.sections) ? song.sections : [], takes: checkTakes(song.takes), master: checkMaster(song.master) }

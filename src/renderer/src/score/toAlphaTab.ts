@@ -2,6 +2,7 @@ import * as alphaTab from '@coderline/alphatab'
 import { partStarts } from '../model/arrangement'
 import { strengthOf } from '../model/drums'
 import { songKey } from '../model/keySignature'
+import { repeatAt } from '../model/repeats'
 import { timeSignatureAt, type NoteValue, type Song } from '../model/song'
 import { isStandardTuning, tuningPreset } from '../model/tuning'
 
@@ -53,6 +54,11 @@ export function songToAlphaTab(song: Song, settings: alphaTab.Settings, tabOnly 
     masterBar.timeSignatureDenominator = unit
     const tempo = i === 0 ? song.tempo : song.changes?.find((c) => c.bar === i)?.tempo
     if (tempo !== undefined) masterBar.tempoAutomations.push(Automation.buildTempoAutomation(false, 0, tempo, 2))
+    // Repeat signs and endings (EDIT-14): an ending is a bit per time through (bit 0 = the first).
+    const repeat = repeatAt(song, i)
+    masterBar.isRepeatStart = !!repeat?.start
+    masterBar.repeatCount = repeat?.times ?? 0
+    masterBar.alternateEndings = (repeat?.ending ?? []).reduce((bits, n) => bits | (1 << (n - 1)), 0)
     const sectionName = song.sections.find((s) => s.bar === i)?.name
     if (sectionName) {
       masterBar.section = new Section()

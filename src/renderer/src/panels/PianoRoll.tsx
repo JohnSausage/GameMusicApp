@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { barStartTicks, moveBar, type EditResult } from '../model/edit'
 import { addRollNote, barLengths, removeRollNote, rollNotes, type RollNote } from '../model/keys'
 import { barCount, KEYS_TUNING, keyRow, rowPitch, timeSignatureAt } from '../model/song'
-import { tickAtTime } from '../model/timing'
+import { scoreTickAtTime } from '../model/timing'
 import type { Project } from '../project/useProject'
 import { noteName } from '../transcription/notes'
 
@@ -78,7 +78,7 @@ export function PianoRoll(props: Props): React.JSX.Element {
     const first = barStartTicks(song, from)[from]
     const tick = (): void => {
       const position = positionRef.current
-      const at = position === null ? -1 : tickAtTime(song, position) - first
+      const at = position === null ? -1 : scoreTickAtTime(song, position) - first
       const head = playheadRef.current
       if (head) {
         head.style.display = at >= 0 && at < total ? 'block' : 'none'

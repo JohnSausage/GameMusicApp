@@ -1,4 +1,5 @@
-import { barTicks, TICKS_PER_QUARTER } from './edit'
+import { barStartTicks, barTicks, TICKS_PER_QUARTER } from './edit'
+import { playedBars } from './repeats'
 import { barCount, beatQuarters, notePitch, tempoAt, timeSignatureAt, type Song } from './song'
 
 /** A change of a sounding note's pitch, for hammer-ons, pull-offs and slides. */
@@ -98,45 +99,80 @@ export function barSeconds(song: Pick<Song, 'tempo' | 'timeSignature' | 'changes
   return secondsPerQuarter(song, bar) * 4 * (beats / unit)
 }
 
-/** Where bars 0…count start in seconds (count + 1 entries: the last is where bar `count` would start). */
+/** Where bars 0…count start in seconds as written, one after the other (count + 1 entries: the last is where bar `count` would start). */
 export function barStartSeconds(song: Pick<Song, 'tempo' | 'timeSignature' | 'changes'>, count: number): number[] {
   const starts = [0]
   for (let bar = 0; bar < count; bar++) starts.push(starts[bar] + barSeconds(song, bar))
   return starts
 }
 
-/** Where a bar starts in seconds; bar `barCount` is where the song ends. */
-export const barTime = (song: Pick<Song, 'tempo' | 'timeSignature' | 'changes'>, bar: number): number => barStartSeconds(song, Math.max(0, bar))[Math.max(0, bar)]
+type Timed = Pick<Song, 'tempo' | 'timeSignature' | 'changes' | 'repeats'>
 
-/** The song's length in seconds, by its bars. */
+/** A bar as it plays: which bar, and where it starts, in seconds and in ticks from the song's start. */
+export interface BarPass {
+  bar: number
+  start: number
+  ticks: number
+}
+
+/**
+ * The bars as they play, in order, with repeats and endings (EDIT-14): a
+ * repeated bar comes more than once. After the song's end, bar after bar for ever.
+ */
+export function* barPasses(song: Timed): Generator<BarPass> {
+  let start = 0
+  let ticks = 0
+  for (const bar of playedBars(song.repeats)) {
+    yield { bar, start, ticks }
+    start += barSeconds(song, bar)
+    ticks += barTicks(song, bar)
+  }
+}
+
+/** The bars as they play up to the song's end (its `count` bars). */
+export function songPasses(song: Timed, count: number): BarPass[] {
+  const passes: BarPass[] = []
+  for (const pass of barPasses(song)) {
+    if (pass.bar >= count) break
+    passes.push(pass)
+  }
+  return passes
+}
+
+/** The bar playing at a time in seconds, and where it started (bars after the last one go on at its tempo and time signature). */
+export function passAt(song: Timed, seconds: number): BarPass {
+  for (const pass of barPasses(song)) if (seconds < pass.start + barSeconds(song, pass.bar) - 1e-9) return pass
+  throw new Error('unreachable')
+}
+
+/** Where a bar starts in seconds, the first time it plays; bar `barCount` is where the song ends. */
+export function barTime(song: Timed, bar: number): number {
+  for (const pass of barPasses(song)) if (pass.bar >= bar) return pass.start
+  throw new Error('unreachable')
+}
+
+/** The song's length in seconds, by its bars as they play. */
 export const songSeconds = (song: Song): number => barTime(song, barCount(song))
 
 /** The bar playing at a time in seconds (bars after the last one go on at its tempo and time signature). */
-export function barAtTime(song: Pick<Song, 'tempo' | 'timeSignature' | 'changes'>, seconds: number): number {
-  let bar = 0
-  for (let start = 0; ; bar++) {
-    const next = start + barSeconds(song, bar)
-    if (seconds < next - 1e-9) return bar
-    start = next
-  }
-}
+export const barAtTime = (song: Timed, seconds: number): number => passAt(song, seconds).bar
 
 /** The position at a time in seconds in bars, e.g. 2.5 halfway through the third bar. */
-export function barPosition(song: Pick<Song, 'tempo' | 'timeSignature' | 'changes'>, seconds: number): number {
-  const bar = barAtTime(song, seconds)
-  return bar + (seconds - barTime(song, bar)) / barSeconds(song, bar)
+export function barPosition(song: Timed, seconds: number): number {
+  const pass = passAt(song, seconds)
+  return pass.bar + (seconds - pass.start) / barSeconds(song, pass.bar)
 }
 
-/** Ticks from the song's start at a time in seconds, following tempo and time-signature changes. */
-export function tickAtTime(song: Pick<Song, 'tempo' | 'timeSignature' | 'changes'>, seconds: number): number {
-  let ticks = 0
-  let start = 0
-  for (let bar = 0; ; bar++) {
-    const length = barSeconds(song, bar)
-    if (seconds < start + length - 1e-9) return ticks + ((seconds - start) / secondsPerQuarter(song, bar)) * TICKS_PER_QUARTER
-    ticks += barTicks(song, bar)
-    start += length
-  }
+/** Ticks of music played up to a time in seconds, following tempo and time-signature changes and repeats. */
+export function tickAtTime(song: Timed, seconds: number): number {
+  const pass = passAt(song, seconds)
+  return pass.ticks + ((seconds - pass.start) / secondsPerQuarter(song, pass.bar)) * TICKS_PER_QUARTER
+}
+
+/** Where in the written bars a time in seconds is, in ticks from the first bar: in a repeat, the same place each time. */
+export function scoreTickAtTime(song: Timed, seconds: number): number {
+  const pass = passAt(song, seconds)
+  return barStartTicks(song, pass.bar)[pass.bar] + ((seconds - pass.start) / secondsPerQuarter(song, pass.bar)) * TICKS_PER_QUARTER
 }
 
 /** A metronome click, at a time in seconds from the song's start; the first of a bar is accented. */
@@ -149,13 +185,13 @@ export interface Click {
  * The metronome's clicks up to `end` seconds: one per beat unit of the time
  * signature at each bar (a quarter in 4/4, an eighth in 6/8), at its tempo.
  */
-export function metronomeClicks(song: Pick<Song, 'tempo' | 'timeSignature' | 'changes'>, end: number): Click[] {
+export function metronomeClicks(song: Timed, end: number): Click[] {
   const clicks: Click[] = []
-  for (let bar = 0, start = 0; start < end - 1e-9; bar++) {
+  for (const { bar, start } of barPasses(song)) {
+    if (start >= end - 1e-9) break
     const [beats, unit] = timeSignatureAt(song, bar)
     const step = secondsPerQuarter(song, bar) * (4 / unit)
     for (let i = 0; i < beats && start + i * step < end - 1e-9; i++) clicks.push({ time: start + i * step, accent: i === 0 })
-    start += beats * step
   }
   return clicks
 }
@@ -190,8 +226,9 @@ interface Sounding {
  * export, where the notes stay separate).
  */
 export function buildTimeline(song: Song, { legato = true }: { legato?: boolean } = {}): SongTimeline {
-  // Every bar starts where its time signature and tempo put it, also after a bar of the wrong length.
-  const barStarts = barStartSeconds(song, Math.max(0, ...song.tracks.map((t) => t.bars.length)))
+  // Every bar starts where its time signature and tempo put it, also after a bar of the wrong length;
+  // repeated bars play again (EDIT-14).
+  const passes = songPasses(song, Math.max(0, ...song.tracks.map((t) => t.bars.length)))
   const notes: NoteEvent[] = []
   const beats: BeatSpan[] = []
   const muted = new Set<NoteEvent>()
@@ -203,9 +240,11 @@ export function buildTimeline(song: Song, { legato = true }: { legato?: boolean 
     const legatoHere = legato && track.kind === undefined
     const sounding = new Map<number, Sounding>()
     let time = 0
-    track.bars.forEach((bar, barIndex) => {
+    for (const { bar: barIndex, start } of passes) {
+      const bar = track.bars[barIndex]
+      if (!bar) continue
       const spq = secondsPerQuarter(song, barIndex)
-      time = barStarts[barIndex]
+      time = start
       bar.beats.forEach((beat, beatIndex) => {
         const length = beatQuarters(beat) * spq
         beats.push({ trackIndex, barIndex, beatIndex, start: time, end: time + length })
@@ -241,7 +280,7 @@ export function buildTimeline(song: Song, { legato = true }: { legato?: boolean 
         }
         time += length
       })
-    })
+    }
     duration = Math.max(duration, time)
   })
 

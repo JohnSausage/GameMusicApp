@@ -164,6 +164,17 @@ export interface MeterChange {
   timeSignature?: [number, number]
 }
 
+/** Repeat signs and endings at a bar (EDIT-14, see model/repeats.ts). */
+export interface Repeat {
+  bar: number
+  /** A repeat starts at this bar (|:). Without one, a repeat goes back to the song's start or the last repeat's end. */
+  start?: boolean
+  /** A repeat ends with this bar (:|), which plays this many times in all (2 = once more). */
+  times?: number
+  /** An ending (volta): the bar plays only on these times through (1 = the first). */
+  ending?: number[]
+}
+
 export interface Song {
   title: string
   /** Who wrote it; shown under the title in the score. Absent = nobody named. */
@@ -173,6 +184,8 @@ export interface Song {
   timeSignature: [number, number]
   /** Later tempo and time-signature changes, by bar, one per bar at most. Absent = none. */
   changes?: MeterChange[]
+  /** Repeat signs and endings, by bar, one per bar at most. Absent = none. */
+  repeats?: Repeat[]
   /** Absent = C major (no sharps or flats). */
   key?: KeySignature
   tracks: Track[]

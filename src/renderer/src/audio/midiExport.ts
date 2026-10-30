@@ -1,8 +1,8 @@
 import { Midi } from '@tonejs/midi'
 import { keyTonic, songKey } from '../model/keySignature'
-import { barStartTicks, TICKS_PER_QUARTER } from '../model/edit'
-import { barCount, type Song } from '../model/song'
-import { buildTimeline, tickAtTime } from '../model/timing'
+import { TICKS_PER_QUARTER } from '../model/edit'
+import { barCount, tempoAt, timeSignatureAt, type Song } from '../model/song'
+import { buildTimeline, songPasses, tickAtTime } from '../model/timing'
 import { channelForTrack } from './soundfont'
 
 /** General MIDI "Lead 1 (square)", used for synth tracks in exported MIDI files. */
@@ -12,15 +12,19 @@ const GM_SQUARE_LEAD = 80
 export function songToMidi(song: Song): Uint8Array {
   const midi = new Midi()
   const ppq = midi.header.ppq
-  // Tempo and time-signature changes (PRJ-04) where their bars start.
-  const barStarts = barStartTicks(song, barCount(song)).map((t) => Math.round((t / TICKS_PER_QUARTER) * ppq))
+  // Tempo and time-signature changes (PRJ-04) where their bars start, as the bars play: the
+  // notes of repeats are written out (EDIT-14), and going back to a repeat's start can change them too.
   midi.header.tempos.push({ ticks: 0, bpm: song.tempo })
   midi.header.timeSignatures.push({ ticks: 0, timeSignature: [...song.timeSignature] })
-  for (const change of song.changes ?? []) {
-    if (change.bar >= barCount(song)) continue
-    if (change.tempo !== undefined) midi.header.tempos.push({ ticks: barStarts[change.bar], bpm: change.tempo })
-    if (change.timeSignature) midi.header.timeSignatures.push({ ticks: barStarts[change.bar], timeSignature: [...change.timeSignature] })
-  }
+  songPasses(song, barCount(song)).forEach((pass, i, passes) => {
+    if (i === 0) return
+    const ticks = Math.round((pass.ticks / TICKS_PER_QUARTER) * ppq)
+    const before = passes[i - 1].bar
+    if (tempoAt(song, pass.bar) !== tempoAt(song, before)) midi.header.tempos.push({ ticks, bpm: tempoAt(song, pass.bar) })
+    const [beats, unit] = timeSignatureAt(song, pass.bar)
+    const [beatsBefore, unitBefore] = timeSignatureAt(song, before)
+    if (beats !== beatsBefore || unit !== unitBefore) midi.header.timeSignatures.push({ ticks, timeSignature: [beats, unit] })
+  })
   midi.header.update()
   // A MIDI key signature names the major key with the same sharps or flats, plus the scale.
   const key = songKey(song)

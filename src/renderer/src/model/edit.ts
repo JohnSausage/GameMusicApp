@@ -20,6 +20,7 @@ import {
   type Track,
   type TrackKind
 } from './song'
+import { deleteBarRepeats, insertBarRepeats } from './repeats'
 import { eightBitKit, factoryPreset } from './synth'
 
 export const TICKS_PER_QUARTER = 960
@@ -330,10 +331,11 @@ export function toggleTriplet(song: Song, cursor: Cursor): EditResult | null {
 
 // ---------------------------------------------------------------- bars
 
-/** Sections and tempo or time-signature changes from `fromBar` on move by `by` bars. */
+/** Sections, tempo or time-signature changes and repeat signs from `fromBar` on move by `by` bars. */
 function shiftSections(song: Song, fromBar: number, by: number): void {
   for (const section of song.sections) if (section.bar >= fromBar) section.bar += by
   for (const change of song.changes ?? []) if (change.bar >= fromBar) change.bar += by
+  for (const repeat of song.repeats ?? []) if (repeat.bar >= fromBar) repeat.bar += by
 }
 
 /** "Section A", "Section B"…: the letter after the number of sections, or the next one not taken. */
@@ -378,7 +380,14 @@ export function addBars(song: Song, cursor: Cursor, count: number, sectionName?:
 export function insertBarBefore(song: Song, cursor: Cursor): EditResult {
   return edit(song, cursor, (draft, c) => {
     for (const track of draft.tracks) track.bars.splice(c.bar, 0, emptyBar(draft, c.bar))
+    // A repeat that ended with the bar still ends with it; one that started there starts with the new bar.
+    const repeats = draft.repeats
+    delete draft.repeats
     shiftSections(draft, c.bar + 1, 1)
+    if (repeats) {
+      draft.repeats = repeats
+      insertBarRepeats(draft, c.bar)
+    }
     return { ...c, beat: 0 }
   })!
 }
@@ -409,6 +418,7 @@ export function deleteBar(song: Song, cursor: Cursor): EditResult | null {
         .filter((ch, i, all) => ch.bar > 0 && ch.bar < remaining && all.findLastIndex((o) => o.bar === ch.bar) === i)
       if (draft.changes.length === 0) delete draft.changes
     }
+    deleteBarRepeats(draft, c.bar)
     return { ...c, bar: Math.min(c.bar, remaining - 1), beat: 0 }
   })
 }

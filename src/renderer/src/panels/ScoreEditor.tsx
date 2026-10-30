@@ -46,8 +46,10 @@ import { transpose, transposeMessage } from '../model/transpose'
 import { moveToString } from '../model/tuning'
 import { fitBars, wrongBars, wrongBy, type WrongBar } from '../model/barCheck'
 import { consoleOf, consoleProblems, consoleSummary } from '../model/consoles'
+import { repeatAt } from '../model/repeats'
 import { changeAt, type MeterEdit } from '../model/meter'
 import { MeterDialog } from './MeterDialog'
+import { RepeatDialog } from './RepeatDialog'
 import { readPref, writePref } from '../prefs'
 import { showTrack, shownTracks, ZOOM_STEPS } from '../project/layout'
 import type { ApplyOptions, Project } from '../project/useProject'
@@ -170,6 +172,7 @@ export function ScoreEditor(props: Props): React.JSX.Element {
   const [transposing, setTransposing] = useState(false)
   /** The bar whose tempo and time signature are being set (PRJ-04), or null. */
   const [meterBar, setMeterBar] = useState<number | null>(null)
+  const [repeatBar, setRepeatBar] = useState<number | null>(null)
   const recordingRef = useRef<MidiRecording | null>(null)
   /** Keys of the chord being step-entered, and its undo key. */
   const stepChord = useRef<{ held: Set<number>; id: string } | null>(null)
@@ -811,6 +814,11 @@ export function ScoreEditor(props: Props): React.JSX.Element {
                     disabled: cursor.bar === 0,
                     onSelect: () => setMeterBar(cursor.bar)
                   },
+                  {
+                    label: repeatAt(song, cursor.bar) ? 'Change the repeat or ending here…' : 'Repeat or ending…',
+                    title: 'Repeat signs (‖: :‖) and 1st/2nd endings at this bar',
+                    onSelect: () => setRepeatBar(cursor.bar)
+                  },
                   { label: 'Fit bars to the time signature', title: 'Fill bars that are too short with rests, cut bars that are too long', disabled: wrong.length === 0, onSelect: () => fitWrongBars() },
                   { label: 'Delete bar in all tracks', shortcut: 'Ctrl+Del', onSelect: () => edit(deleteBar(song, cursor), lastBarMessage) },
                   'separator',
@@ -979,6 +987,21 @@ export function ScoreEditor(props: Props): React.JSX.Element {
           }}
           onClose={() => {
             setTransposing(false)
+            focus()
+          }}
+        />
+      )}
+      {repeatBar !== null && (
+        <RepeatDialog
+          song={song}
+          cursor={cursor}
+          bar={repeatBar}
+          onApply={(result) => {
+            setRepeatBar(null)
+            edit(result)
+          }}
+          onClose={() => {
+            setRepeatBar(null)
             focus()
           }}
         />
