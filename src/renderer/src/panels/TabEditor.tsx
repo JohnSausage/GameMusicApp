@@ -38,6 +38,7 @@ import { EffectExportDialog } from './EffectExportDialog'
 import { EffectEditor, EffectList } from './EffectsView'
 import { ExportDialog } from './ExportDialog'
 import { InstrumentEditor } from './InstrumentEditor'
+import { MasterMeter } from './MasterMeter'
 import { barsLabel, ScoreEditor, type Clipboard } from './ScoreEditor'
 import { TakeDialog } from './TakeDialog'
 import { TuningDialog } from './TuningDialog'
@@ -643,6 +644,7 @@ export function TabEditor({ project, getEngine, headerSlots, onShowShortcuts }: 
                 </option>
               ))}
             </select>
+            <MasterMeter getEngine={getEngine} active={playing} />
           </>,
           headerSlots.transport
         )}

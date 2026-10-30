@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { GetEngine } from '../App'
 import type { LatencyInfo } from '../audio/engine'
+import { listOutputDevices, saveOutputDevice, savedOutputDevice } from '../audio/meter'
 import { COMPUTER_KEYS, MidiKeyboard, type MidiNoteMessage } from '../midi/midiInput'
 import { GM_ACOUSTIC_GUITAR_STEEL, type Instrument } from '../model/song'
 import { factoryPreset } from '../model/synth'
@@ -67,6 +68,53 @@ function AudioLatencySetting(): React.JSX.Element | null {
       ) : (
         <p className="muted small">In use now: {LATENCY_LABELS[settings.active.audioLatency]}. Changes apply after a restart.</p>
       )}
+      {error && <p className="warning">{error}</p>}
+    </div>
+  )
+}
+
+/** Which audio output the app plays through (PLAY-10), remembered on this computer. */
+function OutputDevice({ getEngine }: { getEngine: GetEngine }): React.JSX.Element {
+  const [devices, setDevices] = useState<MediaDeviceInfo[]>([])
+  const [deviceId, setDeviceId] = useState(savedOutputDevice)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    void listOutputDevices().then(setDevices)
+    const changed = (): void => void listOutputDevices().then(setDevices)
+    navigator.mediaDevices.addEventListener('devicechange', changed)
+    return () => navigator.mediaDevices.removeEventListener('devicechange', changed)
+  }, [])
+
+  const choose = async (id: string): Promise<void> => {
+    setError('')
+    try {
+      await (await getEngine()).setOutputDevice(id)
+      setDeviceId(id)
+      saveOutputDevice(id)
+    } catch (e) {
+      setError(`Could not switch the output: ${e instanceof Error ? e.message : String(e)}`)
+    }
+  }
+
+  const known = deviceId === '' || devices.some((d) => d.deviceId === deviceId)
+  return (
+    <div className="card">
+      <h3>Audio output</h3>
+      <div className="form-row">
+        <label>
+          Play through
+          <select value={known ? deviceId : ''} onChange={(e) => void choose(e.target.value)}>
+            <option value="">System default</option>
+            {devices.map((d) => (
+              <option key={d.deviceId} value={d.deviceId}>
+                {d.label || `Output ${d.deviceId.slice(0, 6)}`}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+      {!known && <p className="warning">The output picked before isn't connected; the system default plays until it is.</p>}
       {error && <p className="warning">{error}</p>}
     </div>
   )
@@ -150,6 +198,11 @@ export function MidiPanel({ getEngine }: { getEngine: GetEngine }): React.JSX.El
 
   return (
     <section className="panel">
+      <h2>Audio and MIDI</h2>
+      <OutputDevice getEngine={getEngine} />
+      <AudioLatencySetting />
+      <RecordingLatency getEngine={getEngine} />
+
       <h2>MIDI keyboard</h2>
       <div className="form-row">
         <button onClick={() => void connect()}>{devices ? 'Reconnect' : 'Connect MIDI keyboard'}</button>
@@ -182,8 +235,6 @@ export function MidiPanel({ getEngine }: { getEngine: GetEngine }): React.JSX.El
         )}
       </div>
 
-      <AudioLatencySetting />
-      <RecordingLatency getEngine={getEngine} />
     </section>
   )
 }

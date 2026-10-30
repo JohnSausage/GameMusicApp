@@ -106,7 +106,7 @@ export function EditorPage({ project, getEngine, saveStatus, onSave, onHome }: P
             'separator',
             { label: 'Song properties…', title: 'Title, author, tempo, key', onSelect: () => setSongDialog(true) },
             { label: 'Tuner…', title: 'Tune your guitar or bass with the recording input', onSelect: () => setTuner(true) },
-            { label: 'MIDI keyboard and audio latency', onSelect: () => setPage('midi') },
+            { label: 'Audio and MIDI settings', title: 'Audio output, latency, MIDI keyboard', onSelect: () => setPage('midi') },
             { label: 'Keyboard shortcuts', shortcut: '?', onSelect: showShortcuts },
             'separator',
             ...THEME_CHOICES.map((t) => ({ label: `${t.label} mode`, title: t.title, checked: themeChoice === t.value, onSelect: () => setThemeChoice(t.value) })),

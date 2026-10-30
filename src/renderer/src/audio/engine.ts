@@ -7,6 +7,7 @@ import { buildTimeline, type NoteEvent, type SongTimeline, type TimeRange } from
 import { secondsPerClick } from './analysis'
 import { BEND_RANGE, pitchWheelSteps, WHEEL_CENTER } from './bends'
 import { songPosition, startPosition, startSchedule, takeDue, validLoop, type ScheduleState } from './scheduler'
+import { peakOf, savedOutputDevice } from './meter'
 import { createBitcrusher, createChipSynth, createTrackBus, crushActive, loadSynthWorklet } from './mixer'
 import { channelForTrack, loadSoundFont, panToMidi } from './soundfont'
 import type { ChipSynthMessage } from './synth/chipSynth.worklet'
@@ -72,6 +73,10 @@ export class AudioEngine {
   readonly ctx = new AudioContext({ latencyHint: 'interactive' })
   /** Everything mixes into `master`, which goes through the optional master bitcrusher. */
   readonly master: GainNode
+  /** What is heard: the master (after the bitcrusher) and sound effects. The level meter measures it (PLAY-06). */
+  readonly output: GainNode
+  private readonly meters: AnalyserNode[]
+  private readonly meterData = new Float32Array(1024)
   private crusher: AudioWorkletNode | null = null
   private synth: WorkletSynthesizer | null = null
   private playback: Playback | null = null
@@ -83,9 +88,19 @@ export class AudioEngine {
   onEnded: (() => void) | null = null
 
   private constructor() {
+    // Always stereo, so a mono sound shows on both sides of the meter.
+    this.output = new GainNode(this.ctx, { channelCount: 2, channelCountMode: 'explicit', channelInterpretation: 'speakers' })
+    this.output.connect(this.ctx.destination)
+    const splitter = this.ctx.createChannelSplitter(2)
+    this.output.connect(splitter)
+    this.meters = [0, 1].map((channel) => {
+      const analyser = new AnalyserNode(this.ctx, { fftSize: this.meterData.length })
+      splitter.connect(analyser, channel)
+      return analyser
+    })
     this.master = this.ctx.createGain()
     this.master.gain.value = 0.9
-    this.master.connect(this.ctx.destination)
+    this.master.connect(this.output)
   }
 
   static async create(): Promise<AudioEngine> {
@@ -97,6 +112,9 @@ export class AudioEngine {
     await synth.soundBankManager.addSoundBank(await loadSoundFont(), 'main')
     await synth.isReady
     engine.synth = synth
+    // The output picked before; if it's gone, the default one.
+    const device = savedOutputDevice()
+    if (device) await engine.setOutputDevice(device).catch(() => undefined)
     return engine
   }
 
@@ -106,6 +124,22 @@ export class AudioEngine {
       baseLatencyMs: this.ctx.baseLatency * 1000,
       outputLatencyMs: (this.ctx.outputLatency || 0) * 1000
     }
+  }
+
+  /** Peak levels of the left and right output over the last 20 ms or so (1 = full scale). */
+  levels(): [number, number] {
+    const [left, right] = this.meters.map((analyser) => {
+      analyser.getFloatTimeDomainData(this.meterData)
+      return peakOf(this.meterData)
+    })
+    return [left, right]
+  }
+
+  /** Plays through another audio output (PLAY-10); '' = the system's default. */
+  async setOutputDevice(deviceId: string): Promise<void> {
+    const ctx = this.ctx as AudioContext & { setSinkId?: (id: string) => Promise<void> }
+    if (!ctx.setSinkId) throw new Error('This version cannot choose the audio output.')
+    await ctx.setSinkId(deviceId)
   }
 
   get isPlaying(): boolean {
@@ -278,13 +312,13 @@ export class AudioEngine {
       if (!this.crusher) {
         this.crusher = createBitcrusher(this.ctx, crush)
         this.master.disconnect()
-        this.master.connect(this.crusher).connect(this.ctx.destination)
+        this.master.connect(this.crusher).connect(this.output)
       } else this.crusher.port.postMessage(crush)
     } else if (this.crusher) {
       this.master.disconnect()
       this.crusher.disconnect()
       this.crusher = null
-      this.master.connect(this.ctx.destination)
+      this.master.connect(this.output)
     }
   }
 
@@ -373,7 +407,7 @@ export class AudioEngine {
    * it is exported, and not through the song's master bitcrusher. Returns a stop function.
    */
   playEffect(buffer: AudioBuffer, onEnded?: () => void): () => void {
-    return this.startBuffer(buffer, this.ctx.destination, onEnded, 0)
+    return this.startBuffer(buffer, this.output, onEnded, 0)
   }
 
   private startBuffer(buffer: AudioBuffer, output: AudioNode, onEnded: (() => void) | undefined, when: number): () => void {

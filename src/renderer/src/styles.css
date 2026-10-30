@@ -2311,6 +2311,60 @@ button.arr-label:hover:not(:disabled) {
   color: var(--accent);
 }
 
+.master-meter {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.master-meter-bars {
+  display: grid;
+  gap: 2px;
+  width: 64px;
+}
+
+.master-meter-bar {
+  position: relative;
+  height: 5px;
+  border-radius: 2px;
+  background: var(--border);
+  overflow: hidden;
+}
+
+/* Green up to -12 dB (75 % of the scale), then yellow, red at the top. */
+.master-meter-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 0;
+  background: linear-gradient(to right, #16a34a 0, #16a34a 48px, #eab308 48px, #eab308 60px, var(--danger) 60px);
+  background-size: 64px 100%;
+}
+
+.master-meter-hold {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 2px;
+  background: var(--text);
+  opacity: 0.6;
+}
+
+.master-meter-clip {
+  width: 10px;
+  height: 10px;
+  min-width: 0;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: transparent;
+}
+
+.master-meter-clip.on {
+  background: var(--danger);
+  border-color: var(--danger);
+}
+
 .export-dialog {
   width: min(640px, 100%);
 }
