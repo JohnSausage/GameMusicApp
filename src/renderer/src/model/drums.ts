@@ -2,7 +2,7 @@
 // each kit piece is a "string" whose open note is its General MIDI drum number
 // and every hit is fret 0, so timing, selection, copy/paste and playback work
 // exactly like for guitar tracks.
-import { appendBars, barTicks, beatTicks, edit, restsFor, type Cursor, type EditResult } from './edit'
+import { appendBars, barTicks, beatTicks, edit, onGrid, restsFor, TICKS_PER_QUARTER, type Cursor, type EditResult } from './edit'
 import { barCount, DRUM_TUNING, type Bar, type Note, type Song, type Track } from './song'
 
 /** Hit strengths (DRUM-03), stored as note velocity. */
@@ -22,9 +22,48 @@ export function pieceRow(note: number): number {
   return DRUM_TUNING.indexOf(note) + 1
 }
 
-/** Number of grid steps in a bar; `stepsPerQuarter` 2 = eighths, 4 = sixteenths, 8 = thirty-seconds. */
+/**
+ * The grids of the step editor, coarsest first, in steps per quarter note:
+ * eighths (2), triplet eighths (3), sixteenths (4), triplet sixteenths (6) and
+ * thirty-seconds (8). A triplet grid has three steps where two straight ones go.
+ */
+export const DRUM_GRIDS = [2, 3, 4, 6, 8]
+
+export const isTripletGrid = (stepsPerQuarter: number): boolean => stepsPerQuarter % 3 === 0
+
+/** "1/16", or "1/8T" for triplet eighths. */
+export const gridLabel = (stepsPerQuarter: number): string => (isTripletGrid(stepsPerQuarter) ? `1/${(stepsPerQuarter / 3) * 8}T` : `1/${stepsPerQuarter * 4}`)
+
+/** Number of grid steps in a bar; `stepsPerQuarter` 2 = eighths, 4 = sixteenths, 8 = thirty-seconds, 3 and 6 triplets. */
 export function stepsInBar(song: Song, stepsPerQuarter: number): number {
-  return Math.round((barTicks(song) / 960) * stepsPerQuarter)
+  return Math.round((barTicks(song) / TICKS_PER_QUARTER) * stepsPerQuarter)
+}
+
+/** Whether the song's bars divide into steps of the grid; for a triplet grid, into whole groups of three (3/8 doesn't). */
+export function gridFits(song: Song, stepsPerQuarter: number): boolean {
+  const step = TICKS_PER_QUARTER / stepsPerQuarter
+  return barTicks(song) % (isTripletGrid(stepsPerQuarter) ? 3 * step : step) === 0
+}
+
+/** Whether every hit of the bar is on a step of the grid. */
+export function hitsOnGrid(bar: Bar, stepsPerQuarter: number): boolean {
+  let start = 0
+  return bar.beats.every((beat) => {
+    const on = beat.notes.length === 0 || start % (TICKS_PER_QUARTER / stepsPerQuarter) === 0
+    start += beatTicks(beat)
+    return on
+  })
+}
+
+/**
+ * The grid to show a bar in: `preferred` if its hits are on it, else the
+ * coarsest grid they all are on (triplets show on a triplet grid). If none is,
+ * `preferred`, where hits between the steps show at the step before them.
+ */
+export function gridFor(song: Song, bar: Bar, preferred: number): number {
+  const fits = (stepsPerQuarter: number): boolean => gridFits(song, stepsPerQuarter) && hitsOnGrid(bar, stepsPerQuarter)
+  if (fits(preferred)) return preferred
+  return DRUM_GRIDS.find(fits) ?? (gridFits(song, preferred) ? preferred : 4)
 }
 
 /** Hits per grid step. A beat that doesn't start on a step is snapped to the step before it. */
@@ -39,14 +78,28 @@ export function barToSteps(bar: Bar, stepCount: number, ticksPerStep: number): N
   return steps
 }
 
-/** Writes steps back as beats: each step with hits lasts until the next one, so notation stays readable. */
+/**
+ * Writes steps back as beats: each step with hits lasts until the next one, so
+ * notation stays readable. On a triplet grid, only within its group of three
+ * steps (a triplet eighth, or a triplet quarter for two steps), so every
+ * triplet group is whole; a whole group without hits after the first is a
+ * straight note (three triplet eighths: a quarter).
+ */
 export function stepsToBar(steps: Note[][], ticksPerStep: number): Bar {
+  const group = onGrid(ticksPerStep) ? 1 : 3
   const beats: Bar['beats'] = []
   let i = 0
   while (i < steps.length) {
     let j = i + 1
     while (j < steps.length && steps[j].length === 0) j++
-    const parts = restsFor((j - i) * ticksPerStep)
+    const parts: Bar['beats'] = []
+    for (let from = i; from < j; ) {
+      // To the end of the group it's in; from the start of a group, over the whole groups up to step j.
+      const groupEnd = from - (from % group) + group
+      const to = from % group !== 0 ? Math.min(j, groupEnd) : Math.max(Math.min(j, groupEnd), j - (j % group))
+      parts.push(...restsFor((to - from) * ticksPerStep))
+      from = to
+    }
     if (steps[i].length > 0) parts[0].notes = steps[i].map((n) => ({ ...n }))
     beats.push(...parts)
     i = j

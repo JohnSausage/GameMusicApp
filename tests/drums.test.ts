@@ -3,7 +3,7 @@ import { strToU8, zipSync } from 'fflate'
 import { describe, expect, it } from 'vitest'
 import { songToMidi } from '../src/renderer/src/audio/midiExport'
 import { channelForTrack } from '../src/renderer/src/audio/soundfont'
-import { applyPattern, barToSteps, DRUM_PATTERNS, pieceRow, repeatBar, stepsInBar, toggleHit, VELOCITY } from '../src/renderer/src/model/drums'
+import { applyPattern, barToSteps, DRUM_PATTERNS, gridFits, gridFor, gridLabel, hitsOnGrid, pieceRow, repeatBar, stepsInBar, toggleHit, VELOCITY } from '../src/renderer/src/model/drums'
 import { addTrack, barTicks, beatTicks, createSong, isRetro, makeRetro, restoreSounds, type Cursor } from '../src/renderer/src/model/edit'
 import { barCount, DRUM_TUNING, type Song } from '../src/renderer/src/model/song'
 import { eightBitKit } from '../src/renderer/src/model/synth'
@@ -76,6 +76,45 @@ describe('drum tracks', () => {
     expect(hits(song)[1]).toEqual([`${SNARE}:${VELOCITY.ghost}`]) // shown on the 16th before it
     expect(isFull(song)).toBe(true)
     expect(toggleHit(song, cursor, 0, 0, 16, SNARE, 'normal', 4)).toBeNull()
+  })
+
+  it('has triplet grids that write whole triplet groups', () => {
+    const shape = (song: Song): string[] =>
+      song.tracks[0].bars[0].beats.map((b) => `${b.triplet ? 'T' : ''}${b.value}${b.dotted ? '.' : ''}${b.notes.length ? '' : 'r'}`)
+    const at = (steps: number[], stepsPerQuarter: number): Song => steps.reduce((song, step) => toggleHit(song, cursor, 0, 0, step, KICK, 'normal', stepsPerQuarter)!.song, drumSong())
+    expect([3, 6].map((spq) => stepsInBar(drumSong(), spq))).toEqual([12, 24])
+    expect([2, 3, 4, 6, 8].map(gridLabel)).toEqual(['1/8', '1/8T', '1/16', '1/16T', '1/32'])
+
+    // A triplet of eighths, then rests: three triplet eighths are a quarter.
+    expect(shape(at([0, 1, 2], 3))).toEqual(['T8', 'T8', 'T8', '2.r'])
+    // Two steps: a triplet quarter; a hit on the second step comes after a triplet eighth rest.
+    expect(shape(at([0, 2], 3))).toEqual(['T4', 'T8', '2.r'])
+    expect(shape(at([1], 3))).toEqual(['T8r', 'T4', '2.r'])
+    // On the grid of triplet sixteenths, three steps are a straight eighth.
+    expect(shape(at([0, 3, 4, 5], 6))).toEqual(['8', 'T16', 'T16', 'T16', '2.r'])
+    const song = at([1, 4], 3)
+    expect(isFull(song)).toBe(true)
+    // The hit on the second triplet eighth sounds a third of a beat in (120 BPM).
+    expect(buildTimeline(song).notes.map((n) => n.start.toFixed(3))).toEqual(['0.167', '0.667'])
+    expect(hits(song, 0, 3)[4]).toEqual([`${KICK}:96`])
+  })
+
+  it('shows a bar in a grid its hits are on', () => {
+    const triplets = toggleHit(drumSong(), cursor, 0, 0, 1, KICK, 'normal', 3)!.song
+    const sixteenths = toggleHit(drumSong(), cursor, 0, 0, 3, KICK, 'normal', 4)!.song
+    expect(hitsOnGrid(triplets.tracks[0].bars[0], 4)).toBe(false)
+    expect(gridFor(triplets, triplets.tracks[0].bars[0], 4)).toBe(3)
+    expect(gridFor(sixteenths, sixteenths.tracks[0].bars[0], 3)).toBe(4)
+    expect(gridFor(sixteenths, sixteenths.tracks[0].bars[0], 8)).toBe(8)
+    // An empty bar keeps the grid picked.
+    expect(gridFor(triplets, triplets.tracks[0].bars[1], 6)).toBe(6)
+    // Triplet eighths don't fill a bar of 3/8; triplet sixteenths do, and both fill 6/8.
+    expect(gridFits(drumSong([3, 8]), 3)).toBe(false)
+    expect(gridFits(drumSong([3, 8]), 6)).toBe(true)
+    expect(gridFits(drumSong([6, 8]), 3)).toBe(true)
+    // Picked for 4/4, the triplet eighths become eighths in 3/8.
+    const threeEight = drumSong([3, 8])
+    expect(gridFor(threeEight, threeEight.tracks[0].bars[0], 3)).toBe(2)
   })
 
   it('repeats a bar, adding bars to every track when needed', () => {

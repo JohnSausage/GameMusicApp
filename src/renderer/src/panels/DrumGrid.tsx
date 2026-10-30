@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { applyPattern, barToSteps, DRUM_PATTERNS, repeatBar, stepsInBar, strengthOf, toggleHit, VELOCITY, type HitStrength } from '../model/drums'
+import { applyPattern, barToSteps, DRUM_GRIDS, DRUM_PATTERNS, gridFits, gridFor, gridLabel, hitsOnGrid, isTripletGrid, repeatBar, stepsInBar, strengthOf, toggleHit, VELOCITY, type HitStrength } from '../model/drums'
 import { barTicks, clearBar, moveBar, type Cursor, type EditResult } from '../model/edit'
 import { barCount, DRUM_PIECES } from '../model/song'
 import type { Project } from '../project/useProject'
@@ -30,17 +30,21 @@ const STRENGTHS: { value: HitStrength; label: string; tip: string }[] = [
  */
 export function DrumGrid({ project, trackIndex, collapsed, onToggleCollapsed, onSelectTrack, positionRef, onEdit, onAudition }: Props): React.JSX.Element {
   const { song, cursor } = project
-  const [stepsPerQuarter, setStepsPerQuarter] = useState(4)
+  // The grid picked, and the bar it was picked in: there it stays; other bars show in it when their hits are on its steps.
+  const [picked, setPicked] = useState<{ stepsPerQuarter: number; bar: number | null }>({ stepsPerQuarter: 4, bar: null })
   const [strength, setStrength] = useState<HitStrength>('normal')
   const [repeatTimes, setRepeatTimes] = useState(3)
   const gridRef = useRef<HTMLDivElement>(null)
 
   const track = song.tracks[trackIndex]
   const bar = cursor.bar
+  const stepsPerQuarter =
+    picked.bar === bar && gridFits(song, picked.stepsPerQuarter) ? picked.stepsPerQuarter : gridFor(song, track.bars[bar], picked.stepsPerQuarter)
   const stepCount = stepsInBar(song, stepsPerQuarter)
   const ticksPerStep = barTicks(song) / stepCount
   const steps = barToSteps(track.bars[bar], stepCount, ticksPerStep)
-  const stepsPerClick = stepsPerQuarter * (4 / song.timeSignature[1])
+  const beatLength = barTicks(song) / song.timeSignature[0]
+  const offGrid = !hitsOnGrid(track.bars[bar], stepsPerQuarter)
   const isFourFour = stepsInBar(song, 4) === 16
   const hitCount = track.bars[bar].beats.reduce((sum, b) => sum + b.notes.length, 0)
   const drumTracks = song.tracks.flatMap((t, i) => (t.kind === 'drums' ? [{ index: i, name: t.name }] : []))
@@ -112,11 +116,25 @@ export function DrumGrid({ project, trackIndex, collapsed, onToggleCollapsed, on
         ) : (
           <>
             <div className="segmented" role="group" aria-label="Grid">
-              {[2, 4, 8].map((spq) => (
-                <button key={spq} className={stepsPerQuarter === spq ? 'active' : ''} onClick={() => setStepsPerQuarter(spq)} title="Grid resolution">
-                  1/{spq * 4}
-                </button>
-              ))}
+              {[...DRUM_GRIDS]
+                .sort((a, b) => Number(isTripletGrid(a)) - Number(isTripletGrid(b)) || a - b)
+                .map((spq) => (
+                  <button
+                    key={spq}
+                    className={stepsPerQuarter === spq ? 'active' : ''}
+                    disabled={!gridFits(song, spq)}
+                    onClick={() => setPicked({ stepsPerQuarter: spq, bar })}
+                    title={
+                      !gridFits(song, spq)
+                        ? `Triplet steps don't fill a bar of ${song.timeSignature.join('/')}`
+                        : isTripletGrid(spq)
+                          ? `Grid: triplet ${spq === 3 ? 'eighths' : 'sixteenths'}, three steps where two straight ones go`
+                          : 'Grid resolution'
+                    }
+                  >
+                    {gridLabel(spq)}
+                  </button>
+                ))}
             </div>
             <div className="segmented" role="group" aria-label="Hit strength">
               {STRENGTHS.map((s) => (
@@ -157,6 +175,9 @@ export function DrumGrid({ project, trackIndex, collapsed, onToggleCollapsed, on
         )}
       </div>
 
+      {!collapsed && offGrid && (
+        <p className="muted small drum-off-grid">Some hits in this bar are between the steps of this grid. They show at the step before, and move there when you edit the bar.</p>
+      )}
       {!collapsed && (
         <div ref={gridRef} className="drum-rows" style={{ gridTemplateColumns: `110px repeat(${stepCount}, minmax(14px, 1fr))` }}>
           {DRUM_PIECES.map((piece, i) => {
@@ -172,7 +193,7 @@ export function DrumGrid({ project, trackIndex, collapsed, onToggleCollapsed, on
                   <button
                     key={`${row}-${step}`}
                     data-step={step}
-                    className={`drum-cell ${level} ${step % stepsPerClick === 0 ? 'beat-start' : ''} ${step % (stepsPerClick * song.timeSignature[0]) === 0 ? 'bar-start' : ''}`}
+                    className={`drum-cell ${level} ${(step * ticksPerStep) % beatLength === 0 ? 'beat-start' : ''} ${step === 0 ? 'bar-start' : ''}`}
                     title={`${piece.name}, step ${step + 1}${hit ? ` (${level})` : ''}`}
                     aria-label={`${piece.name} step ${step + 1}: ${hit ? level : 'off'}`}
                     onClick={(e) => toggle(e, step, row)}

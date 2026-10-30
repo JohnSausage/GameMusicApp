@@ -2085,6 +2085,10 @@ button.arr-label:hover:not(:disabled) {
   padding: 4px 10px;
 }
 
+.drum-off-grid {
+  margin: 0 0 6px;
+}
+
 .drum-rows {
   display: grid;
   gap: 2px;
