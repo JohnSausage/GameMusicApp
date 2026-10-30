@@ -40,7 +40,7 @@ import type { MidiNoteMessage } from '../midi/midiInput'
 import { barLengths, quantizeNotes, writeRoll, type TimedNote } from '../model/keys'
 import { songKey, usesFlats } from '../model/keySignature'
 import { stepAdvance, stepEnter } from '../model/stepEntry'
-import { legatoTarget, toggleLegato, toggleTie, type Legato } from '../model/techniques'
+import { bendName, cycleBend, legatoTarget, toggleBendRelease, toggleLegato, toggleMark, toggleTie, type Legato, type NoteMark } from '../model/techniques'
 import { barSeconds, barTime, buildTimeline, tickAtTime } from '../model/timing'
 import { transpose, transposeMessage } from '../model/transpose'
 import { moveToString } from '../model/tuning'
@@ -548,6 +548,16 @@ export function ScoreEditor(props: Props): React.JSX.Element {
     )
   }
 
+  /** The next bend of the note at the cursor (B), or its release on and off (Shift+B). */
+  const bend = (release = false): void => {
+    if (!noteOnString) setMessage('Put the cursor on a note first.')
+    else if (release) edit(toggleBendRelease(song, cursor), 'Bend the note first (B), then let it go back down.')
+    else edit(cycleBend(song, cursor))
+  }
+
+  /** Palm mute or dead note on the selected notes, or the note at the cursor. */
+  const mark = (kind: NoteMark): void => edit(toggleMark(song, cursor, kind, selection), selection ? 'The selection has no notes.' : 'Put the cursor on a note first.')
+
   const selectAll = (): void => {
     const all = selectTrack(song, cursor.track)
     setAnchor({ track: cursor.track, pos: all.start })
@@ -606,6 +616,9 @@ export function ScoreEditor(props: Props): React.JSX.Element {
     else if (key.toLowerCase() === 't' && !ctrl && !drums) tie()
     else if (key.toLowerCase() === 'h' && !ctrl && fretted) legato('hammer')
     else if (key.toLowerCase() === 's' && !ctrl && fretted) legato('slide')
+    else if (key.toLowerCase() === 'b' && !ctrl && fretted) bend(shift)
+    else if (key.toLowerCase() === 'p' && !ctrl && fretted) mark('palmMute')
+    else if (key.toLowerCase() === 'x' && !ctrl && fretted) mark('dead')
     else if (key === 'Insert') edit(insertBarBefore(song, cursor))
     else if (ctrl && key.toLowerCase() === 'a') selectAll()
     else if (ctrl && key.toLowerCase() === 'c') copy()
@@ -721,6 +734,30 @@ export function ScoreEditor(props: Props): React.JSX.Element {
                   onClick={() => legato('slide')}
                 >
                   Slide
+                </button>
+                <button
+                  className={noteOnString?.bend ? 'active' : ''}
+                  aria-pressed={!!noteOnString?.bend}
+                  title="Bend (B): push the string up a half, full or 1½ step (press again for the next, then off); Shift+B lets it go back down"
+                  onClick={() => bend()}
+                >
+                  {noteOnString?.bend ? `Bend ${bendName(noteOnString.bend)}${noteOnString.bendRelease ? ' ↓' : ''}` : 'Bend'}
+                </button>
+                <button
+                  className={noteOnString?.palmMute ? 'active' : ''}
+                  aria-pressed={!!noteOnString?.palmMute}
+                  title="Palm mute (P): damped, short and soft; works on all selected notes"
+                  onClick={() => mark('palmMute')}
+                >
+                  P.M.
+                </button>
+                <button
+                  className={noteOnString?.dead ? 'active' : ''}
+                  aria-pressed={!!noteOnString?.dead}
+                  title="Dead note (X): a muted click without a pitch; works on all selected notes"
+                  onClick={() => mark('dead')}
+                >
+                  ×
                 </button>
               </>
             )}

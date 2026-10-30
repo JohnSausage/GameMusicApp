@@ -24,6 +24,13 @@ export interface NoteEvent {
 
 /** A slide takes the end of the note it starts from: half of it, at most this long. */
 const MAX_SLIDE_SECONDS = 0.25
+/** A bend goes up in the first part of its note (at most this long), a release comes down from halfway. */
+const MAX_BEND_SECONDS = 0.15
+/** Palm-muted notes ring at most this long and a little softer; dead notes are a short, soft click (PLAY-11). */
+const PALM_MUTE_SECONDS = 0.18
+const PALM_MUTE_VELOCITY = 0.8
+const DEAD_SECONDS = 0.04
+const DEAD_VELOCITY = 0.6
 
 export interface BeatSpan {
   trackIndex: number
@@ -187,6 +194,7 @@ export function buildTimeline(song: Song, { legato = true }: { legato?: boolean 
   const barStarts = barStartSeconds(song, Math.max(0, ...song.tracks.map((t) => t.bars.length)))
   const notes: NoteEvent[] = []
   const beats: BeatSpan[] = []
+  const muted = new Set<NoteEvent>()
   let duration = 0
 
   song.tracks.forEach((track, trackIndex) => {
@@ -207,7 +215,11 @@ export function buildTimeline(song: Song, { legato = true }: { legato?: boolean 
           // Only a note in the beat right before continues into this one.
           const continues = before !== undefined && Math.abs(before.end - time) < 1e-6
           const next = { end: time + length, pitch, length, legato: note.hammer ? ('hammer' as const) : note.slide ? ('slide' as const) : undefined }
-          if (continues && note.tie && before.pitch === pitch) {
+          if (note.dead && techniques) {
+            // A click: it holds nothing, and nothing goes on from it.
+            notes.push({ trackIndex, pitch, velocity: Math.round(note.velocity * DEAD_VELOCITY), start: time, duration: Math.min(length, DEAD_SECONDS) })
+            sounding.delete(note.string)
+          } else if (continues && note.tie && before.pitch === pitch) {
             before.event.duration += length
             Object.assign(before, next)
           } else if (continues && legatoHere && before.legato && before.pitch !== pitch) {
@@ -217,6 +229,12 @@ export function buildTimeline(song: Song, { legato = true }: { legato?: boolean 
             Object.assign(before, next)
           } else {
             const event: NoteEvent = { trackIndex, pitch, velocity: note.velocity, start: time, duration: length }
+            if (note.bend && legatoHere) {
+              const up = Math.min(MAX_BEND_SECONDS, length / 3)
+              event.bends = [{ time, pitch: pitch + note.bend, glide: up }]
+              if (note.bendRelease) event.bends.push({ time: time + length / 2, pitch, glide: Math.min(MAX_BEND_SECONDS, length / 3) })
+            }
+            if (note.palmMute && techniques) muted.add(event)
             notes.push(event)
             if (techniques) sounding.set(note.string, { event, ...next })
           }
@@ -227,6 +245,12 @@ export function buildTimeline(song: Song, { legato = true }: { legato?: boolean 
     duration = Math.max(duration, time)
   })
 
+  // Palm mutes cut a note short, held notes too.
+  for (const event of muted) {
+    event.duration = Math.min(event.duration, PALM_MUTE_SECONDS)
+    event.velocity = Math.round(event.velocity * PALM_MUTE_VELOCITY)
+    if (event.bends) event.bends = event.bends.filter((b) => b.time < event.start + event.duration)
+  }
   notes.sort((a, b) => a.start - b.start)
   return { notes, beats, duration }
 }

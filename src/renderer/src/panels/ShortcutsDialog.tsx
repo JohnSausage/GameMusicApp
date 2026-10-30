@@ -33,7 +33,11 @@ const GROUPS: { title: string; rows: Row[] }[] = [
     rows: [
       [['T'], 'Hold the note before through this beat (tie)'],
       [['H'], 'Hammer-on / pull-off into the next note'],
-      [['S'], 'Slide into the next note']
+      [['S'], 'Slide into the next note'],
+      [['B'], 'Bend the note: ½, full, 1½, off'],
+      [['Shift+B'], 'Let the bend go back down (release)'],
+      [['P'], 'Palm mute the note (or the selected notes)'],
+      [['X'], 'Dead note (×) on the note (or the selected notes)']
     ]
   },
   {

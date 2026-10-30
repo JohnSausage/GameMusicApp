@@ -1,3 +1,4 @@
+import * as alphaTab from '@coderline/alphatab'
 import { Midi } from '@tonejs/midi'
 import { strToU8, zipSync } from 'fflate'
 import { describe, expect, it } from 'vitest'
@@ -7,9 +8,10 @@ import { ChipSynth } from '../src/renderer/src/audio/synth/chipSynthCore'
 import { addTrack, createSong, setFret, type Cursor, type Duration } from '../src/renderer/src/model/edit'
 import type { Song } from '../src/renderer/src/model/song'
 import { DEFAULT_PATCH } from '../src/renderer/src/model/synth'
-import { toggleLegato, toggleTie } from '../src/renderer/src/model/techniques'
+import { bendName, cycleBend, toggleBendRelease, toggleLegato, toggleMark, toggleTie } from '../src/renderer/src/model/techniques'
 import { buildTimeline } from '../src/renderer/src/model/timing'
 import { parseProject, serializeProject } from '../src/renderer/src/project/projectFile'
+import { songToAlphaTab } from '../src/renderer/src/score/toAlphaTab'
 
 const quarter: Duration = { value: 4, dotted: false }
 const at = (bar: number, beat: number, string = 3): Cursor => ({ track: 0, bar, beat, string })
@@ -176,5 +178,90 @@ describe('playing pitch changes', () => {
     // No new attack: the level keeps decaying smoothly at the bend.
     const peak = (from: number, to: number): number => Math.max(...out.subarray(Math.round(from * RATE), Math.round(to * RATE)).map(Math.abs))
     expect(peak(0.5, 0.52)).toBeLessThanOrEqual(peak(0.46, 0.5) + 1e-6)
+  })
+})
+
+describe('bends, palm mutes and dead notes', () => {
+  it('bend a note a half, full and one and a half step, then not; a release only goes with a bend', () => {
+    let s = song([2])
+    expect(toggleBendRelease(s, at(0, 0))).toBeNull()
+    const amounts: (number | undefined)[] = []
+    for (let i = 0; i < 4; i++) {
+      s = cycleBend(s, at(0, 0))!.song
+      amounts.push(s.tracks[0].bars[0].beats[0].notes[0].bend)
+      if (i === 1) s = toggleBendRelease(s, at(0, 0))!.song
+    }
+    expect(amounts).toEqual([1, 2, 3, undefined])
+    expect(s.tracks[0].bars[0].beats[0].notes[0]).toEqual({ string: 3, fret: 2, velocity: 96 })
+    expect(cycleBend(s, at(0, 1))).toBeNull() // a rest
+    expect([1, 2, 3].map(bendName)).toEqual(['½', 'full', '1½'])
+  })
+
+  it('play a bend as the pitch going up at the start of the note, and back down halfway with a release', () => {
+    let s = song([2, 4])
+    s = cycleBend(cycleBend(s, at(0, 0))!.song, at(0, 0))!.song // full
+    s = cycleBend(s, at(0, 1))!.song // half
+    s = toggleBendRelease(s, at(0, 1))!.song
+    expect(notesOf(s)).toEqual([
+      { pitch: 57, start: 0, duration: 0.5, bends: [{ time: 0, pitch: 59, glide: 0.15 }] },
+      {
+        pitch: 59,
+        start: 0.5,
+        duration: 0.5,
+        bends: [
+          { time: 0.5, pitch: 60, glide: 0.15 },
+          { time: 0.75, pitch: 59, glide: 0.15 }
+        ]
+      }
+    ])
+  })
+
+  it('palm mute or deaden the note at the cursor, or every note of a selection', () => {
+    let s = song([2, 4, 5])
+    s = toggleMark(s, at(0, 0), 'palmMute')!.song
+    expect(s.tracks[0].bars[0].beats[0].notes[0].palmMute).toBe(true)
+    // A selection where one note has it already: all get it; again: all lose it.
+    const selection = { track: 0, start: { bar: 0, beat: 0 }, end: { bar: 0, beat: 2 } }
+    s = toggleMark(s, at(0, 0), 'palmMute', selection)!.song
+    expect(s.tracks[0].bars[0].beats.slice(0, 3).map((b) => b.notes[0].palmMute)).toEqual([true, true, true])
+    s = toggleMark(s, at(0, 0), 'palmMute', selection)!.song
+    expect(s.tracks[0].bars[0].beats.slice(0, 3).map((b) => b.notes[0].palmMute)).toEqual([undefined, undefined, undefined])
+    s = toggleMark(s, at(0, 2), 'dead')!.song
+    expect(s.tracks[0].bars[0].beats[2].notes[0].dead).toBe(true)
+    expect(toggleMark(s, at(0, 3), 'dead')).toBeNull() // a rest
+    const drums = addTrack(s, at(0, 0), 'drums').song
+    expect(toggleMark(drums, { track: 1, bar: 0, beat: 0, string: 1 }, 'dead')).toBeNull()
+  })
+
+  it('play palm mutes short and softer, and dead notes as a short click that holds nothing', () => {
+    let s = song([2, 2, 4])
+    s = toggleMark(s, at(0, 0), 'palmMute')!.song
+    s = toggleTie(s, at(0, 1))!.song // a held palm mute stays short
+    s = toggleMark(s, at(0, 2), 'dead')!.song
+    const notes = buildTimeline(s).notes
+    expect(notes.map(({ pitch, start, duration, velocity }) => ({ pitch, start, duration, velocity }))).toEqual([
+      { pitch: 57, start: 0, duration: 0.18, velocity: 77 },
+      { pitch: 59, start: 1, duration: 0.04, velocity: 58 }
+    ])
+  })
+
+  it('are saved with the project and shown in the score', () => {
+    let s = song([2, 4, 5])
+    s = cycleBend(cycleBend(s, at(0, 0))!.song, at(0, 0))!.song
+    s = toggleBendRelease(s, at(0, 0))!.song
+    s = toggleMark(s, at(0, 1), 'palmMute')!.song
+    s = toggleMark(s, at(0, 2), 'dead')!.song
+    const back = parseProject(serializeProject(s)).song
+    expect(back.tracks[0].bars[0].beats.slice(0, 3).map((b) => b.notes[0])).toEqual([
+      { string: 3, fret: 2, velocity: 96, bend: 2, bendRelease: true },
+      { string: 3, fret: 4, velocity: 96, palmMute: true },
+      { string: 3, fret: 5, velocity: 96, dead: true }
+    ])
+    const { beats } = songToAlphaTab(s, new alphaTab.Settings())
+    const [bent, muted, dead] = beats[0][0].slice(0, 3).map((b) => b.notes[0])
+    expect(bent.bendType).toBe(alphaTab.model.BendType.BendRelease)
+    expect(bent.bendPoints?.map((p) => p.value)).toEqual([0, 4, 4, 0, 0])
+    expect(muted.isPalmMute).toBe(true)
+    expect(dead.isDead).toBe(true)
   })
 })

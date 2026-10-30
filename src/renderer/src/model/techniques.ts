@@ -1,7 +1,8 @@
 // Held notes (ties), hammer-ons/pull-offs and slides (REQUIREMENTS.md EDIT-02, EDIT-12).
 // They link a note to its neighbor on the same string in the beat right before or after it.
-import { edit, followTies, moveBeat, setFret, type Cursor, type Duration, type EditResult } from './edit'
-import type { Note, Song } from './song'
+// Bends, palm mutes and dead notes are marks on a note of a guitar or bass.
+import { edit, followTies, moveBeat, selectedRanges, setFret, type Cursor, type Duration, type EditResult, type Selection } from './edit'
+import { isFretted, type Note, type Song } from './song'
 
 export type Legato = 'hammer' | 'slide'
 
@@ -76,5 +77,64 @@ export function toggleLegato(song: Song, cursor: Cursor, kind: Legato): EditResu
     const n = noteAt(draft, c)!
     n[kind] = true
     delete n[kind === 'hammer' ? 'slide' : 'hammer']
+  })
+}
+
+/** Bend amounts (EDIT-12) in semitones: a half bend, a full bend, and one and a half. */
+export const BEND_STEPS = [1, 2, 3]
+/** The most a project file may bend a note (Guitar Pro files go up to two whole steps). */
+export const MAX_BEND = 4
+
+/** What a bend is called: "½", "full", "1½". */
+export const bendName = (semitones: number): string => (semitones === 2 ? 'full' : `${Math.floor(semitones / 2) || ''}${semitones % 2 ? '½' : ''}`)
+
+/** The next bend of the note at the cursor: half, full, one and a half, then none. */
+export function cycleBend(song: Song, cursor: Cursor): EditResult | null {
+  const note = isFretted(song.tracks[cursor.track]) ? noteAt(song, cursor) : undefined
+  if (!note) return null
+  const next = BEND_STEPS.find((step) => step > (note.bend ?? 0))
+  return edit(song, cursor, (draft, c) => {
+    const n = noteAt(draft, c)!
+    if (next !== undefined) n.bend = next
+    else {
+      delete n.bend
+      delete n.bendRelease
+    }
+  })
+}
+
+/** Lets the bend of the note at the cursor go back down before the note ends, or not. */
+export function toggleBendRelease(song: Song, cursor: Cursor): EditResult | null {
+  const note = noteAt(song, cursor)
+  if (!note?.bend) return null
+  return edit(song, cursor, (draft, c) => {
+    const n = noteAt(draft, c)!
+    if (n.bendRelease) delete n.bendRelease
+    else n.bendRelease = true
+  })
+}
+
+export type NoteMark = 'palmMute' | 'dead'
+
+/**
+ * Palm mute or dead note, on or off: for every note of the selected beats (as
+ * palm mutes usually go over a run of notes), or the note at the cursor. Off
+ * when all of them have it already.
+ */
+export function toggleMark(song: Song, cursor: Cursor, mark: NoteMark, selection?: Selection | null): EditResult | null {
+  const track = selection ? selection.track : cursor.track
+  if (!isFretted(song.tracks[track])) return null
+  const notesIn = (s: Song): Note[] =>
+    selection
+      ? selectedRanges(s, selection).flatMap(({ bar, from, to }) => s.tracks[track].bars[bar].beats.slice(from, to + 1).flatMap((b) => b.notes))
+      : [noteAt(s, cursor)].filter((n) => n !== undefined)
+  const notes = notesIn(song)
+  if (notes.length === 0) return null
+  const on = !notes.every((n) => n[mark])
+  return edit(song, cursor, (draft) => {
+    for (const n of notesIn(draft)) {
+      if (on) n[mark] = true
+      else delete n[mark]
+    }
   })
 }

@@ -20,6 +20,14 @@ export interface Note {
   hammer?: boolean
   /** Slide into the next note on this string (EDIT-12). */
   slide?: boolean
+  /** Bend (EDIT-12): how far the string is pushed up, in semitones (1 = a half bend, 2 = a full bend). */
+  bend?: number
+  /** The bend goes back down before the note ends. */
+  bendRelease?: boolean
+  /** Palm mute: damped with the edge of the hand, short and soft (P.M.). */
+  palmMute?: boolean
+  /** Dead (muted) note: a click without a pitch, written ×. */
+  dead?: boolean
 }
 
 export interface Beat {

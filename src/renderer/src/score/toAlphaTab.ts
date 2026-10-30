@@ -5,7 +5,7 @@ import { songKey } from '../model/keySignature'
 import { timeSignatureAt, type NoteValue, type Song } from '../model/song'
 import { isStandardTuning, tuningPreset } from '../model/tuning'
 
-const { AccentuationType, Automation, SlideOutType, Bar, Beat, Clef, Duration, KeySignatureType, MasterBar, Note, Ottavia, Score, Section, Track, Tuning, Voice } = alphaTab.model
+const { AccentuationType, Automation, SlideOutType, Bar, Beat, BendPoint, BendType, Clef, Duration, KeySignatureType, MasterBar, Note, Ottavia, Score, Section, Track, Tuning, Voice } = alphaTab.model
 
 export interface BeatRef {
   trackIndex: number
@@ -154,6 +154,15 @@ export function songToAlphaTab(song: Song, settings: alphaTab.Settings, tabOnly 
             const legato = next !== undefined && next !== n.fret
             note.isHammerPullOrigin = !!n.hammer && legato
             if (n.slide && legato) note.slideOutType = SlideOutType.Legato
+            // Bend arrows, in quarter tones over the note (0–60): up, or up and back down.
+            if (n.bend) {
+              const up = n.bend * 2
+              note.bendType = n.bendRelease ? BendType.BendRelease : BendType.Bend
+              const points = n.bendRelease ? [[0, 0], [15, up], [30, up], [45, 0], [60, 0]] : [[0, 0], [15, up], [60, up]]
+              for (const [offset, value] of points) note.addBendPoint(new BendPoint(offset, value))
+            }
+            note.isPalmMute = !!n.palmMute
+            note.isDead = !!n.dead
           }
           beat.addNote(note)
         }

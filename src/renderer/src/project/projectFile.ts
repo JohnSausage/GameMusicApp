@@ -7,6 +7,7 @@ import { CONSOLES } from '../model/consoles'
 import { MAX_FIFTHS } from '../model/keySignature'
 import { MASTER_DEFAULTS, NOTE_VALUES, type Bar, type Instrument, type MasterSettings, type ProjectAudio, type Song, type SoundEffect, type TakeInfo, type Track } from '../model/song'
 import { normalizePatch, PATCH_LIMITS } from '../model/synth'
+import { MAX_BEND } from '../model/techniques'
 import { MAX_CAPO } from '../model/tuning'
 import { checkLayout, type Layout } from './layout'
 
@@ -139,7 +140,10 @@ function checkBars(bars: Bar[], track: Track, where: string): void {
         if (!isInt(note.string) || note.string < 1 || note.string > track.tuning.length || !isInt(note.fret) || note.fret < 0) {
           fail(`${where}, bar ${b + 1} has an invalid note`)
         }
-        if ([note.tie, note.hammer, note.slide].some((flag) => flag !== undefined && typeof flag !== 'boolean')) {
+        if (
+          [note.tie, note.hammer, note.slide, note.bendRelease, note.palmMute, note.dead].some((flag) => flag !== undefined && typeof flag !== 'boolean') ||
+          (note.bend !== undefined && !(typeof note.bend === 'number' && note.bend > 0 && note.bend <= MAX_BEND))
+        ) {
           fail(`${where}, bar ${b + 1} has a note with invalid techniques`)
         }
       }
