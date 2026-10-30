@@ -2302,6 +2302,11 @@ button.arr-label:hover:not(:disabled) {
   min-width: 52px;
 }
 
+.speed-select.active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
 .export-dialog {
   width: min(640px, 100%);
 }

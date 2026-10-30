@@ -17,6 +17,9 @@ const SCHEDULER_INTERVAL_MS = 25
 /** Sequenced notes are shortened slightly so repeated notes re-attack audibly. */
 const GATE = 0.92
 const LIVE_CHANNEL = 15
+/** Playback speeds (PLAY-08). */
+export const MIN_SPEED = 0.25
+export const MAX_SPEED = 2
 const DRUM_CHANNEL = 9
 
 export interface PlayOptions {
@@ -26,6 +29,8 @@ export interface PlayOptions {
   loop?: TimeRange | null
   /** Metronome clicks during playback (PLAY-07); setMetronome() switches it while playing. */
   metronome?: boolean
+  /** Playback speed for practicing (PLAY-08), 0.25–2: the song's tempo stays, notes keep their pitch. */
+  speed?: number
 }
 
 interface Playback {
@@ -34,6 +39,8 @@ interface Playback {
   from: number
   /** Context time at which song time `from` is heard. */
   startTime: number
+  /** Song seconds per context second. */
+  speed: number
   loop: TimeRange | null
   schedule: ScheduleState
   timer: number
@@ -109,7 +116,7 @@ export class AudioEngine {
   position(): number | null {
     const p = this.playback
     if (!p) return null
-    return songPosition(p.from, this.ctx.currentTime - p.startTime - (this.ctx.outputLatency || 0), p.loop)
+    return songPosition(p.from, (this.ctx.currentTime - p.startTime - (this.ctx.outputLatency || 0)) * p.speed, p.loop)
   }
 
   /**
@@ -124,7 +131,7 @@ export class AudioEngine {
       stamp.contextTime !== undefined && stamp.performanceTime !== undefined && stamp.performanceTime > 0
         ? stamp.contextTime + (performanceMs - stamp.performanceTime) / 1000
         : this.ctx.currentTime - (this.ctx.outputLatency || 0) - (performance.now() - performanceMs) / 1000
-    return songPosition(p.from, heard - p.startTime, p.loop)
+    return songPosition(p.from, (heard - p.startTime) * p.speed, p.loop)
   }
 
   /** Plays from song time `from`, optionally looping a range and with the metronome. */
@@ -160,13 +167,15 @@ export class AudioEngine {
     })
 
     const startTime = options.startAt ?? this.ctx.currentTime + 0.08
+    const speed = Math.max(MIN_SPEED, Math.min(MAX_SPEED, options.speed ?? 1))
     const playback: Playback = {
       song,
       timeline,
       from,
       startTime,
+      speed,
       loop,
-      schedule: startSchedule(timeline, from, startTime, loop, secondsPerClick(song.tempo, song.timeSignature), song.timeSignature[0]),
+      schedule: startSchedule(timeline, from, startTime, loop, secondsPerClick(song.tempo, song.timeSignature), song.timeSignature[0], speed),
       timer: 0,
       wheel: [],
       synths,
@@ -242,21 +251,23 @@ export class AudioEngine {
   private playNote(p: Playback, note: NoteEvent, when: number): void {
     if (!p.audible[note.trackIndex]) return
     const instrument = p.song.tracks[note.trackIndex].instrument
+    // Song seconds from the note's start, in context time (slower playback stretches them).
+    const later = (songSeconds: number): number => when + songSeconds / p.speed
     const length = note.duration * GATE
     if (instrument.kind === 'soundfont') {
       const channel = channelForTrack(p.song, note.trackIndex)
       this.synth!.noteOn(channel, note.pitch, note.velocity, { time: when })
-      this.synth!.noteOff(channel, note.pitch, { time: when + length })
+      this.synth!.noteOff(channel, note.pitch, { time: later(length) })
       const steps = pitchWheelSteps(note, note.start + length)
       if (steps.length > 0) {
-        p.wheel.push(...steps.map((step) => ({ when: when + step.time - note.start, channel, value: step.value })))
+        p.wheel.push(...steps.map((step) => ({ when: later(step.time - note.start), channel, value: step.value })))
         p.wheel.sort((a, b) => a.when - b.when)
       }
     } else {
       const synth = p.synths[note.trackIndex]
       const target = synth.get(note.pitch) ?? synth.get('any')
-      const bends = note.bends?.map((bend) => ({ ...bend, time: when + bend.time - note.start }))
-      if (target) send(target.node, { type: 'note', time: when, pitch: target.pitch ?? note.pitch, velocity: note.velocity, duration: length, bends })
+      const bends = note.bends?.map((bend) => ({ ...bend, time: later(bend.time - note.start), glide: bend.glide / p.speed }))
+      if (target) send(target.node, { type: 'note', time: when, pitch: target.pitch ?? note.pitch, velocity: note.velocity, duration: length / p.speed, bends })
     }
   }
 

@@ -16,6 +16,8 @@ export interface ScheduleState {
   nextClick: number
   secondsPerClick: number
   clicksPerBar: number
+  /** Playback speed (PLAY-08): 0.5 plays a song second in two seconds. */
+  speed: number
 }
 
 export interface DueEvents {
@@ -48,7 +50,8 @@ export function startSchedule(
   startTime: number,
   loop: TimeRange | null,
   secondsPerClick: number,
-  clicksPerBar: number
+  clicksPerBar: number,
+  speed = 1
 ): ScheduleState {
   return {
     timeline,
@@ -58,7 +61,8 @@ export function startSchedule(
     nextNote: firstNoteFrom(timeline.notes, from),
     nextClick: firstClickFrom(from, secondsPerClick),
     secondsPerClick,
-    clicksPerBar
+    clicksPerBar,
+    speed
   }
 }
 
@@ -72,7 +76,7 @@ export function takeDue(s: ScheduleState, now: number, horizon: number): DueEven
   const notes = s.timeline.notes
   for (;;) {
     const passEnd = s.loop ? s.loop.end - EPSILON : Infinity
-    const at = (songTime: number): number => s.passStart + songTime - s.passFrom
+    const at = (songTime: number): number => s.passStart + (songTime - s.passFrom) / s.speed
     while (s.nextNote < notes.length && notes[s.nextNote].start < passEnd) {
       const note = notes[s.nextNote]
       if (at(note.start) > horizon) break

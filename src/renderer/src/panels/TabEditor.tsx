@@ -54,6 +54,9 @@ interface Props {
 /** What plays: the song, the part edited in the arrangement on its own, or a sound effect. */
 type Heard = 'song' | 'part' | { effect: string }
 
+/** Playback speeds offered for practicing (PLAY-08). */
+const SPEEDS = [0.25, 0.5, 0.6, 0.7, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2]
+
 const VIEW_TABS: Record<MainView, { label: string; title: string }> = {
   score: { label: 'Score', title: 'The notes, bar by bar (Ctrl+Tab switches)' },
   arrangement: { label: 'Arrangement', title: 'The song’s sections, and the part each track plays in them (Ctrl+Tab switches)' },
@@ -363,9 +366,10 @@ export function TabEditor({ project, getEngine, headerSlots, onShowShortcuts }: 
   /** The playback of the song, the part or an effect: what an editor starts is marked as such. */
   const playbackFor = (what: Heard): Playback => ({
     ...playback,
-    play: (...args) => {
+    play: (played, from, options) => {
       setHeard(what)
-      return playback.play(...args)
+      // Sound effects always sound as they are exported: the practice speed is for music.
+      return playback.play(played, from, typeof what === 'object' ? { speed: 1, ...options } : options)
     }
   })
 
@@ -392,7 +396,7 @@ export function TabEditor({ project, getEngine, headerSlots, onShowShortcuts }: 
   /** Plays a sound effect from `from` seconds; it doesn't loop. */
   const playEffect = (effect: SoundEffect, from: number): void => {
     setHeard({ effect: effect.id })
-    void playback.play(effectSong(effect), from)
+    void playback.play(effectSong(effect), from, { speed: 1 })
   }
 
   const playEffectFrom = (id: string, from: number): void => {
@@ -434,6 +438,13 @@ export function TabEditor({ project, getEngine, headerSlots, onShowShortcuts }: 
     setLoopChoice(choice)
     setLoop(true)
     if (playing) restart(true, loopBars(song, choice))
+    focus()
+  }
+
+  /** Practice speed; while playing, playback goes on from where it is at the new speed. */
+  const changeSpeed = (speed: number): void => {
+    playback.setSpeed(speed)
+    if (playing) restart(loop)
     focus()
   }
 
@@ -619,6 +630,19 @@ export function TabEditor({ project, getEngine, headerSlots, onShowShortcuts }: 
             >
               <MetronomeIcon />
             </button>
+            <select
+              className={`speed-select ${playback.speed !== 1 ? 'active' : ''}`}
+              aria-label="Playback speed"
+              title="Playback speed, to practice slowly: the song's tempo stays as it is, and so do exports"
+              value={playback.speed}
+              onChange={(e) => changeSpeed(Number(e.target.value))}
+            >
+              {SPEEDS.map((speed) => (
+                <option key={speed} value={speed}>
+                  {Math.round(speed * 100)} %
+                </option>
+              ))}
+            </select>
           </>,
           headerSlots.transport
         )}

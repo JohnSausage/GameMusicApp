@@ -16,8 +16,13 @@ export function usePlayback(getEngine: GetEngine): {
   /** The song position heard at a performance.now() time (see AudioEngine.positionAt). */
   positionAt: (performanceMs: number) => number | null
   setMetronome: (on: boolean) => void
+  /** Playback speed for practicing (PLAY-08); songs play at it unless `play` is given another. Applies from the next `play`. */
+  speed: number
+  setSpeed: (speed: number) => void
 } {
   const [playing, setPlaying] = useState(false)
+  const [speed, setSpeedState] = useState(1)
+  const speedRef = useRef(1)
   const positionRef = useRef<number | null>(null)
   const engineRef = useRef<AudioEngine | null>(null)
 
@@ -41,7 +46,7 @@ export function usePlayback(getEngine: GetEngine): {
     const engine = await getEngine()
     engineRef.current = engine
     engine.onEnded = () => setPlaying(false)
-    await engine.play(song, from, options)
+    await engine.play(song, from, { speed: speedRef.current, ...options })
     setPlaying(true)
   }
 
@@ -56,5 +61,10 @@ export function usePlayback(getEngine: GetEngine): {
 
   const positionAt = (performanceMs: number): number | null => engineRef.current?.positionAt(performanceMs) ?? null
 
-  return { playing, positionRef, play, stop, updateMix, setMetronome, positionAt }
+  const setSpeed = (value: number): void => {
+    speedRef.current = value
+    setSpeedState(value)
+  }
+
+  return { playing, positionRef, play, stop, updateMix, setMetronome, positionAt, speed, setSpeed }
 }

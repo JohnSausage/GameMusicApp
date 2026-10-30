@@ -332,7 +332,8 @@ export function ScoreEditor(props: Props): React.JSX.Element {
     const backing = addBars(updateTrack(song, cursor, cursor.track, { mute: true, solo: false }).song, cursor, RECORD_EXTRA_BARS).song
     const countIn = engine.ctx.currentTime + 0.1
     const clicks = song.timeSignature[0]
-    engine.scheduleClicks(countIn, secondsPerClick(song.tempo, song.timeSignature), clicks, clicks)
+    // At the practice speed, like the playback after it.
+    engine.scheduleClicks(countIn, secondsPerClick(song.tempo, song.timeSignature) / playback.speed, clicks, clicks)
     const rec: MidiRecording = { track: cursor.track, startBar: cursor.bar, startSeconds: cursor.bar * bar, gridTicks, notes: [], open: new Map(), started: false }
     recordingRef.current = rec
     setRecording(true)
@@ -341,7 +342,7 @@ export function ScoreEditor(props: Props): React.JSX.Element {
         ? 'Count-in… then play. Space or "Stop recording" ends the recording.'
         : 'Recording, but no MIDI keyboard is connected; plug one in (it is found automatically).'
     )
-    await playback.play(backing, rec.startSeconds, { startAt: countIn + bar, metronome: true })
+    await playback.play(backing, rec.startSeconds, { startAt: countIn + bar / playback.speed, metronome: true })
     rec.started = true
   }
 

@@ -122,6 +122,23 @@ describe('playback scheduling', () => {
     expect(due.clicks.filter((c) => c.accent).map((c) => c.when)).toEqual([100, 102, 104, 106])
   })
 
+  it('plays slower or faster at another speed, loops included (PLAY-08)', () => {
+    const half = startSchedule(timeline, 1, 0, null, 0.5, 4, 0.5)
+    const due = takeDue(half, 0, 2)
+    // Song seconds 1, 1.5 and 2 at half speed: two context seconds per song second.
+    expect(due.notes.map((n) => [n.note.start, n.when])).toEqual([
+      [1, 0],
+      [1.5, 1],
+      [2, 2]
+    ])
+    expect(due.clicks.map((c) => c.when)).toEqual([0, 1, 2])
+    const loop = { start: 2, end: 4 }
+    const double = startSchedule(timeline, 2, 0, loop, 0.5, 4, 2)
+    expect(takeDue(double, 0, 2).clicks.filter((c) => c.accent).map((c) => c.when)).toEqual([0, 1, 2])
+    // Elapsed time is turned into song time before the position is found.
+    expect(songPosition(2, 1.5 * 2, loop)).toBe(3)
+  })
+
   it('starts a loop at its start unless the cursor is inside it', () => {
     const loop = { start: 2, end: 4 }
     expect(startPosition(0.5, loop)).toBe(2)
