@@ -1,4 +1,5 @@
 // Song model, a subset of REQUIREMENTS.md §5 that grows milestone by milestone.
+import type { ConsoleId } from './consoles'
 import { factoryPreset, type DrumSound, type SynthPatch } from './synth'
 
 export type { DrumSound, SynthPatch }
@@ -119,6 +120,8 @@ export interface MasterSettings {
   /** Master bitcrusher (SYN-30): bit depth (16 = off) and sample rate in Hz (0 = off). */
   crushBits: number
   crushRate: number
+  /** Authentic mode (SYN-36): the song plays with the sound channels of this console. Absent = no limits. */
+  console?: ConsoleId
 }
 
 export const MASTER_DEFAULTS: MasterSettings = { crushBits: 16, crushRate: 0 }
@@ -248,7 +251,7 @@ export function gmSoundName(program: number): string {
 /** Name of a track's sound on a guitar, bass or keys track, e.g. "Grand piano" or "8-bit: Pulse bass". */
 export function soundName(instrument: Instrument): string {
   if (instrument.kind === 'soundfont') return gmSoundName(instrument.program)
-  if (instrument.kind === 'synth') return `8-bit: ${instrument.patch.name}`
+  if (instrument.kind === 'synth') return `${instrument.patch.waveform === 'fm' ? 'FM' : '8-bit'}: ${instrument.patch.name}`
   return '8-bit drum kit'
 }
 

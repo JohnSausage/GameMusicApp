@@ -1,7 +1,7 @@
 // The chip synth's sound generation, in plain TypeScript so it runs in an
 // AudioWorklet (live playback and WAV export) and in unit tests alike.
 // Oscillators are deliberately naive (not band-limited) for the raw 8-bit sound.
-import { LFO_DEPTH_SCALE, type SynthPatch } from '../../model/synth'
+import { LFO_DEPTH_SCALE, PATCH_LIMITS, type ArpOrder, type SynthPatch } from '../../model/synth'
 
 const MAX_VOICES = 12
 /** Mix level per voice, leaving headroom for chords. */
@@ -45,11 +45,49 @@ export class Bitcrusher {
   }
 }
 
+/** The pitches of a chord in the order an arpeggio plays them; 'updown' turns at the ends without playing them twice. */
+export function arpSequence(pitches: number[], order: ArpOrder): number[] {
+  const up = [...pitches].sort((a, b) => a - b)
+  if (order === 'down') return up.reverse()
+  if (order === 'updown' && up.length > 2) return [...up, ...up.slice(1, -1).reverse()]
+  return up
+}
+
+/** A note held in an arpeggio: the key it answers to (for its note-off), and the pitch it plays now (bends move it). */
+interface ArpNote {
+  key: number
+  pitch: number
+}
+
+/** Echo (SYN-32): a delay line that feeds back into itself. */
+class Echo {
+  private buffer: Float32Array
+  private position = 0
+
+  constructor(private readonly sampleRate: number) {
+    this.buffer = new Float32Array(Math.ceil(PATCH_LIMITS.echoTime[1] * sampleRate) + 1)
+  }
+
+  process(x: number, patch: SynthPatch): number {
+    const delay = Math.max(1, Math.min(this.buffer.length - 1, Math.round(patch.echoTime * this.sampleRate)))
+    const repeat = this.buffer[(this.position - delay + this.buffer.length) % this.buffer.length]
+    this.buffer[this.position] = x + repeat * patch.echoFeedback
+    this.position = (this.position + 1) % this.buffer.length
+    return x + repeat * patch.echoMix
+  }
+}
+
 class Voice {
   /** Pitch the voice is gliding from/at, and the pitch it's heading to (mono glide). */
   currentPitch: number
   targetPitch: number
   phase = 0
+  /** FM: the modulator's phase, and its last two outputs (for feedback). */
+  modPhase = 0
+  mod1 = 0
+  mod2 = 0
+  /** Plays the synth's arpeggio instead of its own pitch. */
+  arp = false
   noisePhase = 0
   lfsr = 1
   /** Seconds since the note started. */
@@ -82,7 +120,11 @@ export class ChipSynth {
   /** Mono mode: keys held down, latest last. */
   private held: number[] = []
   private lastPitch: number | null = null
+  /** Arpeggio: the notes held, in the order they were played, and the voice time the current chord started at. */
+  private arp: ArpNote[] = []
+  private arpStart = 0
   private readonly crusher: Bitcrusher
+  private echo: Echo | null = null
   private readonly dt: number
 
   constructor(
@@ -95,6 +137,11 @@ export class ChipSynth {
   }
 
   setPatch(patch: SynthPatch): void {
+    // Notes held in an arpeggio play on as a chord.
+    if (patch.arpRate <= 0 && this.arp.length > 0) {
+      this.voices.filter((v) => v.arp).forEach((v) => this.release(v))
+      this.arp = []
+    }
     this.patch = patch
     this.crusher.bits = patch.crushBits
     this.crusher.rate = patch.crushRate
@@ -116,6 +163,8 @@ export class ChipSynth {
     this.events = []
     this.voices = []
     this.held = []
+    this.arp = []
+    this.echo = null
   }
 
   /** Renders `output.length` samples starting at absolute frame `startFrame` (overwrites output). */
@@ -125,7 +174,11 @@ export class ChipSynth {
       while (this.events.length > 0 && this.events[0].frame <= startFrame + i) this.apply(this.events.shift()!)
       const nextEvent = this.events.length > 0 ? this.events[0].frame - startFrame : output.length
       const end = Math.min(output.length, Math.max(i + 1, nextEvent))
-      for (; i < end; i++) output[i] = this.crusher.active ? this.crusher.process(this.sample()) : this.sample()
+      const echo = this.patch.echoMix > 0 ? (this.echo ??= new Echo(this.sampleRate)) : null
+      for (; i < end; i++) {
+        const x = this.crusher.active ? this.crusher.process(this.sample()) : this.sample()
+        output[i] = echo ? echo.process(x, this.patch) : x
+      }
     }
     this.voices = this.voices.filter((v) => !v.done)
   }
@@ -138,6 +191,11 @@ export class ChipSynth {
 
   /** Moves the voice that plays `pitch` to another pitch; it keeps answering to `pitch` (e.g. for its note-off). */
   private bend(pitch: number, to: number, glide: number): void {
+    const held = this.arp.find((n) => n.key === pitch)
+    if (held) {
+      held.pitch = to
+      return
+    }
     const voice = this.voices.find((v) => v.pitch === pitch && !v.released)
     if (!voice) return
     voice.targetPitch = to
@@ -149,6 +207,10 @@ export class ChipSynth {
   }
 
   private noteOn(pitch: number, velocity: number): void {
+    if (this.patch.arpRate > 0) {
+      this.arpOn(pitch, velocity)
+      return
+    }
     const from = this.patch.glide > 0 && this.lastPitch !== null ? this.lastPitch : pitch
     this.lastPitch = pitch
     if (this.patch.mono) {
@@ -170,6 +232,11 @@ export class ChipSynth {
   }
 
   private noteOff(pitch: number): void {
+    if (this.arp.some((n) => n.key === pitch)) {
+      this.arp = this.arp.filter((n) => n.key !== pitch)
+      if (this.arp.length === 0) this.voices.filter((v) => v.arp).forEach((v) => this.release(v))
+      return
+    }
     if (this.patch.mono) {
       this.held = this.held.filter((p) => p !== pitch)
       const voice = this.voices.find((v) => !v.released)
@@ -184,6 +251,22 @@ export class ChipSynth {
       return
     }
     this.voices.filter((v) => v.pitch === pitch && !v.released).forEach((v) => this.release(v))
+  }
+
+  /** A note of an arpeggio: one voice plays all held notes in turn; a note added to them starts the arpeggio again from its start. */
+  private arpOn(pitch: number, velocity: number): void {
+    this.arp = [...this.arp.filter((n) => n.key !== pitch), { key: pitch, pitch }]
+    this.lastPitch = pitch
+    const voice = this.voices.find((v) => v.arp && !v.released)
+    if (voice) {
+      this.arpStart = voice.time
+      return
+    }
+    this.voices.filter((v) => !v.released).forEach((v) => this.release(v))
+    const next = new Voice(pitch, velocity, pitch)
+    next.arp = true
+    this.arpStart = 0
+    this.voices.push(next)
   }
 
   private release(voice: Voice): void {
@@ -231,6 +314,14 @@ export class ChipSynth {
       lfo = Math.sin(2 * Math.PI * p.lfoRate * since) * Math.min(1, since / 0.15)
     }
 
+    // An arpeggio steps through the held notes (straight to each, no glide).
+    if (v.arp && !v.released && this.arp.length > 0) {
+      const sequence = arpSequence(this.arp.map((n) => n.pitch), p.arpOrder)
+      const step = Math.floor(Math.max(0, t - this.arpStart) * p.arpRate)
+      v.currentPitch = v.targetPitch = sequence[step % sequence.length]
+      v.slide = null
+    }
+
     // Pitch: a slide (straight to the target in its time) or glide (eases towards the target, ~`glide` seconds),
     // then octave/fine, pitch envelope, vibrato.
     if (v.slide) {
@@ -265,6 +356,17 @@ export class ChipSynth {
       case 'sine':
         x = Math.sin(2 * Math.PI * v.phase)
         break
+      case 'fm': {
+        // Two operators: the modulator (with feedback, from its last two outputs as on the YM2612) bends the carrier's phase.
+        const depth = p.fmIndex * (p.fmSustain + (1 - p.fmSustain) * Math.exp(-t / p.fmDecay))
+        v.modPhase += frequency * p.fmRatio * this.dt
+        v.modPhase -= Math.floor(v.modPhase)
+        const modulator = Math.sin(2 * Math.PI * v.modPhase + p.fmFeedback * 1.5 * (v.mod1 + v.mod2))
+        v.mod2 = v.mod1
+        v.mod1 = modulator
+        x = Math.sin(2 * Math.PI * v.phase + depth * modulator)
+        break
+      }
       case 'noise': {
         // 15-bit LFSR like the NES noise channel; higher notes clock it faster (C4 ≈ 8 kHz: bright hiss).
         v.noisePhase += frequency * 32 * this.dt

@@ -45,6 +45,7 @@ import { barSeconds, barTime, buildTimeline, tickAtTime } from '../model/timing'
 import { transpose, transposeMessage } from '../model/transpose'
 import { moveToString } from '../model/tuning'
 import { fitBars, wrongBars, wrongBy, type WrongBar } from '../model/barCheck'
+import { consoleOf, consoleProblems, consoleSummary } from '../model/consoles'
 import { changeAt, type MeterEdit } from '../model/meter'
 import { MeterDialog } from './MeterDialog'
 import { readPref, writePref } from '../prefs'
@@ -189,6 +190,10 @@ export function ScoreEditor(props: Props): React.JSX.Element {
   const wrong = useMemo(() => wrongBars(song), [song])
   const shownWrong = useMemo(() => wrong.filter((w) => shownKey.split(',').includes(String(w.track))), [wrong, shownKey])
   const cursorWrong = wrong.find((w) => w.track === cursor.track && w.bar === cursor.bar)
+  // Authentic mode (SYN-36): where the song needs more than its console has. Not for a part on its own.
+  const songConsole = part ? null : consoleOf(song)
+  const consoleIssues = useMemo(() => (songConsole ? consoleProblems(song, timeline.notes) : []), [song, timeline, songConsole])
+  const consoleCheck = songConsole && consoleIssues.length > 0 ? consoleSummary(song, songConsole, consoleIssues, cursor.bar) : null
   const drumTracks = song.tracks.flatMap((t, i) => (t.kind === 'drums' ? [i] : []))
   // The drum grid shows the drum track at the cursor, else the one shown last, else the first one.
   const gridTrack = drums ? cursor.track : (drumTracks.find((i) => song.tracks[i].id === gridTrackId) ?? drumTracks[0] ?? null)
@@ -808,6 +813,13 @@ export function ScoreEditor(props: Props): React.JSX.Element {
               Fit all
             </button>
           )}
+        </div>
+      )}
+
+      {consoleCheck && (
+        <div className="bar-check console-check" role="status">
+          <span className="warning">{consoleCheck.text}</span>
+          {consoleCheck.firstBar !== null && <button onClick={() => moveCursor({ ...cursor, bar: consoleCheck.firstBar!, beat: 0 })}>Go to bar {consoleCheck.firstBar + 1}</button>}
         </div>
       )}
 

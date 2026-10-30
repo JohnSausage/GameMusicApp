@@ -1,6 +1,6 @@
 import { strToU8, zipSync } from 'fflate'
 import { describe, expect, it } from 'vitest'
-import { Bitcrusher, ChipSynth } from '../src/renderer/src/audio/synth/chipSynthCore'
+import { arpSequence, Bitcrusher, ChipSynth } from '../src/renderer/src/audio/synth/chipSynthCore'
 import { isRetro, makeRetro, restoreSounds, updateMaster } from '../src/renderer/src/model/edit'
 import { addTrack } from '../src/renderer/src/model/edit'
 import { createDemoSong } from '../src/renderer/src/model/song'
@@ -105,6 +105,87 @@ describe('ChipSynth', () => {
   })
 })
 
+describe('ChipSynth arpeggio, FM and echo', () => {
+  /** Renders a chord held from 0 to `length` seconds. */
+  function renderChord(patch: Partial<SynthPatch>, pitches: number[], length = 0.6, seconds = 1): { out: Float32Array; synth: ChipSynth } {
+    const synth = new ChipSynth(RATE, { ...DEFAULT_PATCH, ...patch })
+    for (const pitch of pitches) {
+      synth.schedule({ frame: 0, type: 'on', pitch, velocity: 127 })
+      synth.schedule({ frame: length * RATE, type: 'off', pitch, velocity: 0 })
+    }
+    const out = new Float32Array(seconds * RATE)
+    for (let i = 0; i < out.length; i += 128) synth.render(out.subarray(i, i + 128), i)
+    return { out, synth }
+  }
+
+  /** A frequency counted over a short window: within 5 %. */
+  const near = (measured: number, expected: number): void => expect(Math.abs(measured / expected - 1)).toBeLessThan(0.05)
+
+  it('orders the notes of a chord up, down, or up and down without playing the ends twice', () => {
+    expect(arpSequence([64, 60, 67], 'up')).toEqual([60, 64, 67])
+    expect(arpSequence([64, 60, 67], 'down')).toEqual([67, 64, 60])
+    expect(arpSequence([64, 60, 67, 72], 'updown')).toEqual([60, 64, 67, 72, 67, 64])
+    expect(arpSequence([60, 67], 'updown')).toEqual([60, 67])
+  })
+
+  it('plays a chord as an arpeggio on one voice, at its speed', () => {
+    const { out, synth } = renderChord({ waveform: 'sine', arpRate: 10, release: 0.02 }, [69, 81]) // A4, A5: 0.1 s each
+    near(frequency(out, 0.01, 0.09), 440)
+    near(frequency(out, 0.11, 0.19), 880)
+    near(frequency(out, 0.21, 0.29), 440)
+    expect(synth.activeVoices).toBe(0) // released at 0.6 s
+    expect(rms(out, 0.7, 1)).toBe(0)
+  })
+
+  it('without arpeggio plays the chord as a chord', () => {
+    const { out } = renderChord({ waveform: 'sine' }, [69, 81])
+    // Both notes at once: more than 440 crossings, fewer than 880 (the sum crosses at A5's rate only part of the time).
+    expect(frequency(out, 0.1, 0.5)).toBeGreaterThan(500)
+  })
+
+  it('moves a note of an arpeggio with a hammer-on, and goes on with the others when one ends', () => {
+    const synth = new ChipSynth(RATE, { ...DEFAULT_PATCH, waveform: 'sine', arpRate: 10 })
+    synth.schedule({ frame: 0, type: 'on', pitch: 69, velocity: 127 })
+    synth.schedule({ frame: 0, type: 'on', pitch: 57, velocity: 127 })
+    synth.schedule({ frame: 0.4 * RATE, type: 'bend', pitch: 57, velocity: 0, to: 81 }) // 220 Hz → 880 Hz
+    synth.schedule({ frame: 0.6 * RATE, type: 'off', pitch: 69, velocity: 0 })
+    const out = new Float32Array(RATE)
+    for (let i = 0; i < out.length; i += 128) synth.render(out.subarray(i, i + 128), i)
+    near(frequency(out, 0.01, 0.09), 220)
+    near(frequency(out, 0.11, 0.19), 440)
+    near(frequency(out, 0.41, 0.49), 440) // the bent note is now the higher one
+    near(frequency(out, 0.51, 0.59), 880)
+    near(frequency(out, 0.65, 0.95), 880) // A4 ended: only the bent note is left
+  })
+
+  it('makes FM sound brighter with depth, and settles as the depth decays', () => {
+    const pure = renderNote({ waveform: 'fm', fmIndex: 0 })
+    expect(frequency(pure, 0.2, 0.5)).toBeCloseTo(440, -1)
+    const bright = renderNote({ waveform: 'fm', fmRatio: 3, fmIndex: 5, fmSustain: 1 })
+    expect(frequency(bright, 0.2, 0.5)).toBeGreaterThan(1000)
+    const settling = renderNote({ waveform: 'fm', fmRatio: 3, fmIndex: 5, fmSustain: 0, fmDecay: 0.03 })
+    expect(frequency(settling, 0.1, 0.13)).toBeGreaterThan(800)
+    expect(frequency(settling, 0.4, 0.55)).toBeCloseTo(440, -1)
+  })
+
+  it('makes FM feedback grittier', () => {
+    const clean = renderNote({ waveform: 'fm', fmRatio: 1, fmIndex: 1, fmSustain: 1 })
+    const gritty = renderNote({ waveform: 'fm', fmRatio: 1, fmIndex: 1, fmSustain: 1, fmFeedback: 1 })
+    expect(frequency(gritty, 0.2, 0.5)).toBeGreaterThan(frequency(clean, 0.2, 0.5))
+  })
+
+  it('repeats the sound with an echo, each repeat softer', () => {
+    const dry = renderNote({ waveform: 'sine', release: 0, echoMix: 0 }, 69, 0.05)
+    const wet = renderNote({ waveform: 'sine', release: 0, echoTime: 0.25, echoFeedback: 0.5, echoMix: 0.8 }, 69, 0.05)
+    const note = rms(dry, 0.11, 0.14)
+    expect(rms(dry, 0.36, 0.39)).toBe(0)
+    expect(rms(wet, 0.11, 0.14)).toBeCloseTo(note, 3)
+    expect(rms(wet, 0.36, 0.39) / note).toBeCloseTo(0.8, 1) // first repeat
+    expect(rms(wet, 0.61, 0.64) / note).toBeCloseTo(0.4, 1) // second: half of it
+    expect(rms(wet, 0.2, 0.34)).toBe(0) // nothing between
+  })
+})
+
 describe('Bitcrusher', () => {
   it('quantizes to the bit depth', () => {
     const crusher = new Bitcrusher(RATE, 3)
@@ -127,8 +208,11 @@ describe('patches and presets', () => {
   it('upgrades old patches and clamps out-of-range values', () => {
     const old = { waveform: 'pulse', duty: 0.25, attack: 0.005, decay: 0.12, sustain: 0.6, release: 0.08 }
     expect(normalizePatch(old)).toEqual({ ...DEFAULT_PATCH, ...old })
-    const wild = normalizePatch({ waveform: 'banjo', octave: 9, cutoff: -5, lfoTarget: 'everything', mono: 'yes' })
-    expect(wild).toMatchObject({ waveform: 'pulse', octave: 3, cutoff: 40, lfoTarget: 'off', mono: false })
+    const wild = normalizePatch({ waveform: 'banjo', octave: 9, cutoff: -5, lfoTarget: 'everything', mono: 'yes', arpOrder: 'sideways', arpRate: 500, echoFeedback: 2 })
+    expect(wild).toMatchObject({ waveform: 'pulse', octave: 3, cutoff: 40, lfoTarget: 'off', mono: false, arpOrder: 'up', arpRate: 60, echoFeedback: 0.9 })
+    // Patches from before arpeggio, FM and echo play as they did.
+    expect(normalizePatch(old)).toMatchObject({ arpRate: 0, echoMix: 0 })
+    expect(normalizePatch({ waveform: 'fm', arpOrder: 'updown' })).toMatchObject({ waveform: 'fm', arpOrder: 'updown' })
   })
 
   it('has valid factory presets with unique names', () => {

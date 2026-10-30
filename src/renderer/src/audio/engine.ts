@@ -1,6 +1,7 @@
 import { MIDIControllers } from 'spessasynth_core'
 import { WorkletSynthesizer } from 'spessasynth_lib'
 import processorUrl from 'spessasynth_lib/dist/spessasynth_processor.min.js?url'
+import { consoleNotes } from '../model/consoles'
 import { audibleTracks, type Instrument, type MasterSettings, type Song } from '../model/song'
 import type { SynthPatch } from '../model/synth'
 import { buildTimeline, metronomeClicks, type NoteEvent, type SongTimeline, type TimeRange } from '../model/timing'
@@ -172,7 +173,9 @@ export class AudioEngine {
     this.stop()
     await this.ctx.resume()
     const synth = this.synth!
-    const timeline = buildTimeline(song)
+    const full = buildTimeline(song)
+    // In authentic mode, the notes as the song's console plays them (SYN-36).
+    const timeline = { ...full, notes: consoleNotes(song, full.notes) }
     const loop = validLoop(options.loop)
     from = startPosition(from, loop)
     this.metronome = options.metronome ?? false

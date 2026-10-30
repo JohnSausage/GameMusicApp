@@ -1,7 +1,9 @@
 // Synth instruments (REQUIREMENTS.md §3.10). A patch is a flat set of settings
 // so the instrument editor can show one control per field.
 
-export type Waveform = 'pulse' | 'triangle' | 'sawtooth' | 'sine' | 'noise'
+export type Waveform = 'pulse' | 'triangle' | 'sawtooth' | 'sine' | 'noise' | 'fm'
+/** The order an arpeggio plays the notes of a chord in. */
+export type ArpOrder = 'up' | 'down' | 'updown'
 export type LfoTarget = 'off' | 'pitch' | 'volume' | 'duty' | 'cutoff'
 export type FilterType = 'off' | 'lowpass' | 'highpass'
 
@@ -42,6 +44,29 @@ export interface SynthPatch {
   crushBits: number
   /** Bitcrusher: sample rate in Hz (0 = off). */
   crushRate: number
+  /**
+   * Arpeggio (SYN-33): notes played together sound one after the other on one
+   * voice, this many per second, as chip music plays chords (0 = off).
+   */
+  arpRate: number
+  arpOrder: ArpOrder
+  /**
+   * FM (SYN-34), with the 'fm' waveform: a sine (the modulator) bends the phase
+   * of the sine you hear, as on the Mega Drive. Its frequency, as a ratio to the note's.
+   */
+  fmRatio: number
+  /** How strongly it bends the sound at the note's start (the brightness). */
+  fmIndex: number
+  /** The share of fmIndex left once the note has settled, and the seconds it takes to fall there. */
+  fmSustain: number
+  fmDecay: number
+  /** The modulator bending itself: grittier, up to noise. */
+  fmFeedback: number
+  /** Echo (SYN-32): the sound repeated after echoTime seconds, each repeat echoFeedback as loud as the one before. */
+  echoTime: number
+  echoFeedback: number
+  /** How loud the repeats are next to the sound (0 = no echo). */
+  echoMix: number
 }
 
 type NumberField = { [K in keyof SynthPatch]: SynthPatch[K] extends number ? K : never }[keyof SynthPatch]
@@ -67,7 +92,16 @@ export const PATCH_LIMITS: Record<NumberField, [number, number]> = {
   resonance: [0.5, 15],
   filterEnv: [-4, 6],
   crushBits: [1, 16],
-  crushRate: [0, 44100]
+  crushRate: [0, 44100],
+  arpRate: [0, 60],
+  fmRatio: [0.5, 16],
+  fmIndex: [0, 10],
+  fmSustain: [0, 1],
+  fmDecay: [0.005, 4],
+  fmFeedback: [0, 1],
+  echoTime: [0.02, 1],
+  echoFeedback: [0, 0.9],
+  echoMix: [0, 1]
 }
 
 /** What an LFO depth of 1 means for each target. */
@@ -98,10 +132,21 @@ export const DEFAULT_PATCH: SynthPatch = {
   resonance: 0.7,
   filterEnv: 0,
   crushBits: 16,
-  crushRate: 0
+  crushRate: 0,
+  arpRate: 0,
+  arpOrder: 'up',
+  fmRatio: 1,
+  fmIndex: 2,
+  fmSustain: 0.3,
+  fmDecay: 0.3,
+  fmFeedback: 0,
+  echoTime: 0.25,
+  echoFeedback: 0.35,
+  echoMix: 0
 }
 
-const WAVEFORMS: Waveform[] = ['pulse', 'triangle', 'sawtooth', 'sine', 'noise']
+const WAVEFORMS: Waveform[] = ['pulse', 'triangle', 'sawtooth', 'sine', 'noise', 'fm']
+const ARP_ORDERS: ArpOrder[] = ['up', 'down', 'updown']
 const LFO_TARGETS: LfoTarget[] = ['off', 'pitch', 'volume', 'duty', 'cutoff']
 const FILTER_TYPES: FilterType[] = ['off', 'lowpass', 'highpass']
 
@@ -116,6 +161,7 @@ export function normalizePatch(value: unknown): SynthPatch {
   if (WAVEFORMS.includes(source.waveform as Waveform)) patch.waveform = source.waveform as Waveform
   if (LFO_TARGETS.includes(source.lfoTarget as LfoTarget)) patch.lfoTarget = source.lfoTarget as LfoTarget
   if (FILTER_TYPES.includes(source.filterType as FilterType)) patch.filterType = source.filterType as FilterType
+  if (ARP_ORDERS.includes(source.arpOrder as ArpOrder)) patch.arpOrder = source.arpOrder as ArpOrder
   if (typeof source.mono === 'boolean') patch.mono = source.mono
   for (const [field, [min, max]] of Object.entries(PATCH_LIMITS) as [NumberField, [number, number]][]) {
     const v = source[field]
@@ -155,6 +201,15 @@ export function varyPatch(patch: SynthPatch, random: () => number = Math.random)
     next.filterEnv = patch.filterEnv + shift(0.5)
   }
   if (patch.crushBits < 16) next.crushBits = Math.round(patch.crushBits + shift(1.5))
+  if (patch.waveform === 'fm') {
+    next.fmIndex = patch.fmIndex * scale(1.3)
+    next.fmDecay = patch.fmDecay * scale(1.5)
+    if (patch.fmFeedback > 0) next.fmFeedback = patch.fmFeedback + shift(0.1)
+  }
+  if (patch.echoMix > 0) {
+    next.echoTime = patch.echoTime * scale(1.2)
+    next.echoFeedback = patch.echoFeedback + shift(0.1)
+  }
   const varied = { ...patch }
   for (const [field, value] of Object.entries(next) as [NumberField, number][]) {
     const [min, max] = PATCH_LIMITS[field]
@@ -180,7 +235,17 @@ export const FACTORY_PRESETS: SynthPatch[] = [
   preset('Chip bell', { waveform: 'sine', attack: 0.001, decay: 0.7, sustain: 0, release: 0.5, pitchEnvAmount: 12, pitchEnvTime: 0.015, crushBits: 6 }),
   preset('Laser', { duty: 0.5, attack: 0.001, decay: 0.25, sustain: 0, release: 0.05, pitchEnvAmount: 24, pitchEnvTime: 0.25 }),
   preset('Lo-fi lead', { duty: 0.25, sustain: 0.7, release: 0.1, crushBits: 5, crushRate: 11025, lfoTarget: 'pitch', lfoRate: 5.5, lfoDepth: 0.1, lfoDelay: 0.2 }),
-  preset('Noise hit', { waveform: 'noise', attack: 0.001, decay: 0.12, sustain: 0, release: 0.05, velocity: 0.6 })
+  preset('Noise hit', { waveform: 'noise', attack: 0.001, decay: 0.12, sustain: 0, release: 0.05, velocity: 0.6 }),
+  preset('Arp chords', { duty: 0.25, decay: 0.1, sustain: 0.7, release: 0.06, arpRate: 30 }),
+  preset('Echo lead', { duty: 0.25, decay: 0.15, sustain: 0.6, release: 0.1, lfoTarget: 'pitch', lfoRate: 6, lfoDepth: 0.1, lfoDelay: 0.3, echoTime: 0.3, echoFeedback: 0.4, echoMix: 0.45 }),
+  // FM (SYN-34): the 16-bit sounds of the Mega Drive / Genesis.
+  preset('FM bass', { waveform: 'fm', attack: 0.002, decay: 0.3, sustain: 0.6, release: 0.06, fmRatio: 1, fmIndex: 4, fmSustain: 0.25, fmDecay: 0.15, fmFeedback: 0.35, velocity: 0.4 }),
+  preset('FM slap bass', { waveform: 'fm', attack: 0.001, decay: 0.4, sustain: 0.3, release: 0.05, fmRatio: 0.5, fmIndex: 6, fmSustain: 0.1, fmDecay: 0.06, fmFeedback: 0.2, velocity: 0.5 }),
+  preset('FM brass', { waveform: 'fm', attack: 0.06, decay: 0.2, sustain: 0.8, release: 0.12, fmRatio: 1, fmIndex: 2.5, fmSustain: 0.7, fmDecay: 0.25, fmFeedback: 0.5, lfoTarget: 'pitch', lfoRate: 5.5, lfoDepth: 0.08, lfoDelay: 0.35 }),
+  preset('FM e-piano', { waveform: 'fm', attack: 0.002, decay: 1.2, sustain: 0.2, release: 0.3, fmRatio: 14, fmIndex: 1.6, fmSustain: 0, fmDecay: 0.12, velocity: 0.6 }),
+  preset('FM bell', { waveform: 'fm', attack: 0.001, decay: 1.8, sustain: 0, release: 1, fmRatio: 3.5, fmIndex: 3, fmSustain: 0.2, fmDecay: 0.8 }),
+  preset('FM lead', { waveform: 'fm', attack: 0.01, decay: 0.2, sustain: 0.75, release: 0.1, fmRatio: 2, fmIndex: 2, fmSustain: 0.6, fmDecay: 0.3, fmFeedback: 0.6, lfoTarget: 'pitch', lfoRate: 6, lfoDepth: 0.1, lfoDelay: 0.3 }),
+  preset('FM organ', { waveform: 'fm', attack: 0.005, decay: 0.05, sustain: 0.9, release: 0.08, fmRatio: 2, fmIndex: 1.2, fmSustain: 1, fmDecay: 0.1, volume: 0.7 })
 ]
 
 /** Bitcrusher sample rates offered in the UI (0 = off). */

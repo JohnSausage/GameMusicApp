@@ -3,6 +3,7 @@
 import { strFromU8, strToU8, unzipSync, zipSync, type Zippable } from 'fflate'
 import { decodeWav, encodeWav16 } from '../audio/wav'
 import { fixPartColors, PART_COLORS, writeOut } from '../model/arrangement'
+import { CONSOLES } from '../model/consoles'
 import { MAX_FIFTHS } from '../model/keySignature'
 import { MASTER_DEFAULTS, NOTE_VALUES, type Bar, type Instrument, type MasterSettings, type ProjectAudio, type Song, type SoundEffect, type TakeInfo, type Track } from '../model/song'
 import { normalizePatch, PATCH_LIMITS } from '../model/synth'
@@ -117,9 +118,14 @@ function checkInstrument(value: unknown, where: string): Instrument {
 
 function checkMaster(value: unknown): MasterSettings | undefined {
   if (!value || typeof value !== 'object') return undefined
-  const { crushBits, crushRate } = value as Partial<MasterSettings>
+  const { crushBits, crushRate, console } = value as Partial<MasterSettings>
   const clamp = (v: unknown, [min, max]: [number, number], fallback: number): number => (typeof v === 'number' && Number.isFinite(v) ? Math.min(max, Math.max(min, v)) : fallback)
-  return { crushBits: clamp(crushBits, PATCH_LIMITS.crushBits, MASTER_DEFAULTS.crushBits), crushRate: clamp(crushRate, PATCH_LIMITS.crushRate, MASTER_DEFAULTS.crushRate) }
+  return {
+    crushBits: clamp(crushBits, PATCH_LIMITS.crushBits, MASTER_DEFAULTS.crushBits),
+    crushRate: clamp(crushRate, PATCH_LIMITS.crushRate, MASTER_DEFAULTS.crushRate),
+    // A console this version doesn't know plays without limits.
+    ...(CONSOLES.some((c) => c.id === console) && { console })
+  }
 }
 
 function checkBars(bars: Bar[], track: Track, where: string): void {

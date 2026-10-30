@@ -20,6 +20,7 @@ import {
   type LoopChoice
 } from '../model/edit'
 import { addEffect, effectSong, findEffect, type EffectTemplate } from '../model/effects'
+import { CONSOLES, type ConsoleId } from '../model/consoles'
 import { audibleTracks, defaultInstrument, isFretted, MASTER_DEFAULTS, soundName, type Instrument, type SoundEffect, type Track } from '../model/song'
 import { setStemName } from '../model/stems'
 import { MidiKeyboard, type MidiNoteMessage } from '../midi/midiInput'
@@ -266,7 +267,19 @@ function TrackList({ project, onSelect, onEditSound, onEditTuning, onMessage }: 
       </div>
 
       <div className="track-card master-card">
-        <strong>Master: lo-fi</strong>
+        <strong>Master</strong>
+        <label className="track-card-row" title="Authentic mode: the song plays with the sound channels of an old console, one note at a time on each (e.g. the NES: two pulse, one triangle, one noise). The score says where it needs more.">
+          Console
+          <select
+            value={master.console ?? ''}
+            onChange={(e) => project.apply(updateMaster(song, cursor, { console: (e.target.value || undefined) as ConsoleId | undefined }))}
+          >
+            <option value="">Any (no limits)</option>
+            {CONSOLES.map((c) => (
+              <option key={c.id} value={c.id}>{c.name}</option>
+            ))}
+          </select>
+        </label>
         <label className="track-card-row volume" title="Bitcrusher on the whole mix, including SoundFont tracks. Fewer bits are grittier; 16 = off.">
           Bits
           <input

@@ -749,6 +749,7 @@ export function updateTrack(song: Song, cursor: Cursor, index: number, patch: Pa
 export function updateMaster(song: Song, cursor: Cursor, patch: Partial<MasterSettings>): EditResult {
   return edit(song, cursor, (draft) => {
     draft.master = { ...MASTER_DEFAULTS, ...draft.master, ...patch }
+    if (draft.master.console === undefined) delete draft.master.console
   })!
 }
 

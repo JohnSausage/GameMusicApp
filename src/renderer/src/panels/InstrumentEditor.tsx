@@ -3,8 +3,9 @@ import type { GetEngine } from '../App'
 import { COMPUTER_KEYS, MidiKeyboard } from '../midi/midiInput'
 import { updateTrack } from '../model/edit'
 import { DRUM_PIECES, isBassTrack, soundName, type Instrument } from '../model/song'
-import { barTime } from '../model/timing'
+import { barTime, secondsPerQuarter } from '../model/timing'
 import {
+  type ArpOrder,
   CRUSH_RATES,
   DEFAULT_PATCH,
   eightBitKit,
@@ -79,7 +80,28 @@ const WAVEFORMS: { value: Waveform; label: string; tip: string }[] = [
   { value: 'triangle', label: 'Triangle', tip: 'Soft and round, the typical 8-bit bass.' },
   { value: 'sawtooth', label: 'Saw', tip: 'Bright and buzzy, good for leads, basses and pads (try it with the filter).' },
   { value: 'sine', label: 'Sine', tip: 'Pure and soft, good for bells and flutes.' },
-  { value: 'noise', label: 'Noise', tip: 'Hiss for drums and effects. Higher notes sound brighter.' }
+  { value: 'noise', label: 'Noise', tip: 'Hiss for drums and effects. Higher notes sound brighter.' },
+  { value: 'fm', label: 'FM', tip: 'One sine wave bending another: the 16-bit sound of the Mega Drive / Genesis, for basses, brass, e-pianos and bells.' }
+]
+
+/** Frequency ratios of the FM modulator that sound in tune: below 1 deeper, whole numbers brighter, 3.5 and 14 bell-like. */
+const FM_RATIOS = [0.5, 1, 2, 3, 3.5, 7, 14]
+
+/** Arpeggio speeds offered as buttons: notes per second, as chip music steps them with the screen (60 per second). */
+const ARP_RATES = [15, 20, 30, 60]
+
+const ARP_ORDERS: { value: ArpOrder; label: string }[] = [
+  { value: 'up', label: 'Up' },
+  { value: 'down', label: 'Down' },
+  { value: 'updown', label: 'Up and down' }
+]
+
+/** Echo times offered as buttons, in quarter notes at the song's tempo. */
+const ECHO_NOTES: { quarters: number; label: string }[] = [
+  { quarters: 0.25, label: '1/16' },
+  { quarters: 0.5, label: '1/8' },
+  { quarters: 0.75, label: '1/8 dotted' },
+  { quarters: 1, label: '1/4' }
 ]
 
 const LFO_TARGETS: { value: LfoTarget; label: string }[] = [
@@ -434,7 +456,7 @@ export function InstrumentEditor({ project, trackIndex, getEngine, playName = 's
           <div className="synth-editor">
             {synth && (
               <h3 className="synth-editor-title">
-                8-bit synth <span className="muted small">Shape the sound; you hear every change right away.</span>
+                {patch.waveform === 'fm' ? 'FM synth' : '8-bit synth'} <span className="muted small">Shape the sound; you hear every change right away.</span>
               </h3>
             )}
             <div className="toolbar preset-bar">
@@ -501,6 +523,25 @@ export function InstrumentEditor({ project, trackIndex, getEngine, playName = 's
                     </div>
                   </>
                 )}
+                {patch.waveform === 'fm' && (
+                  <>
+                    <Slider label="Ratio" field="fmRatio" step={0.5} value={patch.fmRatio} format={(v) => `× ${v}`} onChange={(v) => set('fmRatio', v)}
+                      tip="How fast the modulator runs next to the note. Whole numbers sound in tune; 3.5 and 14 give bells and e-pianos." />
+                    <div className="toolbar compact">
+                      {FM_RATIOS.map((r) => (
+                        <button key={r} className={patch.fmRatio === r ? 'active' : ''} onClick={() => set('fmRatio', r)}>× {r}</button>
+                      ))}
+                    </div>
+                    <Slider label="Depth" field="fmIndex" step={0.1} value={patch.fmIndex} format={(v) => v.toFixed(1)} onChange={(v) => set('fmIndex', v)}
+                      tip="How strongly the modulator bends the sound at the start of a note: higher is brighter and buzzier." />
+                    <Slider label="Depth decay" field="fmDecay" value={patch.fmDecay} format={seconds} onChange={(v) => set('fmDecay', v)}
+                      tip="How long the brightness takes to settle: short for plucks and slap bass, long for brass swells." />
+                    <Slider label="Depth sustain" field="fmSustain" value={patch.fmSustain} format={percent} onChange={(v) => set('fmSustain', v)}
+                      tip="How much of the depth is left while the note is held." />
+                    <Slider label="Feedback" field="fmFeedback" value={patch.fmFeedback} format={percent} onChange={(v) => set('fmFeedback', v)}
+                      tip="The modulator bending itself: a grittier, saw-like edge, up to noise." />
+                  </>
+                )}
                 <Slider label="Octave" field="octave" step={1} value={patch.octave} format={(v) => (v > 0 ? `+${v}` : `${v}`)} onChange={(v) => set('octave', v)}
                   tip="Plays the instrument up to 3 octaves higher or lower than the written notes." />
                 <Slider label="Fine tune" field="fine" step={1} value={patch.fine} format={(v) => `${v > 0 ? '+' : ''}${v} cents`} onChange={(v) => set('fine', v)}
@@ -533,6 +574,30 @@ export function InstrumentEditor({ project, trackIndex, getEngine, playName = 's
                 <Slider label="Glide" field="glide" value={patch.glide} format={seconds} onChange={(v) => set('glide', v)}
                   tip="Time to slide from one note to the next. Works in mono mode, or between separate notes." />
               </section>
+
+              {synth && (
+                <section className="card">
+                  <h3>Arpeggio</h3>
+                  <Slider label="Speed" field="arpRate" step={1} value={patch.arpRate} format={(v) => (v === 0 ? 'off' : `${v} notes/s`)} onChange={(v) => set('arpRate', v)}
+                    tip="Plays the notes of a chord one after the other on one voice, very fast: the chip-music way to play chords on one channel. Off plays chords as chords." />
+                  <div className="toolbar compact">
+                    <button className={patch.arpRate === 0 ? 'active' : ''} onClick={() => set('arpRate', 0)}>Off</button>
+                    {ARP_RATES.map((r) => (
+                      <button key={r} className={patch.arpRate === r ? 'active' : ''} title={`${r} notes per second`} onClick={() => set('arpRate', r)}>{r}/s</button>
+                    ))}
+                  </div>
+                  {patch.arpRate > 0 && (
+                    <label>
+                      Order
+                      <select value={patch.arpOrder} onChange={(e) => set('arpOrder', e.target.value as ArpOrder)} title="The order the notes of a chord are played in.">
+                        {ARP_ORDERS.map((o) => (
+                          <option key={o.value} value={o.value}>{o.label}</option>
+                        ))}
+                      </select>
+                    </label>
+                  )}
+                </section>
+              )}
 
               <section className="card">
                 <h3>Wobble (LFO)</h3>
@@ -588,6 +653,30 @@ export function InstrumentEditor({ project, trackIndex, getEngine, playName = 's
                     ))}
                   </select>
                 </label>
+              </section>
+
+              <section className="card">
+                <h3>Echo</h3>
+                <Slider label="Level" field="echoMix" value={patch.echoMix} format={(v) => (v === 0 ? 'off' : percent(v))} onChange={(v) => set('echoMix', v)}
+                  tip="How loud the repeats are. 0 = no echo." />
+                {patch.echoMix > 0 && (
+                  <>
+                    <Slider label="Time" field="echoTime" value={patch.echoTime} format={seconds} onChange={(v) => set('echoTime', v)} tip="The time between the repeats." />
+                    <div className="toolbar compact">
+                      {ECHO_NOTES.map(({ quarters, label }) => {
+                        const time = Number((quarters * secondsPerQuarter(song, cursor.bar)).toFixed(3))
+                        return (
+                          <button key={label} className={Math.abs(patch.echoTime - time) < 0.001 ? 'active' : ''} disabled={time > PATCH_LIMITS.echoTime[1]}
+                            title={`A ${label} note at the ${playName}'s tempo`} onClick={() => set('echoTime', time)}>
+                            {label}
+                          </button>
+                        )
+                      })}
+                    </div>
+                    <Slider label="Repeats" field="echoFeedback" value={patch.echoFeedback} format={percent} onChange={(v) => set('echoFeedback', v)}
+                      tip="How loud each repeat is next to the one before: higher values echo on longer." />
+                  </>
+                )}
               </section>
             </div>
           </div>

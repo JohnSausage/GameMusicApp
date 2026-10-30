@@ -1,4 +1,5 @@
 import { MIDIControllers, SoundBankLoader, SpessaSynthProcessor } from 'spessasynth_core'
+import { consoleNotes } from '../model/consoles'
 import { effectSeconds, effectSong, finishEffectAudio, type EffectWavOptions } from '../model/effects'
 import { audibleTracks, type Song, type SoundEffect } from '../model/song'
 import { buildTimeline, exportFrameCount, foldLoop, LOOP_TAIL_SECONDS, notesBetween, type ExportEnding, type NoteEvent, type TimeRange } from '../model/timing'
@@ -92,7 +93,8 @@ export async function renderSongOffline(song: Song, sampleRate = 48000, options:
   const range = options.range ?? { start: 0, end: all.duration }
   const ending = options.ending ?? 'tail'
   const audible = audibleTracks(song)
-  const timeline = { notes: notesBetween(all.notes, range.start, range.end).filter((n) => audible[n.trackIndex]) }
+  // In authentic mode, the notes as the song's console plays them (SYN-36).
+  const timeline = { notes: notesBetween(consoleNotes(song, all.notes), range.start, range.end).filter((n) => audible[n.trackIndex]) }
   const loopFrames = Math.max(1, exportFrameCount(range, sampleRate, ending))
   // A loop is rendered on past its end, and the rest is folded back onto its start.
   const frameCount = ending === 'loop' ? loopFrames + Math.round(LOOP_TAIL_SECONDS * sampleRate) : loopFrames

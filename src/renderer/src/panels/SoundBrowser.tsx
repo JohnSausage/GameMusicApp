@@ -3,10 +3,13 @@ import { GM_FAMILIES, type Instrument } from '../model/song'
 import { FACTORY_PRESETS, type SynthPatch, type Waveform } from '../model/synth'
 import { PRESET_EXTENSION, type UserPreset } from '../project/presets'
 
-/** A category of the browser: the built-in 8-bit presets, your own, or a General MIDI family (by index). */
-type Category = 'synth' | 'mine' | number
+/** A category of the browser: the built-in 8-bit or FM presets, your own, or a General MIDI family (by index). */
+type Category = 'synth' | 'fm' | 'mine' | number
 
-const WAVEFORM_NAMES: Record<Waveform, string> = { pulse: 'Pulse', triangle: 'Triangle', sawtooth: 'Saw', sine: 'Sine', noise: 'Noise' }
+const WAVEFORM_NAMES: Record<Waveform, string> = { pulse: 'Pulse', triangle: 'Triangle', sawtooth: 'Saw', sine: 'Sine', noise: 'Noise', fm: 'FM' }
+
+const CHIP_PRESETS = FACTORY_PRESETS.filter((p) => p.waveform !== 'fm')
+const FM_PRESETS = FACTORY_PRESETS.filter((p) => p.waveform === 'fm')
 
 /** The category the sound is in, so the browser opens there. */
 function categoryOf(instrument: Instrument, userPresets: UserPreset[]): Category {
@@ -14,7 +17,7 @@ function categoryOf(instrument: Instrument, userPresets: UserPreset[]): Category
   if (instrument.kind === 'synth' && !FACTORY_PRESETS.some((p) => p.name === instrument.patch.name) && userPresets.some((p) => p.patch.name === instrument.patch.name)) {
     return 'mine'
   }
-  return 'synth'
+  return instrument.kind === 'synth' && instrument.patch.waveform === 'fm' ? 'fm' : 'synth'
 }
 
 interface Props {
@@ -63,16 +66,18 @@ export function SoundBrowser({ instrument, userPresets, onChoose, onDeletePreset
   return (
     <div className="sound-browser">
       <div className="sound-categories" role="group" aria-label="Sound categories">
-        <span className="sound-group-label">8-bit synth</span>
+        <span className="sound-group-label">Synth</span>
         <div className="sound-group">
-          {categoryButton('synth', 'Presets')}
+          {categoryButton('synth', '8-bit')}
+          {categoryButton('fm', 'FM (16-bit)')}
           {userPresets.length > 0 && categoryButton('mine', 'My presets')}
         </div>
         <span className="sound-group-label">Instruments</span>
         <div className="sound-group">{GM_FAMILIES.map((family, f) => categoryButton(f, family.name))}</div>
       </div>
       <div className="sound-tiles" role="group" aria-label="Sounds">
-        {shown === 'synth' && FACTORY_PRESETS.map((patch, i) => synthTile(patch, `factory:${i}`))}
+        {shown === 'synth' && CHIP_PRESETS.map((patch) => synthTile(patch, `factory:${patch.name}`))}
+        {shown === 'fm' && FM_PRESETS.map((patch) => synthTile(patch, `factory:${patch.name}`))}
         {shown === 'mine' && userPresets.map((preset) => synthTile(preset.patch, preset.id, preset))}
         {typeof shown === 'number' &&
           GM_FAMILIES[shown].sounds.map((name, i) => {
@@ -84,7 +89,7 @@ export function SoundBrowser({ instrument, userPresets, onChoose, onDeletePreset
               </button>
             )
           })}
-        {(shown === 'synth' || shown === 'mine') && (
+        {(shown === 'synth' || shown === 'fm' || shown === 'mine') && (
           <label className="file-button sound-tile import-tile" title={`Load a .${PRESET_EXTENSION} sound file, e.g. one a friend sent you`}>
             Import .{PRESET_EXTENSION}…
             <input
