@@ -740,8 +740,106 @@ label.inline {
 }
 
 .song-dialog,
-.transpose-dialog {
+.transpose-dialog,
+.tuner-dialog {
   width: min(560px, 100%);
+}
+
+/* ---------------------------------------------------------------- tuner */
+
+.tuner {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  margin: 12px 0;
+}
+
+.tuner.faded .tuner-note,
+.tuner.faded .tuner-needle {
+  opacity: 0.45;
+}
+
+.tuner-note {
+  font-size: 56px;
+  font-weight: 600;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.tuner-note.in-tune,
+.tuner-advice.in-tune {
+  color: #16a34a;
+}
+
+.tuner-scale {
+  position: relative;
+  width: min(420px, 100%);
+  height: 28px;
+  border-radius: 6px;
+  background: linear-gradient(to right, var(--border), transparent 45%, color-mix(in srgb, #16a34a 30%, transparent) 50%, transparent 55%, var(--border));
+  border: 1px solid var(--border);
+}
+
+.tuner-center {
+  position: absolute;
+  left: 50%;
+  top: 0;
+  bottom: 0;
+  border-left: 2px solid var(--muted);
+}
+
+.tuner-needle {
+  position: absolute;
+  top: -4px;
+  bottom: -4px;
+  width: 4px;
+  margin-left: -2px;
+  border-radius: 2px;
+  background: var(--warning);
+  transition: left 80ms linear;
+}
+
+.tuner-needle.in-tune {
+  background: #16a34a;
+}
+
+.tuner-marks {
+  display: flex;
+  justify-content: space-between;
+  width: min(420px, 100%);
+}
+
+.tuner-advice {
+  margin: 0;
+  font-weight: 600;
+}
+
+.tuner-strings {
+  display: flex;
+  gap: 6px;
+}
+
+.tuner-string {
+  min-width: 36px;
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  text-align: center;
+}
+
+.tuner-string.active {
+  border-color: var(--warning);
+  color: var(--warning);
+}
+
+.tuner-string.in-tune {
+  border-color: #16a34a;
+  background: #16a34a;
+  color: #fff;
+}
+
+.tuner-level {
+  width: min(420px, 100%);
 }
 
 .song-dialog label.grow {

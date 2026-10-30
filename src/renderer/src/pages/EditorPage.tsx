@@ -4,10 +4,12 @@ import { HomeIcon, MenuIcon, RedoIcon, UndoIcon } from '../components/icons'
 import { Menu } from '../components/Menu'
 import { updateSong } from '../model/edit'
 import { keyName, songKey } from '../model/keySignature'
+import { isFretted } from '../model/song'
 import { MidiPanel } from '../panels/MidiPanel'
 import { ShortcutsDialog } from '../panels/ShortcutsDialog'
 import { SongDialog } from '../panels/SongDialog'
 import { TabEditor } from '../panels/TabEditor'
+import { TunerDialog } from '../panels/Tuner'
 import type { Project } from '../project/useProject'
 import { setThemeChoice, THEME_CHOICES, useThemeChoice } from '../theme'
 
@@ -32,6 +34,7 @@ export function EditorPage({ project, getEngine, saveStatus, onSave, onHome }: P
   const themeChoice = useThemeChoice()
   const [shortcuts, setShortcuts] = useState(false)
   const [songDialog, setSongDialog] = useState(false)
+  const [tuner, setTuner] = useState(false)
   const [transport, setTransport] = useState<HTMLElement | null>(null)
   const [actions, setActions] = useState<HTMLElement | null>(null)
   const { song, cursor } = project
@@ -102,6 +105,7 @@ export function EditorPage({ project, getEngine, saveStatus, onSave, onHome }: P
             { label: 'Save as…', shortcut: 'Ctrl+Shift+S', onSelect: () => onSave(true) },
             'separator',
             { label: 'Song properties…', title: 'Title, author, tempo, key', onSelect: () => setSongDialog(true) },
+            { label: 'Tuner…', title: 'Tune your guitar or bass with the recording input', onSelect: () => setTuner(true) },
             { label: 'MIDI keyboard and audio latency', onSelect: () => setPage('midi') },
             { label: 'Keyboard shortcuts', shortcut: '?', onSelect: showShortcuts },
             'separator',
@@ -116,6 +120,7 @@ export function EditorPage({ project, getEngine, saveStatus, onSave, onHome }: P
         {page === 'midi' && <MidiPanel getEngine={getEngine} />}
       </main>
       {shortcuts && <ShortcutsDialog onClose={() => setShortcuts(false)} />}
+      {tuner && <TunerDialog getEngine={getEngine} track={isFretted(song.tracks[cursor.track]) ? song.tracks[cursor.track] : song.tracks.find(isFretted)} onClose={() => setTuner(false)} />}
       {songDialog && (
         <SongDialog
           song={song}

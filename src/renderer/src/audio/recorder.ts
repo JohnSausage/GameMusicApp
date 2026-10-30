@@ -11,6 +11,19 @@ export async function listInputDevices(): Promise<MediaDeviceInfo[]> {
   return devices.filter((d) => d.kind === 'audioinput')
 }
 
+/** The input as it is: mono, without the voice processing meant for calls (REQUIREMENTS.md REC-03). */
+function openInput(deviceId?: string): Promise<MediaStream> {
+  return navigator.mediaDevices.getUserMedia({
+    audio: {
+      deviceId: deviceId ? { exact: deviceId } : undefined,
+      echoCancellation: false,
+      noiseSuppression: false,
+      autoGainControl: false,
+      channelCount: 1
+    }
+  })
+}
+
 /** Records raw mono audio from a microphone with all voice processing disabled (REQUIREMENTS.md REC-03). */
 export class MicRecorder {
   private stream: MediaStream | null = null
@@ -26,15 +39,7 @@ export class MicRecorder {
   async start(deviceId?: string): Promise<void> {
     await this.ctx.resume()
     await this.ctx.audioWorklet.addModule('recorder-worklet.js')
-    this.stream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        deviceId: deviceId ? { exact: deviceId } : undefined,
-        echoCancellation: false,
-        noiseSuppression: false,
-        autoGainControl: false,
-        channelCount: 1
-      }
-    })
+    this.stream = await openInput(deviceId)
     const track = this.stream.getAudioTracks()[0]
     const settings = track.getSettings()
     this.inputSettings = {
@@ -75,6 +80,44 @@ export class MicRecorder {
     }
     this.chunks = []
     return samples
+  }
+}
+
+/** The input, listened to without recording it: its latest samples, for the tuner. */
+export class InputMonitor {
+  private stream: MediaStream | null = null
+  private source: MediaStreamAudioSourceNode | null = null
+  private analyser: AnalyserNode | null = null
+  private sink: GainNode | null = null
+
+  constructor(
+    private readonly ctx: AudioContext,
+    readonly size: number
+  ) {}
+
+  async start(deviceId?: string): Promise<void> {
+    await this.ctx.resume()
+    this.stream = await openInput(deviceId)
+    this.source = this.ctx.createMediaStreamSource(this.stream)
+    this.analyser = this.ctx.createAnalyser()
+    this.analyser.fftSize = this.size
+    // Like the recorder: connected to the destination so it's processed, through a muted gain.
+    this.sink = this.ctx.createGain()
+    this.sink.gain.value = 0
+    this.source.connect(this.analyser).connect(this.sink).connect(this.ctx.destination)
+  }
+
+  /** Fills `into` (of `size` samples) with the latest input. */
+  read(into: Float32Array<ArrayBuffer>): void {
+    this.analyser?.getFloatTimeDomainData(into)
+  }
+
+  stop(): void {
+    this.source?.disconnect()
+    this.analyser?.disconnect()
+    this.sink?.disconnect()
+    this.stream?.getTracks().forEach((t) => t.stop())
+    this.stream = null
   }
 }
 

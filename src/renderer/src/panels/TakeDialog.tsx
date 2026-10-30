@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { GetEngine } from '../App'
 import { detectFirstOnset, secondsPerClick } from '../audio/analysis'
-import { importAudioFile, listInputDevices, MicRecorder, samplesToBuffer } from '../audio/recorder'
+import { importAudioFile, MicRecorder, samplesToBuffer } from '../audio/recorder'
 import { barsHaveNotes, removeTake, writeBars } from '../model/edit'
 import { isFretted, newId, takeSeconds, type Song, type TakeInfo } from '../model/song'
 import { soundingTuning } from '../model/tuning'
@@ -9,6 +9,8 @@ import type { Project } from '../project/useProject'
 import { ScoreView } from '../score/ScoreView'
 import { extractNotes, runBasicPitch, type ModelOutput, type Sensitivity } from '../transcription/basicPitch'
 import { transcribeToBars } from '../transcription/toTab'
+import { InputSelect, Tuner } from './Tuner'
+import { useInputDevice } from './useInputDevice'
 import { usePlayback } from './usePlayback'
 import { Waveform } from './Waveform'
 
@@ -44,8 +46,8 @@ export function TakeDialog({ project, getEngine, onClose }: Props): React.JSX.El
   const [take, setTake] = useState<PendingTake | null>(null)
   const [error, setError] = useState('')
 
-  const [devices, setDevices] = useState<MediaDeviceInfo[]>([])
-  const [deviceId, setDeviceId] = useState('')
+  const input = useInputDevice()
+  const [tuner, setTuner] = useState(false)
   const [metronome, setMetronome] = useState(true)
   const [level, setLevel] = useState(0)
   const [clipped, setClipped] = useState(false)
@@ -67,10 +69,6 @@ export function TakeDialog({ project, getEngine, onClose }: Props): React.JSX.El
   const clicksPerBar = song.timeSignature[0]
   const clickSeconds = secondsPerClick(take?.info.tempo ?? song.tempo, song.timeSignature)
   const track = song.tracks[targetTrack]
-
-  useEffect(() => {
-    void listInputDevices().then(setDevices)
-  }, [])
 
   const stopPlaying = (): void => {
     stopAudio.current?.()
@@ -128,8 +126,8 @@ export function TakeDialog({ project, getEngine, onClose }: Props): React.JSX.El
         setLevel(peak)
         if (peak >= 0.99) setClipped(true)
       }
-      await recorder.start(deviceId || undefined)
-      void listInputDevices().then(setDevices) // labels appear once access is granted
+      await recorder.start(input.deviceId || undefined)
+      input.refresh() // names appear once access is granted
       const recordStart = engine.ctx.currentTime
       const clickStart = recordStart + 0.3
       const songClick = secondsPerClick(song.tempo, song.timeSignature)
@@ -328,21 +326,17 @@ export function TakeDialog({ project, getEngine, onClose }: Props): React.JSX.El
         <section className="card">
           <h3>Record</h3>
           <div className="form-row">
-            <label>
-              Input
-              <select value={deviceId} onChange={(e) => setDeviceId(e.target.value)}>
-                <option value="">Default input</option>
-                {devices.map((d) => (
-                  <option key={d.deviceId} value={d.deviceId}>{d.label || `Input ${d.deviceId.slice(0, 6)}`}</option>
-                ))}
-              </select>
-            </label>
+            <InputSelect {...input} />
             <label className="checkbox">
               <input type="checkbox" checked={metronome} onChange={(e) => setMetronome(e.target.checked)} />
               Metronome with a 1-bar count-in ({song.tempo} BPM, {song.timeSignature.join('/')})
             </label>
             <button className="active" onClick={() => void startRecording()}>● Record</button>
+            <button className={tuner ? 'active' : ''} aria-pressed={tuner} title="Tune your instrument first, with this input" onClick={() => setTuner(!tuner)}>
+              Tuner
+            </button>
           </div>
+          {tuner && <Tuner getEngine={getEngine} deviceId={input.deviceId} strings={isFretted(track) ? track.tuning : undefined} onOpened={input.refresh} />}
           <p className="muted small">Use headphones so the metronome doesn't end up in the recording. Quiet room; mic about 20–30 cm from where the neck meets the body.</p>
         </section>
         <section className="card">
