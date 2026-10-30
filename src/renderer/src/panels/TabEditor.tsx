@@ -27,6 +27,7 @@ import { MidiKeyboard, type MidiNoteMessage } from '../midi/midiInput'
 import { importMidi } from '../model/midiImport'
 import { CRUSH_RATES, eightBitKit, formatSampleRate } from '../model/synth'
 import { barTime, buildTimeline, songSeconds } from '../model/timing'
+import { swapVoices } from '../model/voices'
 import { retuneTrack, tuningLabel, type Retune } from '../model/tuning'
 import { saveFile } from '../platform'
 import { scorePdf } from '../score/pdf'
@@ -394,7 +395,9 @@ export function TabEditor({ project, getEngine, headerSlots, onShowShortcuts }: 
   }
 
   const playFromCursor = (): void => {
-    const span = timeline.beats.find((b) => b.trackIndex === cursor.track && b.barIndex === cursor.bar && b.beatIndex === cursor.beat)
+    // In the second voice, its beats (EDIT-15).
+    const beats = cursor.voice === 2 ? buildTimeline(swapVoices(song)).beats : timeline.beats
+    const span = beats.find((b) => b.trackIndex === cursor.track && b.barIndex === cursor.bar && b.beatIndex === cursor.beat)
     playFrom(span?.start ?? 0)
   }
 

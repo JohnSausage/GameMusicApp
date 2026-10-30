@@ -7,6 +7,7 @@ import { barsFromSpans, barSpans, barTicks, edit, emptyBar, type Cursor, type Ed
 import { storeRepeats } from './repeats'
 import { newId, type Bar, type Part, type Song, type Track } from './song'
 import { writeOut } from './arrangement'
+import { bothVoices } from './voices'
 
 /** The time signatures offered, by kind: simple (quarters, halves), then in eighths. */
 export const TIME_SIGNATURES: [number, number][] = [
@@ -42,9 +43,10 @@ const ticksOf = (timeSignature: [number, number]): number => barTicks({ timeSign
 /** The first bar with a time signature of its own (PRJ-04), or null if they all have the song's. */
 export const firstOwnSignature = (song: Song): number | null => song.changes?.find((c) => c.timeSignature)?.bar ?? null
 
-/** Bars of music laid out again in bars of `to` ticks (they were `from` ticks), every note at the same time. */
+/** Bars of music laid out again in bars of `to` ticks (they were `from` ticks), every note at the same time. Both voices. */
 export function flowBars(bars: Bar[], from: number, to: number, ties: boolean): Bar[] {
-  return barsFromSpans(barSpans(bars), to, Math.max(1, Math.ceil((bars.length * from) / to)), ties)
+  const count = Math.max(1, Math.ceil((bars.length * from) / to))
+  return bothVoices(bars, (voice) => barsFromSpans(barSpans(voice), to, count, ties))
 }
 
 const sameBars = (a: Bar[], b: Bar[]): boolean => JSON.stringify(a) === JSON.stringify(b)

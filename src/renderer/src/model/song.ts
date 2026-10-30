@@ -41,6 +41,11 @@ export interface Beat {
 
 export interface Bar {
   beats: Beat[]
+  /**
+   * A second voice (EDIT-15): another rhythm on the same staff, e.g. a bass line
+   * under a melody, written with its stems down. Absent = none. Not on drum tracks.
+   */
+  voice2?: Beat[]
 }
 
 export type Instrument =

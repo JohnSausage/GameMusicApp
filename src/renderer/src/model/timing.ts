@@ -238,50 +238,54 @@ export function buildTimeline(song: Song, { legato = true }: { legato?: boolean 
     const techniques = track.kind !== 'drums'
     // Hammer-ons and slides are for fretted tracks; keys tracks only hold (tie) notes.
     const legatoHere = legato && track.kind === undefined
-    const sounding = new Map<number, Sounding>()
-    let time = 0
-    for (const { bar: barIndex, start } of passes) {
-      const bar = track.bars[barIndex]
-      if (!bar) continue
-      const spq = secondsPerQuarter(song, barIndex)
-      time = start
-      bar.beats.forEach((beat, beatIndex) => {
-        const length = beatQuarters(beat) * spq
-        beats.push({ trackIndex, barIndex, beatIndex, start: time, end: time + length })
-        for (const note of beat.notes) {
-          const pitch = notePitch(track, note)
-          const before = techniques ? sounding.get(note.string) : undefined
-          // Only a note in the beat right before continues into this one.
-          const continues = before !== undefined && Math.abs(before.end - time) < 1e-6
-          const next = { end: time + length, pitch, length, legato: note.hammer ? ('hammer' as const) : note.slide ? ('slide' as const) : undefined }
-          if (note.dead && techniques) {
-            // A click: it holds nothing, and nothing goes on from it.
-            notes.push({ trackIndex, pitch, velocity: Math.round(note.velocity * DEAD_VELOCITY), start: time, duration: Math.min(length, DEAD_SECONDS) })
-            sounding.delete(note.string)
-          } else if (continues && note.tie && before.pitch === pitch) {
-            before.event.duration += length
-            Object.assign(before, next)
-          } else if (continues && legatoHere && before.legato && before.pitch !== pitch) {
-            const glide = before.legato === 'slide' ? Math.min(MAX_SLIDE_SECONDS, before.length / 2) : 0
-            ;(before.event.bends ??= []).push({ time: time - glide, pitch, glide })
-            before.event.duration += length
-            Object.assign(before, next)
-          } else {
-            const event: NoteEvent = { trackIndex, pitch, velocity: note.velocity, start: time, duration: length }
-            if (note.bend && legatoHere) {
-              const up = Math.min(MAX_BEND_SECONDS, length / 3)
-              event.bends = [{ time, pitch: pitch + note.bend, glide: up }]
-              if (note.bendRelease) event.bends.push({ time: time + length / 2, pitch, glide: Math.min(MAX_BEND_SECONDS, length / 3) })
+    // The second voice (EDIT-15) plays along, holding its own notes; the beats are the first voice's.
+    for (const voice of [1, 2] as const) {
+      const sounding = new Map<number, Sounding>()
+      let time = 0
+      for (const { bar: barIndex, start } of passes) {
+        const bar = track.bars[barIndex]
+        const voiceBeats = voice === 1 ? bar?.beats : bar?.voice2
+        if (!voiceBeats) continue
+        const spq = secondsPerQuarter(song, barIndex)
+        time = start
+        voiceBeats.forEach((beat, beatIndex) => {
+          const length = beatQuarters(beat) * spq
+          if (voice === 1) beats.push({ trackIndex, barIndex, beatIndex, start: time, end: time + length })
+          for (const note of beat.notes) {
+            const pitch = notePitch(track, note)
+            const before = techniques ? sounding.get(note.string) : undefined
+            // Only a note in the beat right before continues into this one.
+            const continues = before !== undefined && Math.abs(before.end - time) < 1e-6
+            const next = { end: time + length, pitch, length, legato: note.hammer ? ('hammer' as const) : note.slide ? ('slide' as const) : undefined }
+            if (note.dead && techniques) {
+              // A click: it holds nothing, and nothing goes on from it.
+              notes.push({ trackIndex, pitch, velocity: Math.round(note.velocity * DEAD_VELOCITY), start: time, duration: Math.min(length, DEAD_SECONDS) })
+              sounding.delete(note.string)
+            } else if (continues && note.tie && before.pitch === pitch) {
+              before.event.duration += length
+              Object.assign(before, next)
+            } else if (continues && legatoHere && before.legato && before.pitch !== pitch) {
+              const glide = before.legato === 'slide' ? Math.min(MAX_SLIDE_SECONDS, before.length / 2) : 0
+              ;(before.event.bends ??= []).push({ time: time - glide, pitch, glide })
+              before.event.duration += length
+              Object.assign(before, next)
+            } else {
+              const event: NoteEvent = { trackIndex, pitch, velocity: note.velocity, start: time, duration: length }
+              if (note.bend && legatoHere) {
+                const up = Math.min(MAX_BEND_SECONDS, length / 3)
+                event.bends = [{ time, pitch: pitch + note.bend, glide: up }]
+                if (note.bendRelease) event.bends.push({ time: time + length / 2, pitch, glide: Math.min(MAX_BEND_SECONDS, length / 3) })
+              }
+              if (note.palmMute && techniques) muted.add(event)
+              notes.push(event)
+              if (techniques) sounding.set(note.string, { event, ...next })
             }
-            if (note.palmMute && techniques) muted.add(event)
-            notes.push(event)
-            if (techniques) sounding.set(note.string, { event, ...next })
           }
-        }
-        time += length
-      })
+          time += length
+        })
+      }
+      duration = Math.max(duration, time)
     }
-    duration = Math.max(duration, time)
   })
 
   // Palm mutes cut a note short, held notes too.

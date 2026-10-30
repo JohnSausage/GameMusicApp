@@ -84,7 +84,9 @@ export function writeRoll(song: Song, cursor: Cursor, track: number, from: numbe
   return edit(song, cursor, (draft) => {
     appendBars(draft, to - barCount(draft))
     const bars = rollToBars(notes, to - from, barLengths(draft, from, to))
-    bars.forEach((bar, i) => (draft.tracks[track].bars[from + i] = bar))
+    // The roll is one voice: the bars keep their second voice (EDIT-15).
+    const before = draft.tracks[track].bars
+    bars.forEach((bar, i) => (before[from + i] = before[from + i]?.voice2 ? { ...bar, voice2: before[from + i].voice2 } : bar))
   })
 }
 

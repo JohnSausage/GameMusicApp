@@ -4,6 +4,7 @@
 import { noteName } from '../transcription/notes'
 import { edit, type Cursor, type EditResult } from './edit'
 import { BASS_STANDARD, GUITAR_STANDARD, isFretted, MAX_FRET, type Bar, type Note, type Song, type Track } from './song'
+import { allBeats } from './voices'
 
 /** The highest capo fret offered. */
 export const MAX_CAPO = 12
@@ -97,7 +98,7 @@ export function retuneTrack(song: Song, cursor: Cursor, index: number, tuning: n
   const counts = { bars: { moved: 0, changed: 0 }, parts: { moved: 0, changed: 0 } }
   const refretBars = (bars: Bar[], count: { moved: number; changed: number }): void => {
     for (const bar of bars) {
-      for (const beat of bar.beats) {
+      for (const beat of allBeats(bar)) {
         const beatCount = refretBeat(beat.notes, before, after)
         count.moved += beatCount.moved
         count.changed += beatCount.changed

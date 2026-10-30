@@ -31,6 +31,8 @@ export interface Cursor {
   beat: number
   /** 1 = highest string. */
   string: number
+  /** In the second voice of the bar (EDIT-15; see model/voices.ts); `beat` counts its beats. */
+  voice?: 2
 }
 
 export interface Duration {
@@ -423,10 +425,11 @@ export function deleteBar(song: Song, cursor: Cursor): EditResult | null {
   })
 }
 
-/** Replaces the cursor's bar in the current track with an empty bar. */
+/** Replaces the cursor's bar in the current track with an empty bar; its second voice stays. */
 export function clearBar(song: Song, cursor: Cursor): EditResult {
   return edit(song, cursor, (draft, c) => {
-    draft.tracks[c.track].bars[c.bar] = emptyBar(draft, c.bar)
+    const { voice2 } = draft.tracks[c.track].bars[c.bar]
+    draft.tracks[c.track].bars[c.bar] = { ...emptyBar(draft, c.bar), ...(voice2 && { voice2 }) }
     return { ...c, beat: 0 }
   })!
 }
@@ -633,7 +636,10 @@ export function pasteBeats(song: Song, cursor: Cursor, beats: Beat[]): EditResul
       at += beatTicks(beat)
     }
     spans.sort((a, b) => a.start - b.start)
+    const before = track.bars
     track.bars = barsFromSpans(spans, Array.from({ length: count }, (_, b) => barTicks(draft, b)), count)
+    // The second voice stays as it is.
+    track.bars.forEach((bar, b) => before[b]?.voice2 && (bar.voice2 = before[b].voice2))
     return { ...c, beat: Math.max(0, track.bars[c.bar].beats.findIndex((_, i) => beatStart(track.bars[c.bar], i) >= start - barStart)) }
   })
 }
@@ -815,9 +821,12 @@ export function clampCursor(song: Song, c: Cursor): Cursor {
   const track = Math.max(0, Math.min(c.track, song.tracks.length - 1))
   const bars = song.tracks[track].bars
   const bar = Math.max(0, Math.min(c.bar, bars.length - 1))
-  const beat = Math.max(0, Math.min(c.beat, bars[bar].beats.length - 1))
+  // The second voice is only on tracks that have one; where a bar has none, it is rests through the bar (see model/voices.ts).
+  const voice2 = c.voice === 2 && song.tracks[track].kind !== 'drums'
+  const beats = voice2 ? (bars[bar].voice2?.length ?? restsFor(ticksOf(bars[bar].beats)).length) : bars[bar].beats.length
+  const beat = Math.max(0, Math.min(c.beat, beats - 1))
   const string = Math.max(1, Math.min(c.string, song.tracks[track].tuning.length))
-  return { track, bar, beat, string }
+  return { track, bar, beat, string, ...(voice2 && { voice: 2 as const }) }
 }
 
 /** Next or previous beat, crossing bar lines. Stops at the start and end of the song. */

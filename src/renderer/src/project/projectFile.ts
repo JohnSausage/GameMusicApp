@@ -6,6 +6,7 @@ import { fixPartColors, PART_COLORS, writeOut } from '../model/arrangement'
 import { CONSOLES } from '../model/consoles'
 import { MAX_FIFTHS } from '../model/keySignature'
 import { MASTER_DEFAULTS, NOTE_VALUES, type Bar, type Instrument, type MasterSettings, type ProjectAudio, type Song, type SoundEffect, type TakeInfo, type Track } from '../model/song'
+import { allBeats, hasVoices, withSecondVoice } from '../model/voices'
 import { cleanRepeats, MAX_TIMES } from '../model/repeats'
 import { normalizePatch, PATCH_LIMITS } from '../model/synth'
 import { MAX_BEND } from '../model/techniques'
@@ -133,7 +134,12 @@ function checkMaster(value: unknown): MasterSettings | undefined {
 function checkBars(bars: Bar[], track: Track, where: string): void {
   bars.forEach((bar, b) => {
     if (!Array.isArray(bar.beats) || bar.beats.length === 0) fail(`${where}, bar ${b + 1} has no beats`)
-    for (const beat of bar.beats) {
+    // The second voice (EDIT-15); one without notes is left out.
+    if (bar.voice2 !== undefined) {
+      if (!Array.isArray(bar.voice2) || bar.voice2.length === 0) fail(`${where}, bar ${b + 1} has an invalid second voice`)
+      if (!hasVoices(track)) fail(`${where}, bar ${b + 1} has a second voice, but drum tracks have one`)
+    }
+    for (const beat of allBeats(bar)) {
       if (!NOTE_VALUES.includes(beat.value) || typeof beat.dotted !== 'boolean' || (beat.triplet !== undefined && typeof beat.triplet !== 'boolean') || !Array.isArray(beat.notes)) {
         fail(`${where}, bar ${b + 1} has an invalid beat`)
       }
@@ -149,6 +155,7 @@ function checkBars(bars: Bar[], track: Track, where: string): void {
         }
       }
     }
+    if (bar.voice2) bars[b] = withSecondVoice(bar, bar.voice2)
   })
 }
 

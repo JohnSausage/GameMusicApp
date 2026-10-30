@@ -44,6 +44,7 @@ import { bendName, cycleBend, legatoTarget, toggleBendRelease, toggleLegato, tog
 import { barSeconds, barTime, buildTimeline, tickAtTime } from '../model/timing'
 import { transpose, transposeMessage } from '../model/transpose'
 import { moveToString } from '../model/tuning'
+import { hasVoices, otherVoice } from '../model/voices'
 import { fitBars, wrongBars, wrongBy, type WrongBar } from '../model/barCheck'
 import { consoleOf, consoleProblems, consoleSummary } from '../model/consoles'
 import { repeatAt } from '../model/repeats'
@@ -52,7 +53,7 @@ import { MeterDialog } from './MeterDialog'
 import { RepeatDialog } from './RepeatDialog'
 import { readPref, writePref } from '../prefs'
 import { showTrack, shownTracks, ZOOM_STEPS } from '../project/layout'
-import type { ApplyOptions, Project } from '../project/useProject'
+import { voiceProject, type ApplyOptions, type Project } from '../project/useProject'
 import { ScoreView, type ScoreTarget } from '../score/ScoreView'
 import { noteName } from '../transcription/notes'
 import { DrumGrid } from './DrumGrid'
@@ -156,8 +157,11 @@ function meterMessage(change: MeterEdit, bar: number): string {
 }
 
 export function ScoreEditor(props: Props): React.JSX.Element {
-  const { target: project, piece, getEngine, playback, positionRef, onPlayFrom, message, onMessage: setMessage, clipboard, onClipboard: setClipboard } = props
+  const { target, piece, getEngine, playback, positionRef, onPlayFrom, message, onMessage: setMessage, clipboard, onClipboard: setClipboard } = props
   const { midiRef, midiDevices, onSharedKey, onSelectedBars, onShowShortcuts, autoFocus = false } = props
+  // In the second voice (EDIT-15), everything here works on it: see voiceProject.
+  const project = voiceProject(target)
+  const secondVoice = project !== target
   const { song, cursor } = project
   const part = piece !== undefined
   const pieceName = piece === 'effect' ? 'sound effect' : 'part'
@@ -567,6 +571,19 @@ export function ScoreEditor(props: Props): React.JSX.Element {
     project.setCursor({ ...cursor, bar: all.end.bar, beat: all.end.beat })
   }
 
+  /** The other voice of the bar (V): notes entered go there. */
+  const switchVoice = (): void => {
+    const next = otherVoice(target.song, target.cursor)
+    if (!next) {
+      setMessage('Drum tracks have one voice.')
+      return
+    }
+    setAnchor(null)
+    target.setCursor(next)
+    setMessage(next.voice === 2 ? 'Voice 2: a second rhythm on this staff, stems down (V goes back to voice 1).' : 'Voice 1.')
+    focus()
+  }
+
   const addBar = (): void => edit(addBars(song, cursor, 1))
   const addSection = (): void => edit(addBars(song, cursor, 4, nextSectionName(song)))
   const lastBarMessage = `A ${part ? pieceName : 'song'} needs at least one bar.`
@@ -622,6 +639,7 @@ export function ScoreEditor(props: Props): React.JSX.Element {
     else if (key.toLowerCase() === 'b' && !ctrl && fretted) bend(shift)
     else if (key.toLowerCase() === 'p' && !ctrl && fretted) mark('palmMute')
     else if (key.toLowerCase() === 'x' && !ctrl && fretted) mark('dead')
+    else if (key.toLowerCase() === 'v' && !ctrl && !event.altKey) switchVoice()
     else if (key === 'Insert') edit(insertBarBefore(song, cursor))
     else if (ctrl && key.toLowerCase() === 'a') selectAll()
     else if (ctrl && key.toLowerCase() === 'c') copy()
@@ -678,7 +696,7 @@ export function ScoreEditor(props: Props): React.JSX.Element {
         ? noteOnString ? `note${noteOnString.tie ? ' · held from the note before' : ''}` : beat.notes.length === 0 ? 'rest' : 'not on this key'
       : noteOnString ? `fret ${noteOnString.fret} (${noteName(notePitch(track, noteOnString), flats)})${techniqueText()}` : beat.notes.length === 0 ? 'rest' : 'empty string'
     const spot = drums ? DRUM_PIECES[cursor.string - 1]?.name : keys ? noteName(rowPitch(cursor.string), flats) : `string ${cursor.string} (${open})`
-    const where = `${track.name} · bar ${cursor.bar + 1} of ${barCount(song)} · beat ${cursor.beat + 1} · ${spot} · ${what}`
+    const where = `${track.name} · bar ${cursor.bar + 1} of ${barCount(song)}${secondVoice ? ' · voice 2' : ''} · beat ${cursor.beat + 1} · ${spot} · ${what}`
     if (!selection) return where
     const bars = selection.start.bar === selection.end.bar ? `bar ${selection.start.bar + 1}` : `bars ${selection.start.bar + 1}–${selection.end.bar + 1}`
     return `${track.name} · ${selectedCount} beats selected (${bars}) · Esc to deselect`
@@ -764,6 +782,16 @@ export function ScoreEditor(props: Props): React.JSX.Element {
                 </button>
               </>
             )}
+          </div>
+        )}
+        {hasVoices(track) && (
+          <div className="segmented" role="group" aria-label="Voice">
+            <button className={secondVoice ? '' : 'active'} aria-pressed={!secondVoice} title="Voice 1: the main rhythm, stems up (V switches)" onClick={() => secondVoice && switchVoice()}>
+              Voice 1
+            </button>
+            <button className={secondVoice ? 'active' : ''} aria-pressed={secondVoice} title="Voice 2: a second rhythm on the same staff, e.g. a bass line under a melody, stems down (V switches)" onClick={() => !secondVoice && switchVoice()}>
+              Voice 2
+            </button>
           </div>
         )}
         <button
@@ -870,6 +898,7 @@ export function ScoreEditor(props: Props): React.JSX.Element {
 
       <ScoreView
         song={song}
+        secondVoice={secondVoice}
         staveMode={staves}
         tracks={part ? undefined : shown}
         zoom={zoom}

@@ -5,6 +5,7 @@ import { edit, selectedRanges, type Cursor, type EditResult, type Selection } fr
 import { songKey, transposeKey } from './keySignature'
 import { keyRow, MAX_FRET, rowPitch, type Beat, type Note, type Song, type Track } from './song'
 import { placeNotes, soundingTuning } from './tuning'
+import { allBeats } from './voices'
 
 /** What to transpose: the selected beats of a track, a whole track (with its parts), or every track. */
 export type TransposeScope = { kind: 'selection'; selection: Selection } | { kind: 'track'; track: number } | { kind: 'song' }
@@ -57,8 +58,9 @@ export function transpose(song: Song, cursor: Cursor, scope: TransposeScope, sem
       }
       // Parts hold the music of an arranged song: a part that repeats is in the bars more than once.
       const arranged = !!draft.arrangement
-      transposeBeats(track, track.bars.flatMap((bar) => bar.beats), semitones, fingering, arranged ? uncounted : counts)
-      for (const part of track.parts ?? []) transposeBeats(track, part.bars.flatMap((bar) => bar.beats), semitones, fingering, arranged ? counts : uncounted)
+      // Both voices (EDIT-15).
+      transposeBeats(track, track.bars.flatMap(allBeats), semitones, fingering, arranged ? uncounted : counts)
+      for (const part of track.parts ?? []) transposeBeats(track, part.bars.flatMap(allBeats), semitones, fingering, arranged ? counts : uncounted)
     }
     if (scope.kind === 'song') draft.key = transposeKey(songKey(draft), semitones)
   })

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { hasNotes } from '../model/arrangement'
 import { barTicks, updateSong, type Cursor, type EditResult } from '../model/edit'
 import { ALL_KEYS, keyAccidentals, keyName, keyShift, sameKey, songKey, type KeySignature } from '../model/keySignature'
 import type { Song } from '../model/song'
@@ -32,8 +33,8 @@ export function SongDialog({ song, cursor, onApply, onClose }: Props): React.JSX
   const tempoValue = Number(tempo)
   const validTempo = Number.isFinite(tempoValue) && tempoValue >= 20 && tempoValue <= 400
   const shift = keyShift(songKey(song), key)
-  const melodic = song.tracks.some((t) => t.kind !== 'drums' && t.bars.some((bar) => bar.beats.some((b) => b.notes.length > 0)))
-  const withNotes = song.tracks.some((t) => t.bars.some((bar) => bar.beats.some((b) => b.notes.length > 0)))
+  const melodic = song.tracks.some((t) => t.kind !== 'drums' && hasNotes(t.bars))
+  const withNotes = song.tracks.some((t) => hasNotes(t.bars))
   const newSignature = signatureValue(signature) !== signatureValue(song.timeSignature)
   const signatures = TIME_SIGNATURES.some((ts) => signatureValue(ts) === signatureValue(song.timeSignature)) ? TIME_SIGNATURES : [...TIME_SIGNATURES, song.timeSignature]
   const from = barTicks(song)

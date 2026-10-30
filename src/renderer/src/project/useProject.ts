@@ -3,6 +3,7 @@ import { arrange, partSong, setPartBars, syncArrangement, type PartRef } from '.
 import { clampCursor, type Cursor, type EditResult } from '../model/edit'
 import { EFFECT_CURSOR, effectSong, findEffect, setEffectSong } from '../model/effects'
 import type { ProjectAudio, Song } from '../model/song'
+import { hasVoices, swapVoices, unswapVoices } from '../model/voices'
 import { lastLayout, rememberLayout, sameLayout, type Layout } from './layout'
 
 const MAX_UNDO = 200
@@ -233,4 +234,34 @@ export function useProject(): {
   project.effect = pieceProject(effectPiece)
   if (project.effect) project.editedEffect = state.effectEdit!.id
   return { project, openProject, closeProject }
+}
+
+/**
+ * The project as the editor works on it in the second voice (EDIT-15), when the
+ * cursor is there: its song with the voices swapped (see swapVoices), so every
+ * edit works on the second voice; edits are swapped back, and the cursor stays in
+ * the second voice. Otherwise the project itself.
+ */
+export function voiceProject(project: Project): Project {
+  if (project.cursor.voice !== 2) return project
+  const own = (song: Song, edited: Song, swapped: Song): Song => (edited === swapped ? song : unswapVoices(edited))
+  const inVoice = (song: Song, cursor: Cursor): Cursor => (hasVoices(song.tracks[cursor.track] ?? {}) ? { ...cursor, voice: 2 } : cursor)
+  const back = (song: Song, result: EditResult | null): EditResult | null => {
+    if (!result) return null
+    const edited = own(song, result.song, swapVoices(song))
+    return { song: edited, cursor: inVoice(edited, result.cursor) }
+  }
+  const { voice: _, ...cursor } = project.cursor
+  return {
+    ...project,
+    song: swapVoices(project.song),
+    cursor,
+    apply: (result, options) => project.apply(back(project.song, result), options),
+    update: (change, options) =>
+      project.update((song, c) => {
+        const { voice: _, ...at } = c
+        return back(song, change(swapVoices(song), at))
+      }, options),
+    setCursor: (c) => project.setCursor(inVoice(project.song, c))
+  }
 }

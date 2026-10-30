@@ -25,7 +25,8 @@ const GROUPS: { title: string; rows: Row[] }[] = [
       [['Del'], 'Remove the note (on a rest: the rest)'],
       [['Shift+Del'], 'Remove the beat; the rest of the bar moves up'],
       [['Alt+↑', 'Alt+↓'], 'Transpose the selection (or the beat) a semitone up / down; Edit → Transpose… for more'],
-      [['Shift+↑', 'Shift+↓'], 'Move the note to the string above / below, keeping its pitch']
+      [['Shift+↑', 'Shift+↓'], 'Move the note to the string above / below, keeping its pitch'],
+      [['V'], 'Voice 1 / voice 2: a second rhythm on the same staff (not on drums)']
     ]
   },
   {

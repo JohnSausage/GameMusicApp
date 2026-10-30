@@ -5,12 +5,17 @@
 import { sectionStarts, writeOut } from './arrangement'
 import { barSpans, barsFromSpans, barTicks, beatTicks, edit, restsFor, type Cursor, type EditResult, type Span } from './edit'
 import type { Bar, Song, Track } from './song'
+import { bothVoices } from './voices'
 
 /** Whether `ties` hold notes over a bar line: not for drum hits, which don't ring on. */
 export const holds = (track: Track): boolean => track.kind !== 'drums'
 
-/** One bar made `to` ticks long: its notes stay from its start; longer, it ends with rests; shorter, what doesn't fit goes. */
+/** One bar made `to` ticks long: its notes stay from its start; longer, it ends with rests; shorter, what doesn't fit goes. Both voices. */
 export function fitBar(bar: Bar, to: number, ties: boolean, counts: { removed: number; shortened: number }): Bar {
+  return bothVoices([bar], ([voice]) => [fitVoice(voice, to, ties, counts)])[0]
+}
+
+function fitVoice(bar: Bar, to: number, ties: boolean, counts: { removed: number; shortened: number }): Bar {
   const spans: Span[] = []
   for (const span of barSpans([bar])) {
     if (span.start >= to) counts.removed += span.notes.length
@@ -40,8 +45,9 @@ export function wrongBars(song: Song): WrongBar[] {
   const expected = Array.from({ length: Math.max(0, ...song.tracks.map((t) => t.bars.length)) }, (_, b) => barTicks(song, b))
   return song.tracks.flatMap((track, t) =>
     track.bars.flatMap((bar, b) => {
-      const length = barLength(bar)
-      return length === expected[b] ? [] : [{ track: t, bar: b, length, expected: expected[b] }]
+      // The first voice, or else the second, when it doesn't fit.
+      const length = [bar.beats, bar.voice2].map((beats) => beats && barLength({ beats })).find((l) => l !== undefined && l !== expected[b])
+      return length === undefined ? [] : [{ track: t, bar: b, length, expected: expected[b] }]
     })
   )
 }

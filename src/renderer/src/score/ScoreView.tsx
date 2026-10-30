@@ -17,6 +17,8 @@ export interface ScoreTarget extends BeatRef {
 
 interface Props {
   song: Song
+  /** `song` is one from swapVoices(), edited in its second voice (EDIT-15): see songToAlphaTab. */
+  secondVoice?: boolean
   staveMode: StaveMode
   /** The tracks shown, by index (all by default). */
   tracks?: number[]
@@ -148,8 +150,9 @@ export function drawTabRests(container: HTMLElement, api: alphaTab.AlphaTabApi, 
  * The beat under a point, in the staff under the point. alphaTab's own
  * getBeatAtPos() only uses y to find the line of music and then takes the
  * nearest beat of *any* track, so clicks on a second track landed on the first.
+ * Only beats of the voice edited count (those in `refs`).
  */
-function beatAtPoint(api: alphaTab.AlphaTabApi, x: number, y: number): alphaTab.model.Beat | null {
+function beatAtPoint(api: alphaTab.AlphaTabApi, refs: ConvertedScore['refs'], x: number, y: number): alphaTab.model.Beat | null {
   const system = api.boundsLookup?.staffSystems.find((s) => y >= s.realBounds.y && y <= s.realBounds.y + s.realBounds.h)
   const masterBar = system?.findBarAtPos(x)
   if (!masterBar) return null
@@ -164,7 +167,14 @@ function beatAtPoint(api: alphaTab.AlphaTabApi, x: number, y: number): alphaTab.
       staff = bar
     }
   }
-  return staff?.findBeatAtPos(x)?.beat ?? null
+  // As alphaTab's findBeatAtPos(): the last beat starting left of x, else the first.
+  let beat: alphaTab.model.Beat | null = null
+  for (const bounds of staff?.beats ?? []) {
+    if (!refs.has(bounds.beat)) continue
+    if (beat && bounds.realBounds.x >= x) break
+    beat = bounds.beat
+  }
+  return beat
 }
 
 /** Top and bottom of a track's staves (notation and/or tab) in a bar. */
@@ -242,7 +252,7 @@ function stringBox(api: alphaTab.AlphaTabApi, converted: ConvertedScore, cursor:
 }
 
 export function ScoreView(props: Props): React.JSX.Element {
-  const { song, staveMode, tracks, zoom = 1, pageView = false, positionRef, editCursor, selection, wrongBars, onScoreClick, onSelectArea, endActions } = props
+  const { song, secondVoice = false, staveMode, tracks, zoom = 1, pageView = false, positionRef, editCursor, selection, wrongBars, onScoreClick, onSelectArea, endActions } = props
   const scrollRef = useRef<HTMLDivElement>(null)
   const wrapperRef = useRef<HTMLDivElement>(null)
   const pagesLayerRef = useRef<HTMLDivElement>(null)
@@ -353,10 +363,10 @@ export function ScoreView(props: Props): React.JSX.Element {
     }
     // The stave profile stays ScoreTab; which staves show is set per staff (tab only = tab, and a rhythm line for drums).
     renderStartRef.current = performance.now()
-    const converted = songToAlphaTab(song, api.settings, staveMode === 'tab')
+    const converted = songToAlphaTab(song, api.settings, staveMode === 'tab', secondVoice)
     convertedRef.current = converted
     api.renderScore(converted.score, shown)
-  }, [song, staveMode, zoom, colors, shown, pageView])
+  }, [song, secondVoice, staveMode, zoom, colors, shown, pageView])
 
   // Overlays are positioned every frame from alphaTab's layout, so they follow re-renders.
   useEffect(() => {
@@ -456,7 +466,7 @@ export function ScoreView(props: Props): React.JSX.Element {
     if (!api?.boundsLookup || !converted || !onSelectArea) return
     const beatAt = (point: { x: number; y: number }): alphaTab.model.Beat | null => {
       const y = sheetY(point.y)
-      return y === null ? null : beatAtPoint(api, point.x, y)
+      return y === null ? null : beatAtPoint(api, converted.refs, point.x, y)
     }
     const startBeat = beatAt(from) ?? beatAt(to)
     const track = startBeat ? converted.refs.get(startBeat)?.trackIndex : undefined
@@ -493,7 +503,7 @@ export function ScoreView(props: Props): React.JSX.Element {
     const x = event.clientX - rect.left
     const y = sheetY(event.clientY - rect.top)
     if (y === null) return
-    const beat = beatAtPoint(api, x, y)
+    const beat = beatAtPoint(api, converted.refs, x, y)
     const ref = beat ? converted.refs.get(beat) : undefined
     if (!ref) return
 

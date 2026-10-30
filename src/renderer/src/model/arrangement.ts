@@ -10,7 +10,7 @@ import { clampCursor, emptyBar, nextSectionName, sectionRanges, type Cursor, typ
 import { barCount, newId, tempoAt, timeSignatureAt, type ArrangementSection, type Bar, type Part, type Song, type Track } from './song'
 
 export function hasNotes(bars: Bar[]): boolean {
-  return bars.some((bar) => bar.beats.some((beat) => beat.notes.length > 0))
+  return bars.some((bar) => bar.beats.some((beat) => beat.notes.length > 0) || !!bar.voice2?.some((beat) => beat.notes.length > 0))
 }
 
 const sameBar = (a: Bar | undefined, b: Bar | undefined): boolean => JSON.stringify(a) === JSON.stringify(b)
